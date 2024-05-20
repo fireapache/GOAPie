@@ -7,6 +7,6 @@
 [submodule "Source/IMGUI-NE"]
 	path = Source/IMGUI-NE
 	url = https://github.com/fireapache/imgui-node-editor.git
-[submodule "Source/glm"]
-	path = Source/glm
+[submodule "Source/GLM"]
+	path = Source/GLM
 	url = https://github.com/fireapache/glm.git
