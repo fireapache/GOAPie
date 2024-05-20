@@ -1,0 +1,12 @@
+[submodule "Source/IMGUI"]
+	path = Source/IMGUI
+	url = https://github.com/fireapache/imgui.git
+[submodule "Source/GLFW"]
+	path = Source/GLFW
+	url = https://github.com/glfw/glfw.git
+[submodule "Source/IMGUI-NE"]
+	path = Source/IMGUI-NE
+	url = https://github.com/fireapache/imgui-node-editor.git
+[submodule "Source/glm"]
+	path = Source/glm
+	url = https://github.com/fireapache/glm.git
