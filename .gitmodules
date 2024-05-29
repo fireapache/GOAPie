@@ -10,3 +10,6 @@
 [submodule "Source/GLM"]
 	path = Source/GLM
 	url = https://github.com/fireapache/glm.git
+[submodule "Source/UUID_V4"]
+	path = Source/UUID_V4
+	url = https://github.com/fireapache/uuid_v4.git

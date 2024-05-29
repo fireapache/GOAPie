@@ -5,12 +5,7 @@
 
 #include "goapie.h"
 
-GOAPie::GOAPie()
+namespace gie
 {
-
-}
-
-GOAPie::~GOAPie()
-{
-
+	
 }

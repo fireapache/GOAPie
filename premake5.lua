@@ -278,6 +278,7 @@ project "GOAPie"
 		"Source/IMGUI/examples/",
 		"Source/IMGUI-NE/",
 		"Source/glm/",
+		"Source/UUID_V4/"
 	}
 
 	dependson { "GLAD", "GLFW", "IMGUI", "IMGUI-NE" }
@@ -336,7 +337,7 @@ project "Tests"
 	objdir ("Intermediate/%{prj.name}-" .. outputdir)
 	
 	dependson { "GOAPie" }
-	includedirs { "Source/GOAPie/include/" }
+	includedirs { "Source/GOAPie/include/", "Source/UUID_V4/" }
 	links { "GOAPie.lib" }
 	libdirs { ("Intermediate/GOAPie-" .. outputdir) }
 
