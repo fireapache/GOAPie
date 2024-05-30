@@ -264,11 +264,6 @@ project "GOAPie"
 	targetdir ("Intermediate/%{prj.name}-" .. outputdir)
 	objdir ("Intermediate/%{prj.name}-" .. outputdir)
 	
-	-- define OBJL_CONSOLE_OUTPUT for loading geometry information
-	
-	pchheader "goapie.pch.h"
-	pchsource "Source/GOAPie/src/goapie.pch.cpp"
-
 	includedirs
 	{
 		"%{prj.location}/include/",
@@ -307,11 +302,6 @@ project "GOAPie"
 	}
 	
 	removefiles "%{prj.location}/src/goapie.unity.cpp"
-	
-	filter "options:unity"
-		removefiles "%{prj.location}/src/**.cpp"
-		files { "%{prj.location}/src/goapie.unity.cpp", "%{prj.location}/src/goapie.pch.cpp" }
-		defines { "BGL_UNITY_BUILD" }
 	
 	filter "system:windows"
 		cppdialect "C++20"

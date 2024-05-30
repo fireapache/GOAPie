@@ -26,11 +26,18 @@ int insertingParameters()
 		return 1;
 	}
 
-	auto [ param1Guid, param1Ptr ] = entry->registerProperty( "AmmoAmount" );
+	auto [ param1Guid, param1Ptr ] = entry->registerProperty( "AmmoCount" );
 
 	if( param1Ptr )
 	{
 		param1Ptr->value = 5;
+	}
+
+	auto [ param2Guid, param2Ptr ] = entry->registerProperty( "Name" );
+
+	if( param2Ptr )
+	{
+		param2Ptr->value = gie::stringHasher( "BFG" );
 	}
 
 	return 0;
