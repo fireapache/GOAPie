@@ -105,12 +105,6 @@ namespace gie
 
 	};
 
-	struct Definition
-	{
-		Guid DataNodeGuid;
-		StringHash PropertyName;
-	};
-
 	class Blackboard
 	{
 		class World* _world;
@@ -303,7 +297,7 @@ namespace gie
 	{
 	protected:
 		World* world{ nullptr };
-		std::vector< std::pair< Definition, Property::Variant > > targets;
+		std::vector< std::pair< Guid, Property::Variant > > targets;
 		std::vector< Heuristic > heuristics;
 
 	public:

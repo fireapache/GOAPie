@@ -259,49 +259,19 @@ group ""
 project "GOAPie"
 	
 	location "Source/GOAPie/"
-	kind "StaticLib"
+	kind "None"
 	language "C++"
-	targetdir ("Intermediate/%{prj.name}-" .. outputdir)
-	objdir ("Intermediate/%{prj.name}-" .. outputdir)
 	
 	includedirs
 	{
-		"%{prj.location}/include/",
-		"Source/GLAD/include/",
-		"Source/GLFW/include/",
-		"Source/IMGUI/",
-		"Source/IMGUI/examples/",
-		"Source/IMGUI-NE/",
 		"Source/glm/",
 		"Source/UUID_V4/"
 	}
 
-	dependson { "GLAD", "GLFW", "IMGUI", "IMGUI-NE" }
-	
-	links
-	{
-		"GLAD.lib",
-		"GLFW.lib",
-		"IMGUI.lib",
-		"IMGUI-NE.lib",
-		"opengl32.lib",
-	}
-
-	libdirs
-	{
-		("Intermediate/GLAD-" .. outputdir),
-		("Intermediate/GLFW-" .. outputdir),
-		("Intermediate/IMGUI-" .. outputdir),
-		("Intermediate/IMGUI-NE-" .. outputdir)
-	}
-
 	files
 	{
-		"%{prj.location}/include/**.h",
-		"%{prj.location}/src/**.cpp"
+		"%{prj.location}/include/**.h"
 	}
-	
-	removefiles "%{prj.location}/src/goapie.unity.cpp"
 	
 	filter "system:windows"
 		cppdialect "C++20"
@@ -309,12 +279,12 @@ project "GOAPie"
 		systemversion "latest"
 
 	filter "configurations:Debug"
-		defines "BGL_DEBUG"
+		defines "GIE_DEBUG"
 		symbols "On"
 		runtime "Debug"
 
 	filter "configurations:Release"
-		defines "BGL_RELEASE"
+		defines "GIE_RELEASE"
 		optimize "On"
 		runtime "Release"
 
