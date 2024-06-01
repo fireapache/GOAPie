@@ -259,12 +259,12 @@ group ""
 project "GOAPie"
 	
 	location "Source/GOAPie/"
-	kind "None"
+	kind "StaticLib"
 	language "C++"
 	
 	includedirs
 	{
-		"Source/glm/",
+		"Source/GLM/",
 		"Source/UUID_V4/"
 	}
 
@@ -297,7 +297,7 @@ project "Tests"
 	objdir ("Intermediate/%{prj.name}-" .. outputdir)
 	
 	dependson { "GOAPie" }
-	includedirs { "Source/GOAPie/include/", "Source/UUID_V4/" }
+	includedirs { "Source/GOAPie/include/", "Source/GLM/", "Source/UUID_V4/" }
 	links { "GOAPie.lib" }
 	libdirs { ("Intermediate/GOAPie-" .. outputdir) }
 
