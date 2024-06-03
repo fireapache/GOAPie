@@ -378,6 +378,30 @@ namespace gie
 
 	};
 
+	// Class representing an action to be performed by an agent.
+	// It has a state machine for asyncronous execution.
+	class Action
+	{
+    public:
+		Action() = default;
+		~Action() = default;
+
+		enum State : uint8_t
+		{
+			Waiting,
+			Running,
+			Paused,
+			Aborted,
+			Done
+		};
+
+		virtual State tick() { return State::Aborted; };
+	};
+
+	// Class representing a simulation of a performable action.
+	// It stores all information necessary for planner's A* algorithm.
+	// It also stores a list of actions to be performed by the agent,
+	// in case the simulation is chosed as a valid goal path.
 	class Simulation
 	{
 		Guid _guid{ NullGuid };
@@ -394,38 +418,32 @@ namespace gie
 
 		Blackboard context;
 
+		// Incoming simulation connections.
 		std::vector< Guid > incoming;
+		// Outgoing simulation connections.
 		std::vector< Guid > outgoing;
+		// Actions to be performed by agent.
+		std::vector< Action > actions;
 	};
 
-	class AvailableAction
+	// Class representing a performable action. It outputs a simulation object
+	// containing all info for planner's A* simulation graph, including cost,
+	// heuristics and simulation outcomes.
+	class ActionSimulator
 	{
 	public:
-		AvailableAction() = default;
-		~AvailableAction() = default;
+		ActionSimulator() = default;
+		~ActionSimulator() = default;
 
-		virtual bool meetPrerequisites( const Simulation& context, const Agent& agent ) const { return false; }
-		std::vector< Definition > outcomes();
+		// @Return True in case context meets prerequisites, False otherwise.
+		virtual bool prerequisites( const Simulation& context, const Agent& agent ) const { return false; }
+
+		// @Return Guid and pointer to new valid simulation, both null if simulation fails.
+		virtual std::pair< Guid, Simulation* > simulate( const Simulation& context, const Agent& agent ) const { return { NullGuid, nullptr }; }
 
 	};
 
-	class Action
-	{
-    public:
-		Action() = default;
-		~Action() = default;
-
-		enum State : uint8_t
-		{
-			Waiting,
-			Running,
-			Aborted,
-			Done
-		};
-
-		virtual State execute() { return State::Aborted; };
-	};
-
+	// Class representing a specific goal to be achieved by an agent.
 	class Goal
 	{
 	protected:
@@ -439,11 +457,12 @@ namespace gie
 
 		std::vector< Definition > targets;
 
-		bool done() const
+		// @Return True if given simulation has reached goal targets, False otherwise.
+		bool reached( const Simulation& simulation ) const
 		{
 			for( auto targetItr = targets.cbegin(); targetItr != targets.cend(); targetItr++ )
 			{
-				auto& properties = _world->properties();
+				auto& properties = simulation.context.properties();
 				const auto propertyItr = properties.find( targetItr->first );
 				if( propertyItr != properties.cend() )
 				{
@@ -458,22 +477,17 @@ namespace gie
 
 	};
 
+	// GOAP's planner in charge of holding all simulations and 
+	// figuring out most effective action path towards goal.
 	class Planner
 	{
-    protected:
-		std::vector< AvailableAction > _actionSet;
+		friend class ActionSimulator;
+
+		std::vector< ActionSimulator > _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
 		std::vector< Action > _plannedActions;
 		World* _world{ nullptr };
 		Goal* _goal{ nullptr };
-
-    public:
-		Planner() = delete;
-		Planner( World& world, Goal& goal ) : _world( &world ), _goal( &goal ) { }
-		~Planner() = default;
-
-		const std::vector< Action >& plannedActions() const { return _plannedActions; }
-		std::vector< AvailableAction >& availableActions() { return _actionSet; };
 
 		std::pair< Guid, Simulation* > createSimulation( Guid currentSimulationGuid = NullGuid )
 		{
@@ -486,7 +500,15 @@ namespace gie
 			}
 			return { NullGuid, nullptr };
 		}
-		
+
+    public:
+		Planner() = delete;
+		Planner( World& world, Goal& goal ) : _world( &world ), _goal( &goal ) { }
+		~Planner() = default;
+
+		const std::vector< Action >& plannedActions() const { return _plannedActions; }
+		std::vector< ActionSimulator >& actionSet() { return _actionSet; };
+
 		Simulation* simulation( Guid guid )
 		{
 			auto itr = _simulations.find( guid );

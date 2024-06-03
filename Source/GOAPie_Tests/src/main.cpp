@@ -52,7 +52,7 @@ int basicGoal()
 	// adding property to entity and setting it's default value
 	auto [ openedGuid, openedPtr ] = entityPtr->createProperty( "Opened", false );
 	// defining available action
-	class OpenDoor : public gie::AvailableAction
+	class OpenDoor : public gie::ActionSimulator
 	{
 		gie::Guid _doorEntityGuid{ gie::NullGuid };
 
@@ -61,6 +61,11 @@ int basicGoal()
 		OpenDoor( const gie::World& world, gie::Guid doorEntityGuid ) : _doorEntityGuid( doorEntityGuid ) { }
 		OpenDoor( OpenDoor&& ) = default;
 		~OpenDoor() = default;
+
+		bool prerequisites( const gie::Simulation& context, const gie::Agent& agent ) override
+		{
+
+		}
 
 		//float cost( const gie::Agent& agent ) const override
 		//{
@@ -107,7 +112,7 @@ int basicGoal()
 	// creating planner
 	gie::Planner planner{ world, goal };
 	// setting available actions
-	planner.availableActions().emplace_back( OpenDoor{ world, entityGuid } );
+	planner.actionSet().emplace_back( OpenDoor{ world, entityGuid } );
 	// creating agent
 	auto [ agentGuid, agentPtr ] = world.createAgent();
 	
