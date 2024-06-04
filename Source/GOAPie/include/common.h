@@ -18,4 +18,6 @@ namespace gie
 	{
 		return std::hash< std::string_view >{}( value );
 	}
+
+	const StringHash UndefinedActionName{ stringHasher( "Define Action Name" ) };
 }

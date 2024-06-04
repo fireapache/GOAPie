@@ -164,6 +164,10 @@ namespace gie
 		virtual std::pair< Guid, class Entity* > createEntity() = 0;
 		virtual void removeEntity( const Guid guid ) = 0;
 		virtual void eraseAll() = 0;
+		// @return Pointer to an existing property.
+		virtual Property* property( const Guid guid ) = 0;
+		// @return Pointer to an existing property.
+		virtual const Property* property( const Guid guid ) const = 0;
 		// @return Pointer to an existing data entity.
 		virtual Entity* entity( const Guid guid ) = 0;
 		// @return Pointer to an existing data entity.
@@ -193,6 +197,8 @@ namespace gie
 		// IDataEntityManager interface
 		std::pair< Guid, class Agent* > createAgent()			override;
 		std::pair< Guid, Entity* > createEntity()				override;
+		Property* property( const Guid guid )					override;
+		const Property* property( const Guid guid )	const		override;
 		Entity* entity( const Guid guid )						override;
 		const Entity* entity( const Guid guid ) const			override;
 		class Agent* agent( const Guid guid )					override;
@@ -211,6 +217,26 @@ namespace gie
 			return std::pair{ result.first->first, &result.first->second };
 		}
 		return std::pair{ NullGuid, nullptr };
+	}
+
+	Property* Blackboard::property( const Guid guid )
+	{
+		auto itr = _properties.find( guid );
+		if( itr != _properties.end() )
+		{
+			return &( itr->second );
+		}
+		return nullptr;
+	}
+
+	const Property* Blackboard::property( const Guid guid ) const
+	{
+		auto itr = _properties.find( guid );
+		if( itr != _properties.end() )
+		{
+			return &( itr->second );
+		}
+		return nullptr;
 	}
 
 	Entity* Blackboard::entity( const Guid guid ) 
@@ -247,11 +273,13 @@ namespace gie
 		// IDataEntityManager interface
 		std::pair< Guid, class Agent* > createAgent()		override { return _context.createAgent(); };
 		void removeAgent( const Guid guid )					override { _context.removeAgent( guid ); };
-		std::pair< Guid, Entity* > createEntity()		override { return _context.createEntity(); };
+		std::pair< Guid, Entity* > createEntity()			override { return _context.createEntity(); };
 		void removeEntity( const Guid guid )				override { _context.removeEntity( guid ); };
 		void eraseAll()										override { _context.eraseAll(); };
-		Entity* entity( const Guid guid )				override { return  _context.entity( guid ); }
-		const Entity* entity( const Guid guid ) const	override { return  _context.entity( guid ); }
+		Property* property( const Guid guid )				override { return  _context.property( guid ); }
+		const Property* property( const Guid guid ) const	override { return  _context.property( guid ); }
+		Entity* entity( const Guid guid )					override { return  _context.entity( guid ); }
+		const Entity* entity( const Guid guid ) const		override { return  _context.entity( guid ); }
 		class Agent* agent( const Guid guid )				override { return _context.agent( guid ); }
 		const class Agent* agent( const Guid guid ) const	override { return _context.agent( guid ); }
 
@@ -378,26 +406,6 @@ namespace gie
 
 	};
 
-	// Class representing an action to be performed by an agent.
-	// It has a state machine for asyncronous execution.
-	class Action
-	{
-    public:
-		Action() = default;
-		~Action() = default;
-
-		enum State : uint8_t
-		{
-			Waiting,
-			Running,
-			Paused,
-			Aborted,
-			Done
-		};
-
-		virtual State tick() { return State::Aborted; };
-	};
-
 	// Class representing a simulation of a performable action.
 	// It stores all information necessary for planner's A* algorithm.
 	// It also stores a list of actions to be performed by the agent,
@@ -413,6 +421,8 @@ namespace gie
 		Simulation( Simulation&& ) = default;
 		~Simulation() = default;
 
+		Guid guid() const { return _guid; }
+
 		float cost{ MaxCost };
 		float heuristic{ MaxHeuristic };
 
@@ -423,24 +433,57 @@ namespace gie
 		// Outgoing simulation connections.
 		std::vector< Guid > outgoing;
 		// Actions to be performed by agent.
-		std::vector< Action > actions;
+		//std::vector< Action > actions;
 	};
 
 	// Class representing a performable action. It outputs a simulation object
 	// containing all info for planner's A* simulation graph, including cost,
 	// heuristics and simulation outcomes.
-	class ActionSimulator
+	class ActionSimulation
 	{
+		class Planner* _planner;
+
 	public:
-		ActionSimulator() = default;
-		~ActionSimulator() = default;
+		ActionSimulation( Planner& planner ) : _planner( &planner ) {  };
+		~ActionSimulation() = default;
+
+		virtual StringHash actionName() const { return UndefinedActionName; }
 
 		// @Return True in case context meets prerequisites, False otherwise.
 		virtual bool prerequisites( const Simulation& context, const Agent& agent ) const { return false; }
 
 		// @Return Guid and pointer to new valid simulation, both null if simulation fails.
-		virtual std::pair< Guid, Simulation* > simulate( const Simulation& context, const Agent& agent ) const { return { NullGuid, nullptr }; }
+		virtual bool simulate( const Simulation& base ) const { return false; }
 
+		Planner* planner() const { return _planner; }
+
+	};
+
+	// Class representing an action to be performed by an agent.
+	// It has a state machine for asyncronous execution.
+	class Action
+	{
+    public:
+		Action() = default;
+		~Action() = default;
+
+		virtual StringHash actionName() const { return UndefinedActionName; }
+
+		enum State : uint8_t
+		{
+			Waiting,
+			Running,
+			Paused,
+			Aborted,
+			Done
+		};
+
+		// @Return True when outcome was set property, False otherwise.
+		virtual bool outcome( Agent& agent ) {  };
+
+		// Cycle of execution of action.
+		// @Return Current state of execution.
+		virtual State tick( Agent& agent ) { return State::Aborted; };
 	};
 
 	// Class representing a specific goal to be achieved by an agent.
@@ -475,40 +518,46 @@ namespace gie
 			return true;
 		}
 
+		World* world() const { return _world; }
+
 	};
 
 	// GOAP's planner in charge of holding all simulations and 
 	// figuring out most effective action path towards goal.
 	class Planner
 	{
-		friend class ActionSimulator;
-
-		std::vector< ActionSimulator > _actionSet;
+		std::unordered_map< Guid, Action > _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
 		std::vector< Action > _plannedActions;
-		World* _world{ nullptr };
 		Goal* _goal{ nullptr };
+		Agent* _agent{ nullptr };
+
+    public:
+		Planner() = delete;
+		Planner( Goal& goal, Agent& agent ) : _goal( &goal ), _agent( &agent ) { }
+		~Planner() = default;
+
+		World* world() const { return _goal->world(); }
+		Goal* goal() const { return _goal; }
+		Agent* agent() const { return _agent; }
 
 		std::pair< Guid, Simulation* > createSimulation( Guid currentSimulationGuid = NullGuid )
 		{
 			Guid newRandGuid{ gie::randGuid() };
-			auto emplaceResult = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, _world } ) );
+			auto emplaceResult = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, world() } ) );
 			if( emplaceResult.second )
 			{
-				emplaceResult.first->second.incoming.emplace_back( currentSimulationGuid );
+				if( currentSimulationGuid != NullGuid )
+				{
+					emplaceResult.first->second.incoming.emplace_back( currentSimulationGuid );
+				}
 				return { emplaceResult.first->first, &emplaceResult.first->second };
 			}
 			return { NullGuid, nullptr };
 		}
 
-    public:
-		Planner() = delete;
-		Planner( World& world, Goal& goal ) : _world( &world ), _goal( &goal ) { }
-		~Planner() = default;
-
 		const std::vector< Action >& plannedActions() const { return _plannedActions; }
-		std::vector< ActionSimulator >& actionSet() { return _actionSet; };
-
+		
 		Simulation* simulation( Guid guid )
 		{
 			auto itr = _simulations.find( guid );
