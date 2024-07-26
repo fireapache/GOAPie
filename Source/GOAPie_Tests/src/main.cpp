@@ -59,8 +59,12 @@ int basicGoal()
 	{
 	public:
 
-		gie::StringHash name() const { return gie::stringHasher( "Move" ); }
+		// inheriting constructors
+		using gie::Action::Action;
 
+		gie::StringHash name() const override { return gie::stringHasher( "Move" ); }
+
+		// defines how world and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
 		{
 			// geting target location
@@ -88,11 +92,6 @@ int basicGoal()
 
 			return true;
 		}
-
-		gie::Action::State tick( gie::Agent& agent ) override
-		{
-			return Done;
-		}
 	};
 
 	// defining action for opening door
@@ -100,8 +99,12 @@ int basicGoal()
 	{
 	public:
 		
-		gie::StringHash name() const { return gie::stringHasher( "Open Door" ); }
+		// inheriting constructors
+		using gie::Action::Action;
 
+		gie::StringHash name() const override { return gie::stringHasher( "OpenDoor" ); }
+
+		// defines how world and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
 		{
 			// updating agent opinion over world
@@ -124,11 +127,6 @@ int basicGoal()
 
 			return allGood;
 		}
-
-		gie::Action::State tick( gie::Agent& agent ) override
-		{
-			return Done;
-		}
 	};
 
 	// defining simulator for action open door
@@ -136,8 +134,11 @@ int basicGoal()
 	{
 	public:
 		
-		gie::StringHash name() const override { return gie::stringHasher( "Open Door" ); }
+		using gie::ActionSimulator::ActionSimulator;
 
+		gie::StringHash name() const override { return gie::stringHasher( "OpenDoor" ); }
+
+		// define conditions for action
 		bool prerequisites( const gie::Simulation& context, const gie::Agent& agent ) const override
 		{
 			gie::Guid doorEntityGuid = arguments().guid( "DoorEntity" );
@@ -164,18 +165,15 @@ int basicGoal()
 			return true;
 		}
 
-		bool simulate( const gie::Simulation& base ) const override
+		// calculate cost and necessary steps (other actions) to achieve the action being simulated
+		bool simulate( gie::Agent& agent, gie::Simulation& simulation ) const override
 		{
-			auto [ simGuid, simResult ] = planner()->createSimulation( base.guid() );
-
 			// setting base cost as starting point
 			constexpr float baseCost = 10.f;
-			simResult->cost = baseCost;
-			
-			auto agent = planner()->agent();
+			simulation.cost = baseCost;
 
 			gie::Guid doorEntityGuid = arguments().guid( "DoorEntity" );
-			auto entityPtr = agent->world()->entity( doorEntityGuid );
+			auto entityPtr = agent.world()->entity( doorEntityGuid );
 			// not valid if no target door entity is found
 			if( !entityPtr )
 			{
@@ -184,27 +182,28 @@ int basicGoal()
 
 			// adding distance cost in case there are location properties
 			auto doorLocationPpt = entityPtr->property( "Location" );
-			auto agentLocationPpt = agent->property( "Location" );
+			auto agentLocationPpt = agent.property( "Location" );
 			if( doorLocationPpt.second && agentLocationPpt.second )
 			{
 				const glm::vec3 doorLocation = std::get< glm::vec3 >( doorLocationPpt.second->value );
 				const glm::vec3 agentLocation = std::get< glm::vec3 >( agentLocationPpt.second->value );
 				const float dist = glm::distance( doorLocation, agentLocation );
-				simResult->cost += dist;
+				simulation.cost += dist;
 
-				// adding move action
+				// adding move action as door is far from agent
 				if( auto moveAction = std::make_shared< MoveAction >( arguments() ) )
 				{
-					simResult->actions.emplace_back( moveAction );
+					simulation.actions.emplace_back( moveAction );
 				}
 			}
 
 			// adding open door action
 			if( auto openDoorAction = std::make_shared< OpenDoorAction >( arguments() ) )
 			{
-				simResult->actions.emplace_back( openDoorAction );
+				simulation.actions.emplace_back( openDoorAction );
 			}
 			
+			return true;
 		}
 
 	};
@@ -221,10 +220,12 @@ int basicGoal()
 	// creating planner
 	gie::Planner planner{ goal, *agentPtr };
 
-	// setting available actions
-	//planner.actionSet().emplace_back(  );
+	// defining available action and its simulator for planner
+	DEFINE_ACTION_SET_ENTRY( OpenDoor )
 
-	
+	// setting available actions;
+	planner.actionSet().emplace( gie::stringHasher( "OpenDoor" ), OpenDoorActionSetEntry() );
+
 	return 0;
 }
 

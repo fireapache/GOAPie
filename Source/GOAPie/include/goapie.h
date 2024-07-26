@@ -67,6 +67,7 @@ namespace gie
 			if( std::holds_alternative< ArrayType >		( value ) )	return Array;
 			if( std::holds_alternative< glm::vec3 >		( value ) )	return Vec3;
 			if( std::holds_alternative< void* >			( value ) )	return Custom;
+			return Unknow;
 		};
 
 		// @return Guid for this property.
@@ -528,12 +529,12 @@ namespace gie
 
 		Guid guid( std::string_view name ) const
 		{
-			guid( stringHasher( name.data() ) );
+			return guid( stringHasher( name.data() ) );
 		}
 
 		Guid guid( const char* name ) const
 		{
-			guid( stringHasher( name ) );
+			return guid( stringHasher( name ) );
 		}
 
 		Guid guid( const StringHash name ) const
@@ -557,6 +558,8 @@ namespace gie
 
     public:
 		Action() = default;
+		Action( const Action& other ) : _arguments( other._arguments ) { };
+		Action( Action&& other ) : _arguments( std::move( other._arguments ) ) { };
 		Action( const NamedGuidArguments& arguments ) : _arguments( arguments ) {  };
 		Action( NamedGuidArguments&& arguments ) : _arguments( std::move( arguments ) ) {  };
 		~Action() = default;
@@ -575,31 +578,29 @@ namespace gie
 		};
 
 		// @Return True when outcome was set property, False otherwise.
-		virtual bool outcome( Agent& agent ) {  };
+		virtual bool outcome( Agent& agent ) { return false; };
 
 		// Cycle of execution of action.
 		// @Return Current state of execution.
-		virtual State tick( Agent& agent ) { return State::Aborted; };
+		virtual State tick( Agent& agent ) { return State::Done; };
 	};
 
 	// Simulates an outcome of an action. It alters a simulation object
 	// containing current world definition.
 	class ActionSimulator
 	{
-		class Planner* _planner{ nullptr };
 		NamedGuidArguments _arguments{ };
 
 	public:
 		ActionSimulator() = delete;
-		ActionSimulator( Planner& planner ) : _planner( &planner ) {  };
+		ActionSimulator( const ActionSimulator& other ) = default;
+		ActionSimulator( ActionSimulator&& other ) = default;
 
-		ActionSimulator( Planner& planner, const NamedGuidArguments& arguments )
-			: _planner( &planner ),
-			_arguments( arguments ) {  };
+		ActionSimulator( const NamedGuidArguments& arguments )
+			: _arguments( arguments ) {  };
 
-		ActionSimulator( Planner& planner, NamedGuidArguments&& arguments )
-			: _planner( &planner ),
-			_arguments( std::move( arguments ) ) {  };
+		ActionSimulator( NamedGuidArguments&& arguments )
+			: _arguments( std::move( arguments ) ) {  };
 
 		~ActionSimulator() = default;
 
@@ -611,10 +612,8 @@ namespace gie
 		// @Return True in case simulation context meets prerequisites, False otherwise.
 		virtual bool prerequisites( const Simulation& simulation, const Agent& agent ) const { return false; }
 
-		// @Return Guid and pointer to new valid simulation, both null if simulation fails.
-		virtual bool simulate( const Simulation& simulation ) const { return false; }
-
-		Planner* planner() const { return _planner; }
+		// @Return True if simulation done successfuly, False otherwise.
+		virtual bool simulate( Agent& agent, Simulation& simulation ) const { return false; }
 
 	};
 
@@ -656,17 +655,31 @@ namespace gie
 
 	class ActionSetEntry
 	{
-		StringHash _name{ InvalidStringHash };
-
 	public:
-		ActionSetEntry() = delete;
-		ActionSetEntry( StringHash name ) : _name( name ) { }
+		ActionSetEntry() = default;
 		~ActionSetEntry() = default;
 
-		StringHash getHash() { return _name; }
+		virtual StringHash hash() const { return InvalidStringHash; }
+		virtual std::shared_ptr< ActionSimulator > simulator( const NamedGuidArguments& arguments ) const { return nullptr; };
+		virtual std::shared_ptr< Action > action( const NamedGuidArguments& arguments ) const { return nullptr; };
+	};
 
-		virtual ActionSimulator* getSimulator( std::vector< NamedGuid >& arguments ) = 0;
-		virtual Action* getAction( std::vector< NamedGuid >& arguments ) = 0;
+	// Macro for action set entry class generation.
+	// NOTE: action and simulator classes must be
+	// previusly declared and have same action name.
+#define DEFINE_ACTION_SET_ENTRY( ActionName ) \
+	class ActionName##ActionSetEntry : public gie::ActionSetEntry \
+	{ \
+		using gie::ActionSetEntry::ActionSetEntry; \
+		gie::StringHash hash() const override { return gie::stringHasher( #ActionName ); } \
+		std::shared_ptr< gie::ActionSimulator > simulator( const gie::NamedGuidArguments& arguments ) const override \
+		{ \
+			return std::make_shared< ActionName##Simulator >( arguments ); \
+		} \
+		std::shared_ptr< gie::Action > action( const gie::NamedGuidArguments& arguments ) const override \
+		{ \
+			return std::make_shared< ActionName##Action >( arguments ); \
+		} \
 	};
 
 	// GOAP's planner in charge of holding all simulations and 
@@ -687,6 +700,7 @@ namespace gie
 		World* world() const { return _goal->world(); }
 		Goal* goal() const { return _goal; }
 		Agent* agent() const { return _agent; }
+		auto& actionSet() { return _actionSet; }
 
 		std::pair< Guid, Simulation* > createSimulation( Guid currentSimulationGuid = NullGuid )
 		{
@@ -703,7 +717,7 @@ namespace gie
 			return { NullGuid, nullptr };
 		}
 
-		const std::vector< Action >& plannedActions() const { return _plannedActions; }
+		const auto& plannedActions() const { return _plannedActions; }
 		
 		Simulation* simulation( Guid guid )
 		{
