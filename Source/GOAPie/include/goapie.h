@@ -221,6 +221,11 @@ namespace gie
 
 	Property* Blackboard::property( const Guid guid )
 	{
+		if( guid == NullGuid )
+		{
+			return nullptr;
+		}
+
 		auto itr = _properties.find( guid );
 		if( itr != _properties.end() )
 		{
@@ -326,7 +331,7 @@ namespace gie
 		}
 		
 		// registering new property
-		Guid newRandGuid{ gie::randGuid() };
+		Guid newRandGuid{ randGuid() };
 		auto emplaceResult = _world->properties().emplace( newRandGuid, std::move( Property{ newRandGuid, _guid, nameHash } ) );
 
 		if( !emplaceResult.second )
@@ -433,41 +438,132 @@ namespace gie
 		// Outgoing simulation connections.
 		std::vector< Guid > outgoing;
 		// Actions to be performed by agent.
-		//std::vector< Action > actions;
+		std::vector< std::shared_ptr< class Action > > actions;
 	};
 
-	// Class representing a performable action. It outputs a simulation object
-	// containing all info for planner's A* simulation graph, including cost,
-	// heuristics and simulation outcomes.
-	class ActionSimulation
+	Checksum getChecksum( const std::vector< size_t >& values )
 	{
-		class Planner* _planner;
+		Checksum type = NullArguments;
+		for( const auto& name : values )
+		{
+			type += static_cast< Checksum >( name );
+		}
+		return type;
+	}
+
+	Checksum getChecksum( std::vector< size_t >&& values )
+	{
+		return getChecksum( values );
+	}
+
+	Checksum getChecksum( const std::vector< NamedGuid >& namedGuids )
+	{
+		Checksum type = NullArguments;
+		for( const auto& namedGuid : namedGuids )
+		{
+			type += static_cast< Checksum >( namedGuid.first );
+		}
+		return type;
+	}
+
+	Checksum getChecksum( std::vector< NamedGuid >&& namedGuids )
+	{
+		return getChecksum( namedGuids );
+	}
+
+	class NamedGuidArguments
+	{
+		// it's checksum of all string hashes in arguments.
+		Checksum _type{ NullArguments };
+		std::vector< NamedGuid > _namedGuids;
+
+		void updateType()
+		{
+			_type = getChecksum( _namedGuids );
+		}
 
 	public:
-		ActionSimulation( Planner& planner ) : _planner( &planner ) {  };
-		~ActionSimulation() = default;
 
-		virtual StringHash actionName() const { return UndefinedActionName; }
+		size_t type() const { return _type; }
 
-		// @Return True in case context meets prerequisites, False otherwise.
-		virtual bool prerequisites( const Simulation& context, const Agent& agent ) const { return false; }
+		NamedGuidArguments() = default;
+		NamedGuidArguments( const std::vector< NamedGuid >& arguments )
+			: _namedGuids( arguments )
+		{
+			updateType();
+		};
 
-		// @Return Guid and pointer to new valid simulation, both null if simulation fails.
-		virtual bool simulate( const Simulation& base ) const { return false; }
+		NamedGuidArguments( std::vector< NamedGuid >&& arguments )
+			: _namedGuids( std::move( arguments ) )
+		{
+			updateType();
+		};
 
-		Planner* planner() const { return _planner; }
+		NamedGuidArguments( const NamedGuidArguments& other )
+			: _namedGuids( other._namedGuids ),
+			_type( other._type ) { };
 
+		NamedGuidArguments( NamedGuidArguments&& other )
+			: _namedGuids( std::move( other._namedGuids ) ),
+			_type( other._type ) { };
+
+		~NamedGuidArguments() = default;
+
+		void addArgument( const NamedGuid newArgument )
+		{
+			_namedGuids.push_back( newArgument );
+			updateType();
+		}
+
+		void addArguments( const std::vector< NamedGuid >& arguments )
+		{
+			if( arguments.empty() )
+			{
+				return;
+			}
+
+			_namedGuids.insert( _namedGuids.end(), arguments.begin(), arguments.end() );
+			updateType();
+		}
+
+		Guid guid( std::string_view name ) const
+		{
+			guid( stringHasher( name.data() ) );
+		}
+
+		Guid guid( const char* name ) const
+		{
+			guid( stringHasher( name ) );
+		}
+
+		Guid guid( const StringHash name ) const
+		{
+			for( const auto& argument : _namedGuids )
+			{
+				if( argument.first == name )
+				{
+					return argument.second;
+				}
+			}
+			return NullGuid;
+		}
 	};
 
 	// Class representing an action to be performed by an agent.
 	// It has a state machine for asyncronous execution.
 	class Action
 	{
+		NamedGuidArguments _arguments{ };
+
     public:
 		Action() = default;
+		Action( const NamedGuidArguments& arguments ) : _arguments( arguments ) {  };
+		Action( NamedGuidArguments&& arguments ) : _arguments( std::move( arguments ) ) {  };
 		~Action() = default;
 
-		virtual StringHash actionName() const { return UndefinedActionName; }
+		virtual StringHash name() const { return UndefinedName; }
+
+		NamedGuidArguments& arguments() { return _arguments; }
 
 		enum State : uint8_t
 		{
@@ -484,6 +580,42 @@ namespace gie
 		// Cycle of execution of action.
 		// @Return Current state of execution.
 		virtual State tick( Agent& agent ) { return State::Aborted; };
+	};
+
+	// Simulates an outcome of an action. It alters a simulation object
+	// containing current world definition.
+	class ActionSimulator
+	{
+		class Planner* _planner{ nullptr };
+		NamedGuidArguments _arguments{ };
+
+	public:
+		ActionSimulator() = delete;
+		ActionSimulator( Planner& planner ) : _planner( &planner ) {  };
+
+		ActionSimulator( Planner& planner, const NamedGuidArguments& arguments )
+			: _planner( &planner ),
+			_arguments( arguments ) {  };
+
+		ActionSimulator( Planner& planner, NamedGuidArguments&& arguments )
+			: _planner( &planner ),
+			_arguments( std::move( arguments ) ) {  };
+
+		~ActionSimulator() = default;
+
+		virtual StringHash name() const { return UndefinedName; }
+
+		NamedGuidArguments& arguments() { return _arguments; }
+		const NamedGuidArguments& arguments() const { return _arguments; }
+
+		// @Return True in case simulation context meets prerequisites, False otherwise.
+		virtual bool prerequisites( const Simulation& simulation, const Agent& agent ) const { return false; }
+
+		// @Return Guid and pointer to new valid simulation, both null if simulation fails.
+		virtual bool simulate( const Simulation& simulation ) const { return false; }
+
+		Planner* planner() const { return _planner; }
+
 	};
 
 	// Class representing a specific goal to be achieved by an agent.
@@ -522,11 +654,26 @@ namespace gie
 
 	};
 
+	class ActionSetEntry
+	{
+		StringHash _name{ InvalidStringHash };
+
+	public:
+		ActionSetEntry() = delete;
+		ActionSetEntry( StringHash name ) : _name( name ) { }
+		~ActionSetEntry() = default;
+
+		StringHash getHash() { return _name; }
+
+		virtual ActionSimulator* getSimulator( std::vector< NamedGuid >& arguments ) = 0;
+		virtual Action* getAction( std::vector< NamedGuid >& arguments ) = 0;
+	};
+
 	// GOAP's planner in charge of holding all simulations and 
 	// figuring out most effective action path towards goal.
 	class Planner
 	{
-		std::unordered_map< Guid, Action > _actionSet;
+		std::unordered_map< StringHash, ActionSetEntry > _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
 		std::vector< Action > _plannedActions;
 		Goal* _goal{ nullptr };
@@ -543,7 +690,7 @@ namespace gie
 
 		std::pair< Guid, Simulation* > createSimulation( Guid currentSimulationGuid = NullGuid )
 		{
-			Guid newRandGuid{ gie::randGuid() };
+			Guid newRandGuid{ randGuid() };
 			auto emplaceResult = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, world() } ) );
 			if( emplaceResult.second )
 			{

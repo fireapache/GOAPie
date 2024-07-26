@@ -54,22 +54,94 @@ int basicGoal()
 	// adding property to entity and setting it's default value
 	auto [ openedGuid, openedPtr ] = entityPtr->createProperty( "Opened", false );
 
-	// defining simulation for action open door
-	class OpenDoorSimulation : public gie::ActionSimulation
+	// Defining a move action as well
+	class MoveAction : public gie::Action
 	{
-		gie::Guid _doorEntityGuid{ gie::NullGuid };
-
 	public:
-		OpenDoorSimulation() = delete;
-		OpenDoorSimulation( gie::Planner& planner, gie::Guid doorEntityGuid ) : ActionSimulation( planner ), _doorEntityGuid( doorEntityGuid ) { }
-		OpenDoorSimulation( OpenDoorSimulation&& ) = default;
-		~OpenDoorSimulation() = default;
 
-		gie::StringHash actionName() const override { return gie::stringHasher( "Open Door" ); }
+		gie::StringHash name() const { return gie::stringHasher( "Move" ); }
+
+		bool outcome( gie::Agent& agent ) override
+		{
+			// geting target location
+			gie::Guid targetLocationPptGuid = arguments().guid( "TargetLocation" );
+			auto locationPpt = agent.world()->property( targetLocationPptGuid );
+			if( !locationPpt )
+			{
+				return false;
+			}
+
+			auto location = locationPpt->getVec3();
+			if( !location.first )
+			{
+				return false;
+			}
+
+			// updating agent world location
+			auto agentLocation = agent.property( "Location" );
+			if( !agentLocation.second )
+			{
+				return false;
+			}
+			
+			agentLocation.second->value = location.second;
+
+			return true;
+		}
+
+		gie::Action::State tick( gie::Agent& agent ) override
+		{
+			return Done;
+		}
+	};
+
+	// defining action for opening door
+	class OpenDoorAction : public gie::Action
+	{
+	public:
+		
+		gie::StringHash name() const { return gie::stringHasher( "Open Door" ); }
+
+		bool outcome( gie::Agent& agent ) override
+		{
+			// updating agent opinion over world
+			gie::Guid openedPptGuid = arguments().guid( "Opened" );
+			auto localPpt = agent.opinions.property( openedPptGuid );
+			if( localPpt )
+			{
+				localPpt->value = true;
+			}
+
+			// updating world property
+			auto globalPpt = agent.world()->property( openedPptGuid );
+			if( globalPpt )
+			{
+				globalPpt->value = true;
+			}
+
+			// all went good, outcome set properly
+			bool allGood = localPpt && globalPpt;
+
+			return allGood;
+		}
+
+		gie::Action::State tick( gie::Agent& agent ) override
+		{
+			return Done;
+		}
+	};
+
+	// defining simulator for action open door
+	class OpenDoorSimulator : public gie::ActionSimulator
+	{
+	public:
+		
+		gie::StringHash name() const override { return gie::stringHasher( "Open Door" ); }
 
 		bool prerequisites( const gie::Simulation& context, const gie::Agent& agent ) const override
 		{
-			auto entityPtr = agent.world()->entity( _doorEntityGuid ); 
+			gie::Guid doorEntityGuid = arguments().guid( "DoorEntity" );
+			auto entityPtr = agent.world()->entity( doorEntityGuid ); 
 			// not valid if no target door entity is found
 			if( !entityPtr )
 			{
@@ -102,7 +174,8 @@ int basicGoal()
 			
 			auto agent = planner()->agent();
 
-			auto entityPtr = agent->world()->entity( _doorEntityGuid );
+			gie::Guid doorEntityGuid = arguments().guid( "DoorEntity" );
+			auto entityPtr = agent->world()->entity( doorEntityGuid );
 			// not valid if no target door entity is found
 			if( !entityPtr )
 			{
@@ -118,95 +191,22 @@ int basicGoal()
 				const glm::vec3 agentLocation = std::get< glm::vec3 >( agentLocationPpt.second->value );
 				const float dist = glm::distance( doorLocation, agentLocation );
 				simResult->cost += dist;
+
+				// adding move action
+				if( auto moveAction = std::make_shared< MoveAction >( arguments() ) )
+				{
+					simResult->actions.emplace_back( moveAction );
+				}
 			}
 
-			//simResult->actions.emplace_back();
-		}
-
-	};
-
-	// defining action for opening door
-	class OpenDoorAction : public gie::Action
-	{
-		gie::Guid _doorEntityGuid{ gie::NullGuid };
-
-	public:
-		OpenDoorAction() = delete;
-		OpenDoorAction( gie::Guid doorEntityGuid ) : _doorEntityGuid( doorEntityGuid ) { }
-		~OpenDoorAction() = default;
-
-		gie::StringHash actionName() const { return gie::stringHasher( "Open Door" ); }
-
-		bool outcome( gie::Agent& agent ) override
-		{
-			// updating agent opinion over world
-			auto agentPpt = agent.opinions.property( _doorEntityGuid );
-			if( agentPpt )
+			// adding open door action
+			if( auto openDoorAction = std::make_shared< OpenDoorAction >( arguments() ) )
 			{
-				agentPpt->value = true;
-			}
-
-			// updating world property
-			auto worldPpt = agent.world()->property( _doorEntityGuid );
-			if( worldPpt )
-			{
-				worldPpt->value = true;
-			}
-
-			// all went good, outcome set properly
-			bool allGood = agentPpt && worldPpt;
-
-			return allGood;
-		}
-
-		gie::Action::State tick( gie::Agent& agent ) override
-		{
-			return Done;
-		}
-	};
-	// Defining a move action as well
-	class MoveAction : public gie::Action
-	{
-		gie::Guid _targetLocationPptGuid{ gie::NullGuid };
-
-	public:
-		MoveAction() = delete;
-		MoveAction( gie::Guid targetLocationPptGuid ) : _targetLocationPptGuid( targetLocationPptGuid ) { }
-		~MoveAction() = default;
-
-		gie::StringHash actionName() const { return gie::stringHasher( "Move" ); }
-
-		bool outcome( gie::Agent& agent ) override
-		{
-			// geting target location
-			auto locationPpt = agent.world()->property( _targetLocationPptGuid );
-			if( !locationPpt )
-			{
-				return false;
-			}
-
-			auto location = locationPpt->getVec3();
-			if( !location.first )
-			{
-				return false;
-			}
-
-			// updating agent world location
-			auto agentLocation = agent.property( "Location" );
-			if( !agentLocation.second )
-			{
-				return false;
+				simResult->actions.emplace_back( openDoorAction );
 			}
 			
-			agentLocation.second->value = location.second;
-
-			return true;
 		}
 
-		gie::Action::State tick( gie::Agent& agent ) override
-		{
-			return Done;
-		}
 	};
 
 	// creating goal
