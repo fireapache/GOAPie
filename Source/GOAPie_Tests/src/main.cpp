@@ -54,7 +54,7 @@ int basicGoal()
 	// adding property to entity and setting it's default value
 	auto [ openedGuid, openedPtr ] = entityPtr->createProperty( "Opened", false );
 
-	// Defining a move action as well
+	// Defining a move action to be used by open door action
 	class MoveAction : public gie::Action
 	{
 	public:
@@ -224,7 +224,7 @@ int basicGoal()
 	DEFINE_ACTION_SET_ENTRY( OpenDoor )
 
 	// setting available actions;
-	planner.actionSet().emplace( gie::stringHasher( "OpenDoor" ), OpenDoorActionSetEntry() );
+	planner.addActionSetEntry< OpenDoorActionSetEntry >( gie::stringHasher( "OpenDoor" ) );
 
 	return 0;
 }

@@ -686,7 +686,7 @@ namespace gie
 	// figuring out most effective action path towards goal.
 	class Planner
 	{
-		std::unordered_map< StringHash, ActionSetEntry > _actionSet;
+		std::unordered_map< StringHash, std::shared_ptr< ActionSetEntry > > _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
 		std::vector< Action > _plannedActions;
 		Goal* _goal{ nullptr };
@@ -701,6 +701,14 @@ namespace gie
 		Goal* goal() const { return _goal; }
 		Agent* agent() const { return _agent; }
 		auto& actionSet() { return _actionSet; }
+
+		template< typename T >
+		std::shared_ptr< ActionSetEntry > addActionSetEntry( StringHash name )
+		{
+			static_assert( std::is_base_of_v< ActionSetEntry, T >, "Need to be sub class of ActionSetEntry" );
+			auto entry = _actionSet.emplace( name, std::make_shared< T >() );
+			return entry.second ? entry.first->second : nullptr;
+		}
 
 		std::pair< Guid, Simulation* > createSimulation( Guid currentSimulationGuid = NullGuid )
 		{
