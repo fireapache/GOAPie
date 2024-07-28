@@ -179,21 +179,24 @@ namespace gie
 		virtual const class Agent* agent( const Guid guid ) const = 0;
 	};
 
+	typedef std::unordered_map< Guid, Entity > EntityMap;
+	typedef std::unordered_map< Guid, Property > PropertyMap;
+
 	class Blackboard : public IDataEntityManager
 	{
 		class World* _world;
-		std::unordered_map< Guid, Entity > _entities;
-		std::unordered_map< Guid, Property > _properties;
+		EntityMap _entities;
+		PropertyMap _properties;
 
 	public:
 		Blackboard( class World* world ) : _world( world ) {  };
 		~Blackboard() = default;
 
-		std::unordered_map< Guid, Entity >& entities() { return _entities; }
-		const std::unordered_map< Guid, Entity >& entities() const { return _entities; }
+		EntityMap& entities() { return _entities; }
+		const EntityMap& entities() const { return _entities; }
 
-		std::unordered_map< Guid, Property >& properties() { return _properties; }
-		const std::unordered_map< Guid, Property >& properties() const { return _properties; }
+		PropertyMap& properties() { return _properties; }
+		const PropertyMap& properties() const { return _properties; }
 
 		// IDataEntityManager interface
 		std::pair< Guid, class Agent* > createAgent()			override;
@@ -355,6 +358,7 @@ namespace gie
 
 	class Agent : public Entity
 	{
+		
 	public:
 		Agent() = delete;
 		Agent( World* world ) : Entity::Entity( world ), opinions( world ) { };

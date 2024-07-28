@@ -48,11 +48,11 @@ int basicGoal()
 	// creating world
 	gie::World world;
 
-	// adding entity to world
-	auto [ entityGuid, entityPtr ] = world.createEntity();
+	// adding door entity to world
+	auto [ doorEntityGuid, doorEntity ] = world.createEntity();
 
-	// adding property to entity and setting it's default value
-	auto [ openedGuid, openedPtr ] = entityPtr->createProperty( "Opened", false );
+	// adding property to door entity and setting its default value
+	auto [ doorOpenedPptGuid, doorOpenedPpt ] = doorEntity->createProperty( "Opened", false );
 
 	// Defining a move action to be used by open door action
 	class MoveAction : public gie::Action
@@ -94,7 +94,7 @@ int basicGoal()
 		}
 	};
 
-	// defining action for opening door
+	// defining action to open door
 	class OpenDoorAction : public gie::Action
 	{
 	public:
@@ -141,15 +141,21 @@ int basicGoal()
 		// define conditions for action
 		bool prerequisites( const gie::Simulation& context, const gie::Agent& agent ) const override
 		{
-			gie::Guid doorEntityGuid = arguments().guid( "DoorEntity" );
-			auto entityPtr = agent.world()->entity( doorEntityGuid ); 
-			// not valid if no target door entity is found
-			if( !entityPtr )
+			// checking if agent has property telling which door entity is the target
+			auto targetDoorEntityPpt = agent.property( "TargetDoorEntity" ).second;
+			if( !targetDoorEntityPpt )
 			{
 				return false;
 			}
 
-			auto openedPpt = entityPtr->property( "Opened" );
+			// checking if there is an actual door entity in the world
+			auto doorEntity = agent.world()->entity( targetDoorEntityPpt->guid() );
+			if( !doorEntity )
+			{
+				return false;
+			}
+
+			auto openedPpt = doorEntity->property( "Opened" );
 			// not valid if no property "Opened" exists
 			if( !openedPpt.second )
 			{
@@ -212,12 +218,15 @@ int basicGoal()
 	gie::Goal goal{ world };
 
 	// setting goal targets (door must get opened)
-	goal.targets.emplace_back( openedGuid, true );
+	goal.targets.emplace_back( doorOpenedPptGuid, true );
 
-	// creating agent
+	// creating agent (aka npc)
 	auto [ agentGuid, agentPtr ] = world.createAgent();
 
-	// creating planner
+	// agent holds a property used by open door action
+	agentPtr->createProperty( "TargetDoorEntity", doorEntityGuid );
+
+	// creating planner passing goal and agent to reach the goal
 	gie::Planner planner{ goal, *agentPtr };
 
 	// defining available action and its simulator for planner
