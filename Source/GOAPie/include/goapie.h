@@ -514,13 +514,13 @@ namespace gie
 
 		~NamedGuidArguments() = default;
 
-		void addArgument( const NamedGuid newArgument )
+		void add( const NamedGuid newArgument )
 		{
 			_namedGuids.push_back( newArgument );
 			updateType();
 		}
 
-		void addArguments( const std::vector< NamedGuid >& arguments )
+		void add( const std::vector< NamedGuid >& arguments )
 		{
 			if( arguments.empty() )
 			{
@@ -692,9 +692,18 @@ namespace gie
 	{
 		std::unordered_map< StringHash, std::shared_ptr< ActionSetEntry > > _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
-		std::vector< Action > _plannedActions;
+		std::vector< Action > _planActions;
 		Goal* _goal{ nullptr };
 		Agent* _agent{ nullptr };
+
+		// simulation which reached goal
+		Guid _goalSimulationGuid{ NullGuid };
+
+		// runs simulations towards goal
+		void simulate();
+
+		// backtracks simulations building up plan actions
+		void backtrack();
 
     public:
 		Planner() = delete;
@@ -729,7 +738,12 @@ namespace gie
 			return { NullGuid, nullptr };
 		}
 
-		const auto& plannedActions() const { return _plannedActions; }
+		void deleteSimulation( Guid simulationGuid )
+		{
+			_simulations.erase( simulationGuid );
+		}
+
+		const auto& planActions() const { return _planActions; }
 		
 		Simulation* simulation( Guid guid )
 		{
@@ -747,10 +761,70 @@ namespace gie
 
 		void plan()
 		{
+			simulate();
 
 		}
 
+		
+
 	};
+
+	void Planner::simulate()
+	{
+		if( !agent() || !world() || !goal() )
+		{
+			return;
+		}
+
+		_goalSimulationGuid = NullGuid;
+		_simulations.clear();
+
+		// creating root simulation node
+		auto [ rootSimulationGuid, rootSimulation ] = createSimulation();
+		if( !rootSimulation )
+		{
+			return;
+		}
+
+		// starting A* with root simulation node as opened node for expansion
+		std::vector< Guid > openedNodes{ rootSimulationGuid };
+		auto openedNodesItr = openedNodes.begin();
+
+		// go through all opened nodes
+		while( openedNodesItr != openedNodes.end() )
+		{
+			for( auto [ _, actionSetEntry ] : _actionSet )
+			{
+				// getting simulation for action
+				auto actionSimulator = actionSetEntry->simulator( { } );
+				if( !actionSimulator )
+				{
+					continue;
+				}
+
+				// creating new simulation node for action simulation
+				auto [ newSimulationGuid, newSimulation ] = createSimulation( *openedNodesItr );
+
+				// running action simulation on new simulation node
+				bool simulationSuccess = actionSimulator->simulate( *agent(), *newSimulation );
+
+				// removes new simulation node if simulation failed
+				if( !simulationSuccess )
+				{
+					deleteSimulation( newSimulationGuid );
+					continue;
+				}
+
+
+			}
+		}
+		
+	}
+
+	void Planner::backtrack()
+	{
+
+	}
 
 }
 

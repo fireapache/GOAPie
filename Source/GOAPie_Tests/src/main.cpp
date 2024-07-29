@@ -178,16 +178,24 @@ int basicGoal()
 			constexpr float baseCost = 10.f;
 			simulation.cost = baseCost;
 
-			gie::Guid doorEntityGuid = arguments().guid( "DoorEntity" );
-			auto entityPtr = agent.world()->entity( doorEntityGuid );
-			// not valid if no target door entity is found
-			if( !entityPtr )
+			// checking if agent has property telling which door entity is the target
+			auto targetDoorEntityPpt = agent.property( "TargetDoorEntity" ).second;
+			if( !targetDoorEntityPpt )
 			{
 				return false;
 			}
 
+			// checking if there is an actual door entity in the world
+			auto doorEntity = agent.world()->entity( targetDoorEntityPpt->guid() );
+			if( !doorEntity )
+			{
+				return false;
+			}
+
+			simulation.context.entity( doorEntity->guid() );
+
 			// adding distance cost in case there are location properties
-			auto doorLocationPpt = entityPtr->property( "Location" );
+			auto doorLocationPpt = doorEntity->property( "Location" );
 			auto agentLocationPpt = agent.property( "Location" );
 			if( doorLocationPpt.second && agentLocationPpt.second )
 			{
@@ -196,16 +204,22 @@ int basicGoal()
 				const float dist = glm::distance( doorLocation, agentLocation );
 				simulation.cost += dist;
 
-				// adding move action as door is far from agent
-				if( auto moveAction = std::make_shared< MoveAction >( arguments() ) )
+				// creating move action as door is far from agent
+				if( auto moveAction = std::make_shared< MoveAction >() )
 				{
+					// passing target location as argument for action
+					moveAction->arguments().add( { gie::stringHasher( "TargetLocation" ), doorLocationPpt.first } );
+					// queueing move action
 					simulation.actions.emplace_back( moveAction );
 				}
 			}
 
-			// adding open door action
+			// creating open door action
 			if( auto openDoorAction = std::make_shared< OpenDoorAction >( arguments() ) )
 			{
+				// passing door entity as argument for action
+				openDoorAction->arguments().add( { gie::stringHasher( "DoorEntity" ), doorEntity->guid() } );
+				// queueing open door action
 				simulation.actions.emplace_back( openDoorAction );
 			}
 			
@@ -223,7 +237,7 @@ int basicGoal()
 	// creating agent (aka npc)
 	auto [ agentGuid, agentPtr ] = world.createAgent();
 
-	// agent holds a property used by open door action
+	// agent holds a property used by open door simulator
 	agentPtr->createProperty( "TargetDoorEntity", doorEntityGuid );
 
 	// creating planner passing goal and agent to reach the goal
@@ -234,6 +248,9 @@ int basicGoal()
 
 	// setting available actions;
 	planner.addActionSetEntry< OpenDoorActionSetEntry >( gie::stringHasher( "OpenDoor" ) );
+
+	// finally planner doing its thing
+	planner.plan();
 
 	return 0;
 }
