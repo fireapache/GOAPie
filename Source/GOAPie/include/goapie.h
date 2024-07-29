@@ -435,6 +435,7 @@ namespace gie
 
 		float cost{ MaxCost };
 		float heuristic{ MaxHeuristic };
+		size_t depth{ 0 };
 
 		Blackboard context;
 
@@ -729,9 +730,11 @@ namespace gie
 			auto emplaceResult = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, world() } ) );
 			if( emplaceResult.second )
 			{
-				if( currentSimulationGuid != NullGuid )
+				auto currentSimulation = simulation( currentSimulationGuid );
+				if( currentSimulation )
 				{
 					emplaceResult.first->second.incoming.emplace_back( currentSimulationGuid );
+					emplaceResult.first->second.depth = currentSimulation->depth + 1;
 				}
 				return { emplaceResult.first->first, &emplaceResult.first->second };
 			}
@@ -771,11 +774,13 @@ namespace gie
 
 	void Planner::simulate()
 	{
+		// validating world, agent and goal
 		if( !agent() || !world() || !goal() )
 		{
 			return;
 		}
 
+		// resetting simulation
 		_goalSimulationGuid = NullGuid;
 		_simulations.clear();
 
@@ -786,18 +791,30 @@ namespace gie
 			return;
 		}
 
-		// starting A* with root simulation node as opened node for expansion
+		// starting A* by expanding root node
 		std::vector< Guid > openedNodes{ rootSimulationGuid };
-		auto openedNodesItr = openedNodes.begin();
+
+		// defining max depth to avoid endless expansions
+		constexpr size_t depthLimit = 10;
 
 		// go through all opened nodes
+		auto openedNodesItr = openedNodes.begin();
 		while( openedNodesItr != openedNodes.end() )
 		{
+			// getting simulation from opened node
+			auto baseSimulation = simulation( *openedNodesItr );
+
 			for( auto [ _, actionSetEntry ] : _actionSet )
 			{
-				// getting simulation for action
+				// getting simulator for action
 				auto actionSimulator = actionSetEntry->simulator( { } );
 				if( !actionSimulator )
+				{
+					continue;
+				}
+
+				// checking if current simulation context meets action's conditions
+				if( !actionSimulator->prerequisites( *baseSimulation, *agent() ) )
 				{
 					continue;
 				}
@@ -805,17 +822,35 @@ namespace gie
 				// creating new simulation node for action simulation
 				auto [ newSimulationGuid, newSimulation ] = createSimulation( *openedNodesItr );
 
-				// running action simulation on new simulation node
+				// running action simulation on new node
 				bool simulationSuccess = actionSimulator->simulate( *agent(), *newSimulation );
 
-				// removes new simulation node if simulation failed
+				// removing new node in case simulation has failed
 				if( !simulationSuccess )
 				{
 					deleteSimulation( newSimulationGuid );
 					continue;
 				}
 
+				// stopping simulation loop if goal has been reached here
+				if( goal()->reached( *newSimulation ) )
+				{
+					_goalSimulationGuid = newSimulationGuid;
+					openedNodesItr = openedNodes.end();
+					break;
+				}
 
+				// adding new simulation node as opened node for further expansion
+				if( newSimulation->depth < depthLimit )
+				{
+					openedNodes.push_back( newSimulationGuid );
+				}
+			}
+
+			// getting next opened node
+			if( openedNodesItr != openedNodes.end() )
+			{
+				openedNodesItr = openedNodes.erase( openedNodesItr );
 			}
 		}
 		
