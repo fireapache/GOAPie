@@ -149,7 +149,7 @@ int basicGoal()
 			}
 
 			// checking if there is an actual door entity in the world
-			auto doorEntity = agent.world()->entity( targetDoorEntityPpt->guid() );
+			auto doorEntity = agent.world()->entity( targetDoorEntityPpt->getGuid().second );
 			if( !doorEntity )
 			{
 				return false;
@@ -186,13 +186,11 @@ int basicGoal()
 			}
 
 			// checking if there is an actual door entity in the world
-			auto doorEntity = agent.world()->entity( targetDoorEntityPpt->guid() );
+			auto doorEntity = agent.world()->entity( targetDoorEntityPpt->getGuid().second );
 			if( !doorEntity )
 			{
 				return false;
 			}
-
-			simulation.context.entity( doorEntity->guid() );
 
 			// adding distance cost in case there are location properties
 			auto doorLocationPpt = doorEntity->property( "Location" );
@@ -246,7 +244,7 @@ int basicGoal()
 	// defining available action and its simulator for planner
 	DEFINE_ACTION_SET_ENTRY( OpenDoor )
 
-	// setting available actions;
+	// setting available actions
 	planner.addActionSetEntry< OpenDoorActionSetEntry >( gie::stringHasher( "OpenDoor" ) );
 
 	// finally planner doing its thing

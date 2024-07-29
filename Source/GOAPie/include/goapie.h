@@ -30,7 +30,7 @@ namespace gie
 			bool,
 			float,
 			int32_t,
-			StringHash,
+			Guid,
 			ArrayType,
 			glm::vec3,
 			void* > Variant;
@@ -40,7 +40,7 @@ namespace gie
 		std::pair< bool, bool >			getBool()		const { return std::pair{ type() == Boolean, std::get< bool >( value ) }; }
 		std::pair< bool, float >		getFloat()		const { return std::pair{ type() == Float, std::get< float >( value ) }; }
 		std::pair< bool, int32_t >		getInteger()	const { return std::pair{ type() == Integer, std::get< int32_t >( value ) }; }
-		std::pair< bool, StringHash >	getStringHash()	const { return std::pair{ type() == String, std::get< StringHash >( value ) }; }
+		std::pair< bool, Guid >			getGuid()		const { return std::pair{ type() == GUID, std::get< Guid >( value ) }; }
 		std::pair< bool, ArrayType >	getArray()		const { return std::pair{ type() == Array, std::get< ArrayType >( value ) }; }
 		std::pair< bool, glm::vec3 >	getVec3()		const { return std::pair{ type() == Vec3, std::get< glm::vec3 >( value ) }; }
 		std::pair< bool, void* >		getCustom()		const { return std::pair{ type() == Custom, std::get< void* >( value ) }; }
@@ -51,7 +51,7 @@ namespace gie
 			Boolean,
 			Float,
 			Integer,
-			String,
+			GUID,
 			Array,
 			Vec3,
 			Custom
@@ -63,7 +63,7 @@ namespace gie
 			if( std::holds_alternative< bool >			( value ) )	return Boolean;
 			if( std::holds_alternative< float >			( value ) )	return Float;
 			if( std::holds_alternative< int32_t >		( value ) )	return Integer;
-			if( std::holds_alternative< StringHash >	( value ) ) return String;
+			if( std::holds_alternative< StringHash >	( value ) ) return GUID;
 			if( std::holds_alternative< ArrayType >		( value ) )	return Array;
 			if( std::holds_alternative< glm::vec3 >		( value ) )	return Vec3;
 			if( std::holds_alternative< void* >			( value ) )	return Custom;
