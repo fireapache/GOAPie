@@ -192,6 +192,8 @@ int basicGoal()
 				return false;
 			}
 
+			//simulation.property(  );
+
 			// adding distance cost in case there are location properties
 			auto doorLocationPpt = doorEntity->property( "Location" );
 			auto agentLocationPpt = agent.property( "Location" );
@@ -220,7 +222,7 @@ int basicGoal()
 				// queueing open door action
 				simulation.actions.emplace_back( openDoorAction );
 			}
-			
+
 			return true;
 		}
 

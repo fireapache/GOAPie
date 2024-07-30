@@ -164,6 +164,10 @@ namespace gie
 		// @return Guid to a new data entity.
 		virtual std::pair< Guid, class Entity* > createEntity() = 0;
 		virtual void removeEntity( const Guid guid ) = 0;
+		// @return Guid to a new (orphan) property.
+		// NOTE: it is not assigned to an entity!
+		virtual std::pair< Guid, class Property* > createProperty( Guid guid, StringHash name ) = 0;
+		virtual void removeProperty( const Guid guid ) = 0;
 		virtual void eraseAll() = 0;
 		// @return Pointer to an existing property.
 		virtual Property* property( const Guid guid ) = 0;
@@ -192,6 +196,8 @@ namespace gie
 		Blackboard( class World* world ) : _world( world ) {  };
 		~Blackboard() = default;
 
+		World* world() { return _world; }
+
 		EntityMap& entities() { return _entities; }
 		const EntityMap& entities() const { return _entities; }
 
@@ -199,23 +205,41 @@ namespace gie
 		const PropertyMap& properties() const { return _properties; }
 
 		// IDataEntityManager interface
-		std::pair< Guid, class Agent* > createAgent()			override;
-		std::pair< Guid, Entity* > createEntity()				override;
-		Property* property( const Guid guid )					override;
-		const Property* property( const Guid guid )	const		override;
-		Entity* entity( const Guid guid )						override;
-		const Entity* entity( const Guid guid ) const			override;
-		class Agent* agent( const Guid guid )					override;
-		const class Agent* agent( const Guid guid ) const		override;
-		void removeAgent( const Guid guid )						override { removeEntity( guid ); }
-		void removeEntity( const Guid guid )					override { _entities.erase( guid ); }
-		void eraseAll()											override { _entities.clear(); }
+		std::pair< Guid, class Agent* > createAgent()		override;
+		std::pair< Guid, Entity* > createEntity()			override;
+		Property* property( const Guid guid )				override;
+		const Property* property( const Guid guid )	const	override;
+		Entity* entity( const Guid guid )					override;
+		const Entity* entity( const Guid guid ) const		override;
+		class Agent* agent( const Guid guid )				override;
+		const class Agent* agent( const Guid guid ) const	override;
+		void removeAgent( const Guid guid )					override { removeEntity( guid ); }
+		void removeEntity( const Guid guid )				override { _entities.erase( guid ); }
+		void removeProperty( const Guid guid )				override { _properties.erase( guid ); }
+		void eraseAll()										override { _entities.clear(); }
+
+		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name )	override;
 	};
 
 	std::pair< Guid, Entity* > Blackboard::createEntity()
 	{
 		Entity entity{ _world };
 		auto result = _entities.emplace( entity.guid(), std::move( entity ) );
+		if( result.second )
+		{
+			return std::pair{ result.first->first, &result.first->second };
+		}
+		return std::pair{ NullGuid, nullptr };
+	}
+
+	std::pair< Guid, Property* > Blackboard::createProperty( Guid guid, StringHash name )
+	{
+		if( guid == NullGuid )
+		{
+			guid = randGuid();
+		}
+		Property property{ guid, NullGuid, name };
+		auto result = _properties.emplace( guid, std::move( property ) );
 		if( result.second )
 		{
 			return std::pair{ result.first->first, &result.first->second };
@@ -284,6 +308,7 @@ namespace gie
 		void removeAgent( const Guid guid )					override { _context.removeAgent( guid ); };
 		std::pair< Guid, Entity* > createEntity()			override { return _context.createEntity(); };
 		void removeEntity( const Guid guid )				override { _context.removeEntity( guid ); };
+		void removeProperty( const Guid guid )				override { _context.removeProperty( guid ); };
 		void eraseAll()										override { _context.eraseAll(); };
 		Property* property( const Guid guid )				override { return  _context.property( guid ); }
 		const Property* property( const Guid guid ) const	override { return  _context.property( guid ); }
@@ -291,6 +316,8 @@ namespace gie
 		const Entity* entity( const Guid guid ) const		override { return  _context.entity( guid ); }
 		class Agent* agent( const Guid guid )				override { return _context.agent( guid ); }
 		const class Agent* agent( const Guid guid ) const	override { return _context.agent( guid ); }
+
+		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name )	override { return _context.createProperty( guid, name ); };
 
 	};
 
@@ -423,21 +450,37 @@ namespace gie
 	class Simulation
 	{
 		Guid _guid{ NullGuid };
+		Blackboard _context;
 
 	public:
 		Simulation() = delete;
-		Simulation( World* world ) : _guid( randGuid() ), context( world ) { }
-		Simulation( Guid guid, World* world ) : _guid( guid ), context( world ) { }
+		Simulation( World* world ) : _guid( randGuid() ), _context( world ) { }
+		Simulation( Guid guid, World* world ) : _guid( guid ), _context( world ) { }
 		Simulation( Simulation&& ) = default;
 		~Simulation() = default;
 
 		Guid guid() const { return _guid; }
+		const Blackboard& context() const { return _context; }
+		Blackboard& context() { return _context; }
 
 		float cost{ MaxCost };
 		float heuristic{ MaxHeuristic };
 		size_t depth{ 0 };
 
-		Blackboard context;
+		Property* property( Guid guid, StringHash name, bool checkWorld = false )
+		{
+			if( auto ppt = _context.property( guid ) )
+			{
+				return ppt;
+			}
+
+			if( checkWorld )
+			{
+				return _context.world()->property( guid );
+			}
+
+			return _context.createProperty( guid, name ).second;
+		}
 
 		// Incoming simulation connections.
 		std::vector< Guid > incoming;
@@ -641,7 +684,7 @@ namespace gie
 		{
 			for( auto targetItr = targets.cbegin(); targetItr != targets.cend(); targetItr++ )
 			{
-				auto& properties = simulation.context.properties();
+				auto& properties = simulation.context().properties();
 				const auto propertyItr = properties.find( targetItr->first );
 				if( propertyItr != properties.cend() )
 				{
