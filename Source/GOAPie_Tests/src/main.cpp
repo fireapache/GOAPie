@@ -192,8 +192,15 @@ int basicGoal()
 				return false;
 			}
 
-			//simulation.property(  );
+			// setting simulation property
+			auto [ openedPptGuid, openedPpt ] = doorEntity->property( "Opened" );
+			if( !openedPpt )
+			{
+				return false;
+			}
 
+			simulation.setProperty( openedPpt->guid(), true );
+			
 			// adding distance cost in case there are location properties
 			auto doorLocationPpt = doorEntity->property( "Location" );
 			auto agentLocationPpt = agent.property( "Location" );
@@ -251,6 +258,15 @@ int basicGoal()
 
 	// finally planner doing its thing
 	planner.plan();
+
+	// printing planned actions
+	for( auto action : planner.planActions() )
+	{
+		if( action )
+		{
+			std::cout << action->name() << std::endl;
+		}
+	}
 
 	return 0;
 }

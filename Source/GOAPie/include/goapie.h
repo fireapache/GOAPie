@@ -75,6 +75,9 @@ namespace gie
 
 		// @return Guid for data entity which this property belongs to.
 		Guid ownerGuid() const { return _owner; }
+
+		// @return StringHash representing the name given to this property.
+		StringHash name() const { return _name; }
 	};
 
 	typedef std::pair< Guid, Property::Variant > Definition;
@@ -197,6 +200,7 @@ namespace gie
 		~Blackboard() = default;
 
 		World* world() { return _world; }
+		const World* world() const { return _world; }
 
 		EntityMap& entities() { return _entities; }
 		const EntityMap& entities() const { return _entities; }
@@ -467,19 +471,59 @@ namespace gie
 		float heuristic{ MaxHeuristic };
 		size_t depth{ 0 };
 
-		Property* property( Guid guid, StringHash name, bool checkWorld = false )
+		// Set property in simulation context.
+		// @param guid: property unique identifier
+		// @param value: variant value to be assigned to property
+		// @return True if property is set successfully, False otherwise
+		bool setProperty( Guid guid, Property::Variant value )
 		{
-			if( auto ppt = _context.property( guid ) )
+			Property* ppt{ nullptr };
+
+			if( ppt = _context.property( guid ) )
 			{
-				return ppt;
+				ppt->value = value;
+			}
+			else if( ppt = _context.world()->property( guid ) )
+			{
+				auto [ newPptGuid, newPpt ] = _context.createProperty( guid, ppt->name() );
+				newPpt->value = value;
+				ppt = newPpt;
 			}
 
-			if( checkWorld )
+			return ppt != nullptr;
+		}
+
+		enum PropertyContextType : uint8_t
+		{
+			None,
+			Sim,
+			World
+		};
+
+		struct FetchPropertyResult
+		{
+			PropertyContextType contextType{ None };
+			const Property* property{ nullptr };
+		};
+
+		// Get property from either simulation context or world.
+		// @param guid: property unique identifier
+		// @return Pointer to property if property is set successfully, False otherwise
+		FetchPropertyResult getProperty( Guid guid )
+		{
+			const Property* ppt{ nullptr };
+
+			if( ppt = _context.property( guid ) )
 			{
-				return _context.world()->property( guid );
+				return { Sim, ppt };
+			}
+			else if( ppt = _context.world()->property( guid ) )
+			{
+				auto newPpt = _context.createProperty( guid, ppt->name() );
+				return { World, newPpt.second };
 			}
 
-			return _context.createProperty( guid, name ).second;
+			return { None, nullptr };
 		}
 
 		// Incoming simulation connections.
@@ -682,9 +726,9 @@ namespace gie
 		// @Return True if given simulation has reached goal targets, False otherwise.
 		bool reached( const Simulation& simulation ) const
 		{
+			auto& properties = simulation.context().properties();
 			for( auto targetItr = targets.cbegin(); targetItr != targets.cend(); targetItr++ )
 			{
-				auto& properties = simulation.context().properties();
 				const auto propertyItr = properties.find( targetItr->first );
 				if( propertyItr != properties.cend() )
 				{
@@ -736,7 +780,7 @@ namespace gie
 	{
 		std::unordered_map< StringHash, std::shared_ptr< ActionSetEntry > > _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
-		std::vector< Action > _planActions;
+		std::vector< std::shared_ptr< Action > > _planActions;
 		Goal* _goal{ nullptr };
 		Agent* _agent{ nullptr };
 
@@ -808,7 +852,7 @@ namespace gie
 		void plan()
 		{
 			simulate();
-
+			backtrack();
 		}
 
 		
@@ -901,7 +945,44 @@ namespace gie
 
 	void Planner::backtrack()
 	{
+		// stop if no goal simulation node is assigned
+		if( _goalSimulationGuid == NullGuid )
+		{
+			return;
+		}
 
+		// checking if simulation node exists
+		auto goalSimulationNode = _simulations.find( _goalSimulationGuid );
+		if( goalSimulationNode == _simulations.end() )
+		{
+			return;
+		}
+
+		// cleaning previous planned actions
+		_planActions.clear();
+
+		// backtracking from leaf to root simulation nodes
+		Guid currentSimulationNode = _goalSimulationGuid;
+		while( currentSimulationNode != NullGuid )
+		{
+			auto simulationNode = _simulations.find( currentSimulationNode );
+			if( simulationNode == _simulations.end() )
+			{
+				break;
+			}
+
+			_planActions.insert( _planActions.end(), simulationNode->second.actions.begin(), simulationNode->second.actions.end() );
+			
+			if( simulationNode->second.incoming.empty() )
+			{
+				currentSimulationNode = NullGuid;
+				break;
+			}
+
+			currentSimulationNode = simulationNode->second.incoming.front();
+		}
+
+		
 	}
 
 }
