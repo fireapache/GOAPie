@@ -296,6 +296,33 @@ namespace gie
 		return nullptr;
 	}
 
+	class StringRegister
+	{
+		std::unordered_map< StringHash, std::string > _storage;
+
+	public:
+
+		StringHash add( const std::string_view value )
+		{
+			StringHash key = stringHasher( value );
+			if( _storage.emplace( key, value ).second )
+			{
+				return key;
+			}
+			return InvalidStringHash;
+		}
+
+		std::string_view get( const StringHash key ) const
+		{
+			auto find = _storage.find( key );
+			if( find != _storage.end() )
+			{
+				return find->second;
+			}
+			return std::string_view{};
+		}
+	};
+
 	class World : public IDataEntityManager
 	{
 		Blackboard _context{ this };

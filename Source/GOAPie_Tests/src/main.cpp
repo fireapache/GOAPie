@@ -54,6 +54,9 @@ int basicGoal()
 	// adding property to door entity and setting its default value
 	auto [ doorOpenedPptGuid, doorOpenedPpt ] = doorEntity->createProperty( "Opened", false );
 
+	// creating string register to point string hashes back to strings
+	static gie::StringRegister stringRegister;
+
 	// Defining a move action to be used by open door action
 	class MoveAction : public gie::Action
 	{
@@ -62,7 +65,7 @@ int basicGoal()
 		// inheriting constructors
 		using gie::Action::Action;
 
-		gie::StringHash name() const override { return gie::stringHasher( "Move" ); }
+		gie::StringHash name() const override { return stringRegister.add( "Move" ); }
 
 		// defines how world and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
@@ -102,7 +105,7 @@ int basicGoal()
 		// inheriting constructors
 		using gie::Action::Action;
 
-		gie::StringHash name() const override { return gie::stringHasher( "OpenDoor" ); }
+		gie::StringHash name() const override { return stringRegister.add( "OpenDoor" ); }
 
 		// defines how world and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
@@ -136,7 +139,7 @@ int basicGoal()
 		
 		using gie::ActionSimulator::ActionSimulator;
 
-		gie::StringHash name() const override { return gie::stringHasher( "OpenDoor" ); }
+		gie::StringHash name() const override { return stringRegister.add( "OpenDoor" ); }
 
 		// define conditions for action
 		bool prerequisites( const gie::Simulation& context, const gie::Agent& agent ) const override
@@ -256,6 +259,11 @@ int basicGoal()
 	// setting available actions
 	planner.addActionSetEntry< OpenDoorActionSetEntry >( gie::stringHasher( "OpenDoor" ) );
 
+	// setting agent and door locations so there will be a Move action before OpenDoor
+	// NOTE: these can be commented out and plan will only contain an OpenDoor action
+	agentPtr->createProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+	doorEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 1.f } );
+
 	// finally planner doing its thing
 	planner.plan();
 
@@ -264,7 +272,15 @@ int basicGoal()
 	{
 		if( action )
 		{
-			std::cout << action->name() << std::endl;
+			auto registeredString = stringRegister.get( action->name() );
+			if( !registeredString.empty() )
+			{
+				std::cout << registeredString << std::endl;
+			}
+			else
+			{
+				std::cout << action->name() << std::endl;
+			}
 		}
 	}
 
