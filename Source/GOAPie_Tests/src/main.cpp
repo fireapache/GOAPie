@@ -54,6 +54,23 @@ int basicGoal()
 	// adding property to door entity and setting its default value
 	auto [ doorOpenedPptGuid, doorOpenedPpt ] = doorEntity->createProperty( "Opened", false );
 
+	// creating goal
+	gie::Goal goal{ world };
+
+	// setting goal targets (door must get opened)
+	goal.targets.emplace_back( doorOpenedPptGuid, true );
+
+	// creating agent (aka npc)
+	auto [ agentEntityGuid, agentEntity ] = world.createAgent();
+
+	// agent holds a property used by open door simulator
+	agentEntity->createProperty( "TargetDoorEntity", doorEntityGuid );
+
+	// setting agent and door locations so there will be a Move action before OpenDoor
+	// NOTE: these can be commented out and plan will only contain an OpenDoor action
+	agentEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+	doorEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 1.f } );
+
 	// creating string register to point string hashes back to strings
 	static gie::StringRegister stringRegister;
 
@@ -238,31 +255,14 @@ int basicGoal()
 
 	};
 
-	// creating goal
-	gie::Goal goal{ world };
-
-	// setting goal targets (door must get opened)
-	goal.targets.emplace_back( doorOpenedPptGuid, true );
-
-	// creating agent (aka npc)
-	auto [ agentGuid, agentPtr ] = world.createAgent();
-
-	// agent holds a property used by open door simulator
-	agentPtr->createProperty( "TargetDoorEntity", doorEntityGuid );
-
 	// creating planner passing goal and agent to reach the goal
-	gie::Planner planner{ goal, *agentPtr };
+	gie::Planner planner{ goal, *agentEntity };
 
 	// defining available action and its simulator for planner
 	DEFINE_ACTION_SET_ENTRY( OpenDoor )
 
 	// setting available actions
 	planner.addActionSetEntry< OpenDoorActionSetEntry >( gie::stringHasher( "OpenDoor" ) );
-
-	// setting agent and door locations so there will be a Move action before OpenDoor
-	// NOTE: these can be commented out and plan will only contain an OpenDoor action
-	agentPtr->createProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-	doorEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 1.f } );
 
 	// finally planner doing its thing
 	planner.plan();
