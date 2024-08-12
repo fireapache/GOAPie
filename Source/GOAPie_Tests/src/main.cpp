@@ -43,6 +43,25 @@ int insertingParameters()
 	return 0;
 }
 
+void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions, gie::StringRegister& stringRegister )
+{
+	for( auto action : plannedActions )
+	{
+		if( action )
+		{
+			auto registeredString = stringRegister.get( action->name() );
+			if( !registeredString.empty() )
+			{
+				std::cout << registeredString << std::endl;
+			}
+			else
+			{
+				std::cout << action->name() << std::endl;
+			}
+		}
+	}
+}
+
 int basicGoal()
 {
 	// creating world
@@ -268,26 +287,142 @@ int basicGoal()
 	planner.plan();
 
 	// printing planned actions
-	for( auto action : planner.planActions() )
+	printPlannedActions( planner.planActions(), stringRegister );
+
+	return 0;
+}
+
+int woodHouse()
+{
+	// creating world
+	gie::World world;
+
+	// creating agent (aka npc)
+	auto [ agentEntityGuid, agentEntity ] = world.createAgent();
+
+	// property telling if agent has a wood house
+	 auto [ agentWoodHousePptGuid, agentWoodHousePpt ] = agentEntity->createProperty( "WoodHouse", false );
+
+	// creating goal
+	gie::Goal goal{ world };
+
+	// setting goal targets (agent's wood house must exist)
+	goal.targets.emplace_back( agentWoodHousePptGuid, true );
+
+	// creating string register to point string hashes back to strings
+	static gie::StringRegister stringRegister;
+
+	// Defining a cut down tree action aiming a target tree
+	class CutDownTreeAction : public gie::Action
 	{
-		if( action )
+	public:
+
+		// inheriting constructors
+		using gie::Action::Action;
+
+		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
+
+		// defines how world and agent are affected by this action
+		bool outcome( gie::Agent& agent ) override
 		{
-			auto registeredString = stringRegister.get( action->name() );
-			if( !registeredString.empty() )
+			// getting target tree from arguments
+			gie::Guid targetTreeGuid = arguments().guid( "TargetTree" );
+			auto targetTree = agent.world()->entity( targetTreeGuid );
+			if( !targetTree )
 			{
-				std::cout << registeredString << std::endl;
+				return false;
 			}
-			else
-			{
-				std::cout << action->name() << std::endl;
-			}
+
+			// retagging tree
+			auto& entityTagRegister = agent.world()->context().entityTagRegister();
+			entityTagRegister.untag( targetTree, { gie::stringHasher( "TreeUp" ) } );
+			entityTagRegister.tag( targetTree, { gie::stringHasher( "TreeDown" ) } );
+
+			return true;
 		}
+	};
+
+	// defining simulator for action cut down tree
+	class CutDownTreeSimulator : public gie::ActionSimulator
+	{
+	public:
+		
+		using gie::ActionSimulator::ActionSimulator;
+
+		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
+
+		// define conditions for action
+		bool prerequisites( const gie::Simulation& baseSimulation, const gie::Agent& agent ) const override
+		{
+			auto& entityTagRegister = baseSimulation.context().entityTagRegister();
+
+			// getting set of trees still up
+			auto treeUpTagSet = entityTagRegister.tagSet( gie::stringHasher( "TreeUp" ) );
+
+			// no tag set found
+			if( !treeUpTagSet )
+			{
+				return false;
+			}
+
+			// no tree up found
+			if( treeUpTagSet->empty() )
+			{
+				return false;
+			}
+
+			return true;
+		}
+
+		// calculate cost and necessary steps (other actions) to achieve the action being simulated
+		bool simulate( gie::Agent& agent, gie::Simulation& simulation ) const override
+		{
+			auto& entityTagRegister = simulation.context().entityTagRegister();
+
+			// getting set of trees still up
+			auto treeUpTagSet = entityTagRegister.tagSet( gie::stringHasher( "TreeUp" ) );
+
+			// creating cut down tree action
+			if( auto cutDownTreeAction = std::make_shared< CutDownTreeAction >( arguments() ) )
+			{
+				// passing target tree entity guid as argument for action
+				cutDownTreeAction->arguments().add( { gie::stringHasher( "TargetTree" ), *treeUpTagSet->cbegin() } );
+				// queueing action
+				simulation.actions.emplace_back( cutDownTreeAction );
+			}
+
+			return true;
+		}
+
+	};
+
+	// adding trees to world
+	constexpr size_t treeCount = 6;
+	for( size_t i = 0; i < treeCount; i++ )
+	{
+		auto [ treeEntityGuid, treeEntity ] = world.createEntity();
+		world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "Tree" ), gie::stringHasher( "TreeUp" ) } );
 	}
+
+	// creating planner passing goal and agent to reach the goal
+	gie::Planner planner{ goal, *agentEntity };
+
+	// defining available action and its simulator for planner
+	DEFINE_ACTION_SET_ENTRY( CutDownTree )
+
+	// setting available actions
+	planner.addActionSetEntry< CutDownTreeActionSetEntry >( gie::stringHasher( "CutDownTree" ) );
+
+	// finally planner doing its thing
+	planner.plan();
+
+	// printing planned actions
+	printPlannedActions( planner.planActions(), stringRegister );
 
 	return 0;
 }
 
 int main( int argc, char** argv )
 {
-	return basicGoal();
+	return woodHouse();
 }

@@ -85,6 +85,13 @@ namespace gie
 
 	class Entity
 	{
+		friend class EntityTagRegister;
+
+	protected:
+		class World* _world;
+		Guid _guid{ NullGuid };
+		std::unordered_map< StringHash, Guid > _propertyGuids;
+		TagSet _tags;
 		
 	public:
 		Entity() = delete;
@@ -94,6 +101,8 @@ namespace gie
 		~Entity() = default;
 
 		Guid guid() const { return _guid; }
+		TagSet& tags() { return _tags; }
+		const TagSet& tags() const { return _tags; }
 
 		typedef std::pair< Guid, Property* > FetchPropertyResult;
 
@@ -150,12 +159,6 @@ namespace gie
 
 		class World* world() const { return _world; }
 
-
-	protected:
-		class World* _world;
-		Guid _guid{ NullGuid };
-		std::unordered_map< StringHash, Guid > _propertyGuids;
-
 	};
 
 	class IDataEntityManager
@@ -186,6 +189,133 @@ namespace gie
 		virtual const class Agent* agent( const Guid guid ) const = 0;
 	};
 
+	// Keep track of entity tags, grouping entities for tag based queries
+	class EntityTagRegister
+	{
+		friend class Simulation;
+
+		World* _world{ nullptr };
+		std::unordered_map< Tag, std::set< Guid > > _storage;
+
+		std::set< Guid >* _tagSet( Tag entityTag )
+		{
+			auto mapFind = _storage.find( entityTag );
+			if( mapFind != _storage.end() )
+			{
+				return &mapFind->second;
+			}
+			return nullptr;
+		}
+
+		std::set< Guid >* _makeEmptyTagSet( Tag entityTag )
+		{
+			auto mapFind = _storage.find( entityTag );
+			if( mapFind != _storage.end() )
+			{
+				auto empl = _storage.emplace( entityTag, std::set< Guid >{ } );
+				return empl.second ? &empl.first->second : nullptr;
+			}
+		}
+
+		void _copyTagSet( const EntityTagRegister& sourceRegister, EntityTagRegister& targetRegister, Tag tag )
+		{
+			auto sourceTagSet = sourceRegister.tagSet( tag );
+			auto targetTagSet = targetRegister._tagSet( tag );
+			if( sourceTagSet && targetTagSet )
+			{
+				*targetTagSet = *sourceTagSet;
+			}
+		}
+
+	public:
+		EntityTagRegister() = delete;
+		EntityTagRegister( World* world ) : _world( world ) { }
+		EntityTagRegister( const EntityTagRegister& other ) = default;
+
+		World* world() const { return _world; }
+
+		void tag( Guid entityGuid, std::vector< Tag >& tags )
+		{
+			if( world() && !tags.empty() )
+			{
+				auto entity = world()->entity( entityGuid );
+				tag( entity, tags );
+			}
+		}
+
+		void tag( Guid entityGuid, std::vector< Tag >&& tags )
+		{
+			tag( entityGuid, tags );
+		}
+
+		void tag( Entity* entity, std::vector< Tag >& tags )
+		{
+			if( entity )
+			{
+				for( Tag entityTag : tags )
+				{
+					entity->_tags.insert( entityTag );
+					auto set = _tagSet( entityTag );
+					if( !set )
+					{
+						_storage.emplace( entityTag, std::set< Guid >{ } );
+					}
+					set->insert( entity->guid() );
+				}
+			}
+		}
+
+		void tag( Entity* entity, std::vector< Tag >&& tags )
+		{
+			tag( entity, tags );
+		}
+
+		void untag( Guid entityGuid, std::vector< Tag >& tags )
+		{
+			if( world() && !tags.empty() )
+			{
+				auto entity = world()->entity( entityGuid );
+				untag( entity, tags );
+			}
+		}
+
+		void untag( Guid entityGuid, std::vector< Tag >&& tags )
+		{
+			untag( entityGuid, tags );
+		}
+
+		void untag( Entity* entity, std::vector< Tag >& tags )
+		{
+			if( entity )
+			{
+				for( Tag entityTag : tags )
+				{
+					entity->_tags.erase( entityTag );
+					if( auto set = _tagSet( entityTag ) )
+					{
+						set->erase( entity->guid() );
+					}
+				}
+			}
+		}
+
+		void untag( Entity* entity, std::vector< Tag >&& tags )
+		{
+			untag( entity, tags );
+		}
+
+		const std::set< Guid >* tagSet( Tag entityTag ) const
+		{
+			auto mapFind = _storage.find( entityTag );
+			if( mapFind != _storage.end() )
+			{
+				return &mapFind->second;
+			}
+			return nullptr;
+		}
+
+	};
+
 	typedef std::unordered_map< Guid, Entity > EntityMap;
 	typedef std::unordered_map< Guid, Property > PropertyMap;
 
@@ -194,9 +324,11 @@ namespace gie
 		class World* _world;
 		EntityMap _entities;
 		PropertyMap _properties;
+		EntityTagRegister _entityTagRegister;
 
 	public:
-		Blackboard( class World* world ) : _world( world ) {  };
+		Blackboard( class World* world ) : _world( world ), _entityTagRegister( world ) {  };
+		Blackboard( const Blackboard& other ) = default;
 		~Blackboard() = default;
 
 		World* world() { return _world; }
@@ -207,6 +339,9 @@ namespace gie
 
 		PropertyMap& properties() { return _properties; }
 		const PropertyMap& properties() const { return _properties; }
+
+		EntityTagRegister& entityTagRegister() { return _entityTagRegister; }
+		const EntityTagRegister& entityTagRegister() const { return _entityTagRegister; }
 
 		// IDataEntityManager interface
 		std::pair< Guid, class Agent* > createAgent()		override;
@@ -450,6 +585,16 @@ namespace gie
 		return std::pair{ NullGuid, nullptr };
 	}
 
+	bool isTagged( const Entity* entity, Tag tag )
+	{
+		if( entity )
+		{
+			const auto& entityTags = entity->tags();
+			return entityTags.find( tag ) != entityTags.cend();
+		}
+		return false;
+	}
+
 	class Heuristic
 	{
     public:
@@ -482,21 +627,91 @@ namespace gie
 	{
 		Guid _guid{ NullGuid };
 		Blackboard _context;
+		World* _world;
+
+		void _syncWorldTagSet( Tag entityTag )
+		{
+			auto& simulationTagRegister = context().entityTagRegister();
+			auto simulationTagSet = simulationTagRegister._tagSet( entityTag );
+			auto& worldTagRegister = world()->context().entityTagRegister();
+
+			if( auto worldTagSet = worldTagRegister.tagSet( entityTag ) )
+			{
+				// world context has tag set, copying it over to simulation context
+				simulationTagSet = simulationTagRegister._makeEmptyTagSet( entityTag );
+				simulationTagRegister._copyTagSet( worldTagRegister, simulationTagRegister, entityTag );
+			}
+			else
+			{
+				// create tag set in simulation context if none exist in world context
+				simulationTagSet = simulationTagRegister._makeEmptyTagSet( entityTag );
+			}
+		}
 
 	public:
 		Simulation() = delete;
 		Simulation( World* world ) : _guid( randGuid() ), _context( world ) { }
-		Simulation( Guid guid, World* world ) : _guid( guid ), _context( world ) { }
+		Simulation( Guid guid, World* world ) : _world( world ), _guid( guid ), _context( world ) { }
+		Simulation( Guid guid, World* world, const Blackboard& parentContext ) : _world( world ), _guid( guid ), _context( parentContext ) { }
 		Simulation( Simulation&& ) = default;
 		~Simulation() = default;
 
 		Guid guid() const { return _guid; }
 		const Blackboard& context() const { return _context; }
 		Blackboard& context() { return _context; }
+		World* world() { return _world; }
 
 		float cost{ MaxCost };
 		float heuristic{ MaxHeuristic };
 		size_t depth{ 0 };
+
+		// Tag entity in simulation context.
+		void tag( Entity* entity, std::vector< Tag >& tags )
+		{
+			if( !entity )
+			{
+				return;
+			}
+
+			for( auto entityTag : tags )
+			{
+				auto& simulationTagRegister = context().entityTagRegister();
+				auto simulationTagSet = simulationTagRegister._tagSet( entityTag );
+
+				// no tag set in simulation context yet, need to check world context
+				if( !simulationTagSet )
+				{
+					_syncWorldTagSet( entityTag );
+				}
+
+				// tagging entity in simulation context
+				simulationTagRegister.tag( entity, { entityTag } );
+			}
+		}
+
+		// Untag entity in simulation context.
+		void untag( Entity* entity, std::vector< Tag >& tags )
+		{
+			if( !entity )
+			{
+				return;
+			}
+
+			for( auto entityTag : tags )
+			{
+				auto& simulationTagRegister = context().entityTagRegister();
+				auto simulationTagSet = simulationTagRegister._tagSet( entityTag );
+
+				// no tag set in simulation context yet, need to check world context
+				if( !simulationTagSet )
+				{
+					_syncWorldTagSet( entityTag );
+				}
+
+				// tagging entity in simulation context
+				simulationTagRegister.untag( entity, { entityTag } );
+			}
+		}
 
 		// Set property in simulation context.
 		// @param guid: property unique identifier
@@ -840,18 +1055,42 @@ namespace gie
 
 		std::pair< Guid, Simulation* > createSimulation( Guid currentSimulationGuid = NullGuid )
 		{
-			Guid newRandGuid{ randGuid() };
-			auto emplaceResult = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, world() } ) );
-			if( emplaceResult.second )
+			auto currentSimulation = simulation( currentSimulationGuid );
+			if( currentSimulationGuid != NullGuid && !currentSimulation )
 			{
-				auto currentSimulation = simulation( currentSimulationGuid );
+				return { NullGuid, nullptr };
+			}
+
+			Guid newRandGuid{ randGuid() };
+			Simulation* newSimulation;
+
+			if( currentSimulation )
+			{
+				auto empl = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, world(), currentSimulation->context() } ) );
+				if( empl.second )
+				{
+					newSimulation = &empl.first->second;
+				}
+			}
+			else
+			{
+				auto empl = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, world() } ) );
+				if( empl.second )
+				{
+					newSimulation = &empl.first->second;
+				}
+			}
+			
+			if( newSimulation )
+			{
 				if( currentSimulation )
 				{
-					emplaceResult.first->second.incoming.emplace_back( currentSimulationGuid );
-					emplaceResult.first->second.depth = currentSimulation->depth + 1;
+					newSimulation->incoming.emplace_back( currentSimulationGuid );
+					newSimulation->depth = currentSimulation->depth + 1;
 				}
-				return { emplaceResult.first->first, &emplaceResult.first->second };
+				return { newRandGuid, newSimulation };
 			}
+
 			return { NullGuid, nullptr };
 		}
 
@@ -864,6 +1103,10 @@ namespace gie
 		
 		Simulation* simulation( Guid guid )
 		{
+			if( guid == NullGuid )
+			{
+				return nullptr;
+			}
 			auto itr = _simulations.find( guid );
 			return ( itr != _simulations.end() ? &( itr->second ) : nullptr );
 		}
