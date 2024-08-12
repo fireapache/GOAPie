@@ -298,8 +298,8 @@ project "Tests"
 	
 	dependson { "GOAPie" }
 	includedirs { "Source/GOAPie/include/", "Source/GLM/", "Source/UUID_V4/" }
-	links { "GOAPie.lib" }
-	libdirs { ("Intermediate/GOAPie-" .. outputdir) }
+	--links { "GOAPie.lib" }
+	--libdirs { ("Intermediate/GOAPie-" .. outputdir) }
 
 	files
 	{

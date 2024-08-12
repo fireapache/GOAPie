@@ -234,14 +234,7 @@ namespace gie
 
 		World* world() const { return _world; }
 
-		void tag( Guid entityGuid, std::vector< Tag >& tags )
-		{
-			if( world() && !tags.empty() )
-			{
-				auto entity = world()->entity( entityGuid );
-				tag( entity, tags );
-			}
-		}
+		void tag( Guid entityGuid, std::vector< Tag >& tags );
 
 		void tag( Guid entityGuid, std::vector< Tag >&& tags )
 		{
@@ -258,9 +251,16 @@ namespace gie
 					auto set = _tagSet( entityTag );
 					if( !set )
 					{
-						_storage.emplace( entityTag, std::set< Guid >{ } );
+						auto empl = _storage.emplace( entityTag, std::set< Guid >{ } );
+						if( empl.second )
+						{
+							set = &empl.first->second;
+						}
 					}
-					set->insert( entity->guid() );
+					if( set )
+					{
+						set->insert( entity->guid() );
+					}
 				}
 			}
 		}
@@ -270,14 +270,7 @@ namespace gie
 			tag( entity, tags );
 		}
 
-		void untag( Guid entityGuid, std::vector< Tag >& tags )
-		{
-			if( world() && !tags.empty() )
-			{
-				auto entity = world()->entity( entityGuid );
-				untag( entity, tags );
-			}
-		}
+		void untag( Guid entityGuid, std::vector< Tag >& tags );
 
 		void untag( Guid entityGuid, std::vector< Tag >&& tags )
 		{
@@ -486,6 +479,24 @@ namespace gie
 		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name )	override { return _context.createProperty( guid, name ); };
 
 	};
+
+	void EntityTagRegister::tag( Guid entityGuid, std::vector< Tag >& tags )
+	{
+		if( world() && !tags.empty() )
+		{
+			auto entity = world()->entity( entityGuid );
+			tag( entity, tags );
+		}
+	}
+
+	void EntityTagRegister::untag( Guid entityGuid, std::vector< Tag >& tags )
+	{
+		if( world() && !tags.empty() )
+		{
+			auto entity = world()->entity( entityGuid );
+			untag( entity, tags );
+		}
+	}
 
 	Entity::FetchPropertyResult Entity::property( StringHash hash ) const
 	{
