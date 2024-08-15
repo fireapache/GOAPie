@@ -148,7 +148,7 @@ int basicGoal()
 		{
 			// updating agent opinion over world
 			gie::Guid openedPptGuid = arguments().guid( "Opened" );
-			auto localPpt = agent.opinions.property( openedPptGuid );
+			auto localPpt = agent.opinions().property( openedPptGuid );
 			if( localPpt )
 			{
 				localPpt->value = true;
@@ -178,17 +178,17 @@ int basicGoal()
 		gie::StringHash name() const override { return stringRegister.add( "OpenDoor" ); }
 
 		// define conditions for action
-		bool prerequisites( const gie::Simulation& context, const gie::Agent& agent ) const override
+		bool prerequisites( const gie::Simulation& simulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
-			// checking if agent has property telling which door entity is the target
-			auto targetDoorEntityPpt = agent.property( "TargetDoorEntity" ).second;
+			// checking if world context agent has property telling which door entity is the target
+			auto [ targetDoorEntityPptGuid, targetDoorEntityPpt ] = agent.worldContextAgent()->property( "TargetDoorEntity" );
 			if( !targetDoorEntityPpt )
 			{
 				return false;
 			}
 
 			// checking if there is an actual door entity in the world
-			auto doorEntity = agent.world()->entity( targetDoorEntityPpt->getGuid().second );
+			auto doorEntity = simulation.world()->entity( targetDoorEntityPpt->getGuid().second );
 			if( !doorEntity )
 			{
 				return false;
@@ -211,21 +211,21 @@ int basicGoal()
 		}
 
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
-		bool simulate( gie::Agent& agent, gie::Simulation& simulation ) const override
+		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
 			// setting base cost as starting point
 			constexpr float baseCost = 10.f;
 			simulation.cost = baseCost;
 
-			// checking if agent has property telling which door entity is the target
-			auto targetDoorEntityPpt = agent.property( "TargetDoorEntity" ).second;
+			// checking if world context agent has property telling which door entity is the target
+			auto [ targetDoorEntityPptGuid, targetDoorEntityPpt ] = agent.worldContextAgent()->property( "TargetDoorEntity" );
 			if( !targetDoorEntityPpt )
 			{
 				return false;
 			}
 
 			// checking if there is an actual door entity in the world
-			auto doorEntity = agent.world()->entity( targetDoorEntityPpt->getGuid().second );
+			auto doorEntity = simulation.world()->entity( targetDoorEntityPpt->getGuid().second );
 			if( !doorEntity )
 			{
 				return false;
@@ -238,15 +238,15 @@ int basicGoal()
 				return false;
 			}
 
-			simulation.setProperty( openedPpt->guid(), true );
+			simulation.context().property( openedPpt->guid() )->value = true;
 			
 			// adding distance cost in case there are location properties
-			auto doorLocationPpt = doorEntity->property( "Location" );
-			auto agentLocationPpt = agent.property( "Location" );
-			if( doorLocationPpt.second && agentLocationPpt.second )
+			auto [ doorLocationPptGuid, doorLocationPpt ] = doorEntity->property( "Location" );
+			auto [ agentLocationPptGuid, agentLocationPpt ] = agent.worldContextAgent()->property( "Location" );
+			if( doorLocationPpt && agentLocationPpt )
 			{
-				const glm::vec3 doorLocation = std::get< glm::vec3 >( doorLocationPpt.second->value );
-				const glm::vec3 agentLocation = std::get< glm::vec3 >( agentLocationPpt.second->value );
+				const glm::vec3 doorLocation = std::get< glm::vec3 >( doorLocationPpt->value );
+				const glm::vec3 agentLocation = std::get< glm::vec3 >( agentLocationPpt->value );
 				const float dist = glm::distance( doorLocation, agentLocation );
 				simulation.cost += dist;
 
@@ -254,7 +254,7 @@ int basicGoal()
 				if( auto moveAction = std::make_shared< MoveAction >() )
 				{
 					// passing target location as argument for action
-					moveAction->arguments().add( { gie::stringHasher( "TargetLocation" ), doorLocationPpt.first } );
+					moveAction->arguments().add( { gie::stringHasher( "TargetLocation" ), doorLocationPptGuid } );
 					// queueing move action
 					simulation.actions.emplace_back( moveAction );
 				}
@@ -302,6 +302,9 @@ int woodHouse()
 
 	// property telling if agent has a wood house
 	 auto [ agentWoodHousePptGuid, agentWoodHousePpt ] = agentEntity->createProperty( "WoodHouse", false );
+
+	 // creating agent's wallet
+	 agentEntity->createProperty( "Money", 0.f );
 
 	// creating goal
 	gie::Goal goal{ world };
@@ -352,12 +355,10 @@ int woodHouse()
 		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
 
 		// define conditions for action
-		bool prerequisites( const gie::Simulation& baseSimulation, const gie::Agent& agent ) const override
+		bool prerequisites( const gie::Simulation& baseSimulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
-			auto& entityTagRegister = baseSimulation.context().entityTagRegister();
-
 			// getting set of trees still up
-			auto treeUpTagSet = entityTagRegister.tagSet( gie::stringHasher( "TreeUp" ) );
+			const auto treeUpTagSet = baseSimulation.tagSet( gie::stringHasher( "TreeUp" ) );
 
 			// no tag set found
 			if( !treeUpTagSet )
@@ -375,12 +376,10 @@ int woodHouse()
 		}
 
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
-		bool simulate( gie::Agent& agent, gie::Simulation& simulation ) const override
+		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
-			auto& entityTagRegister = simulation.context().entityTagRegister();
-
 			// getting set of trees still up
-			auto treeUpTagSet = entityTagRegister.tagSet( gie::stringHasher( "TreeUp" ) );
+			const auto treeUpTagSet = simulation.tagSet( gie::stringHasher( "TreeUp" ) );
 
 			// creating cut down tree action
 			if( auto cutDownTreeAction = std::make_shared< CutDownTreeAction >( arguments() ) )
@@ -390,6 +389,80 @@ int woodHouse()
 				// queueing action
 				simulation.actions.emplace_back( cutDownTreeAction );
 			}
+
+			return true;
+		}
+
+	};
+
+	constexpr float workSalary = 10.0;
+
+	// Defining a cut down tree action aiming a target tree
+	class WorkAction : public gie::Action
+	{
+	public:
+
+		// inheriting constructors
+		using gie::Action::Action;
+
+		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
+
+		// defines how world and agent are affected by this action
+		bool outcome( gie::Agent& agent ) override
+		{
+			auto [ moneyPptGuid, moneyPpt ] = agent.property( "Money" );
+			if( !moneyPpt )
+			{
+				return false;
+			}
+
+			// adding money to agent in world's context
+			moneyPpt->value = moneyPpt->getFloat().second + workSalary;
+
+			return true;
+		}
+	};
+
+	// defining simulator for action cut down tree
+	class WorkSimulator : public gie::ActionSimulator
+	{
+	public:
+		
+		using gie::ActionSimulator::ActionSimulator;
+
+		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
+
+		// define conditions for action
+		bool prerequisites( const gie::Simulation& baseSimulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
+		{
+			// getting agent's world money property Guid to refer in the simulation
+			auto [ moneyPptGuid, moneyPpt ] = agent.worldContextAgent()->property( "Money" );
+
+			// getting simulation's context money property
+			const auto simMoneyPpt = baseSimulation.context().property( moneyPptGuid );
+
+			// minimal amount of money agent need to have so there's no need to work
+			constexpr float minMoney = 5.f;
+
+			if( simMoneyPpt->getFloat().second >= minMoney )
+			{
+				return false;
+			}
+
+			return true;
+		}
+
+		// calculate cost and necessary steps (other actions) to achieve the action being simulated
+		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
+		{
+			// getting agent's world money property Guid to refer in the simulation
+			auto [ moneyPptGuid, moneyPpt ] = agent.worldContextAgent()->property( "Money" );
+
+			// getting simulation's context money property
+			auto simMoneyPpt = simulation.context().property( moneyPptGuid );
+
+			// setting money property in simulation's context
+			simMoneyPpt->value = simMoneyPpt->getFloat().second + workSalary;
 
 			return true;
 		}
@@ -407,11 +480,13 @@ int woodHouse()
 	// creating planner passing goal and agent to reach the goal
 	gie::Planner planner{ goal, *agentEntity };
 
-	// defining available action and its simulator for planner
+	// defining available actions and their simulators for planner
 	DEFINE_ACTION_SET_ENTRY( CutDownTree )
+	DEFINE_ACTION_SET_ENTRY( Work )
 
 	// setting available actions
 	planner.addActionSetEntry< CutDownTreeActionSetEntry >( gie::stringHasher( "CutDownTree" ) );
+	planner.addActionSetEntry< WorkActionSetEntry >( gie::stringHasher( "Work" ) );
 
 	// finally planner doing its thing
 	planner.plan();

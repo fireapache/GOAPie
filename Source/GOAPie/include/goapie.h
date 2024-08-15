@@ -172,7 +172,7 @@ namespace gie
 		virtual void removeEntity( const Guid guid ) = 0;
 		// @return Guid to a new (orphan) property.
 		// NOTE: it is not assigned to an entity!
-		virtual std::pair< Guid, class Property* > createProperty( Guid guid, StringHash name ) = 0;
+		virtual std::pair< Guid, class Property* > createProperty( Guid guid, StringHash name, Guid owner = NullGuid, Property::Variant defaultValue = false ) = 0;
 		virtual void removeProperty( const Guid guid ) = 0;
 		virtual void eraseAll() = 0;
 		// @return Pointer to an existing property.
@@ -314,13 +314,14 @@ namespace gie
 
 	class Blackboard : public IDataEntityManager
 	{
-		class World* _world;
+		class World* _world{ nullptr };
 		EntityMap _entities;
 		PropertyMap _properties;
 		EntityTagRegister _entityTagRegister;
+		const Blackboard* _parent{ nullptr };
 
 	public:
-		Blackboard( class World* world ) : _world( world ), _entityTagRegister( world ) {  };
+		Blackboard( class World* world, const Blackboard* parent = nullptr ) : _world( world ), _parent( parent ), _entityTagRegister( world ) {  };
 		Blackboard( const Blackboard& other ) = default;
 		~Blackboard() = default;
 
@@ -336,6 +337,9 @@ namespace gie
 		EntityTagRegister& entityTagRegister() { return _entityTagRegister; }
 		const EntityTagRegister& entityTagRegister() const { return _entityTagRegister; }
 
+		const Blackboard* parent() const { return _parent; }
+		void setParent( const Blackboard* parent ) { _parent = parent; }
+
 		// IDataEntityManager interface
 		std::pair< Guid, class Agent* > createAgent()		override;
 		std::pair< Guid, Entity* > createEntity()			override;
@@ -350,7 +354,7 @@ namespace gie
 		void removeProperty( const Guid guid )				override { _properties.erase( guid ); }
 		void eraseAll()										override { _entities.clear(); }
 
-		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name )	override;
+		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name, Guid owner = NullGuid, Property::Variant defaultValue = false )	override;
 	};
 
 	std::pair< Guid, Entity* > Blackboard::createEntity()
@@ -364,16 +368,17 @@ namespace gie
 		return std::pair{ NullGuid, nullptr };
 	}
 
-	std::pair< Guid, Property* > Blackboard::createProperty( Guid guid, StringHash name )
+	std::pair< Guid, Property* > Blackboard::createProperty( Guid guid, StringHash name, Guid owner, Property::Variant defaultValue )
 	{
 		if( guid == NullGuid )
 		{
 			guid = randGuid();
 		}
-		Property property{ guid, NullGuid, name };
+		Property property{ guid, owner, name };
 		auto result = _properties.emplace( guid, std::move( property ) );
 		if( result.second )
 		{
+			result.first->second.value = defaultValue;
 			return std::pair{ result.first->first, &result.first->second };
 		}
 		return std::pair{ NullGuid, nullptr };
@@ -391,16 +396,37 @@ namespace gie
 		{
 			return &( itr->second );
 		}
+
+		if( parent() )
+		{
+			if( const Property* parentPpt = parent()->property( guid ) )
+			{
+				auto [ newPptGuid, newPpt ] = createProperty( guid, parentPpt->name(), parentPpt->ownerGuid(), parentPpt->value );
+				return newPpt;
+			}
+		}
+
 		return nullptr;
 	}
 
 	const Property* Blackboard::property( const Guid guid ) const
 	{
+		if( guid == NullGuid )
+		{
+			return nullptr;
+		}
+
 		auto itr = _properties.find( guid );
 		if( itr != _properties.end() )
 		{
 			return &( itr->second );
 		}
+
+		if( parent() )
+		{
+			return parent()->property( guid );
+		}
+
 		return nullptr;
 	}
 
@@ -460,6 +486,7 @@ namespace gie
 		~World() = default;
 
 		auto& context() { return _context; };
+		const auto& context() const { return _context; };
 		auto& properties() { return _context.properties(); };
 
 		// IDataEntityManager interface
@@ -476,7 +503,10 @@ namespace gie
 		class Agent* agent( const Guid guid )				override { return _context.agent( guid ); }
 		const class Agent* agent( const Guid guid ) const	override { return _context.agent( guid ); }
 
-		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name )	override { return _context.createProperty( guid, name ); };
+		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name, Guid owner = NullGuid, Property::Variant defaultValue = false ) override
+		{
+			return _context.createProperty( guid, name, owner, defaultValue );
+		};
 
 	};
 
@@ -560,17 +590,37 @@ namespace gie
 		return { NullGuid, nullptr };
 	}
 
+	// Represents a NPC in world context.
 	class Agent : public Entity
 	{
-		
+		Blackboard _opinions;
+
 	public:
 		Agent() = delete;
-		Agent( World* world ) : Entity::Entity( world ), opinions( world ) { };
+		Agent( World* world ) : Entity::Entity( world ), _opinions( world, &world->context() ) { };
 		Agent( const Agent& agent ) = default;
 		Agent( Agent&& agent ) = default;
 		~Agent() = default;
 
-		Blackboard opinions;
+		Blackboard& opinions() { return _opinions; }
+		const Blackboard& opinions() const { return _opinions; }
+	};
+
+	// Represents a NPC in simulation context. World context agent is referenced for opinions.
+	class SimAgent
+	{
+		const Agent* _agent{ nullptr };
+		Blackboard _opinions;
+
+	public:
+		SimAgent() = delete;
+		SimAgent( const Agent* agent ) : _agent( agent ), _opinions( agent->world(), &agent->opinions() ) { };
+
+		Blackboard& opinions() { return _opinions; }
+		const Blackboard& opinions() const { return _opinions; }
+
+		const Agent* worldContextAgent() const { return _agent; }
+
 	};
 
 	Agent* Blackboard::agent( const Guid guid )
@@ -638,7 +688,8 @@ namespace gie
 	{
 		Guid _guid{ NullGuid };
 		Blackboard _context;
-		World* _world;
+		World* _world{ nullptr };
+		SimAgent _simAgent;
 
 		void _syncWorldTagSet( Tag entityTag )
 		{
@@ -661,9 +712,24 @@ namespace gie
 
 	public:
 		Simulation() = delete;
-		Simulation( World* world ) : _guid( randGuid() ), _context( world ) { }
-		Simulation( Guid guid, World* world ) : _world( world ), _guid( guid ), _context( world ) { }
-		Simulation( Guid guid, World* world, const Blackboard& parentContext ) : _world( world ), _guid( guid ), _context( parentContext ) { }
+		Simulation( World* world, const SimAgent& simAgent )
+			: _world( world ),
+			_guid( randGuid() ),
+			_context( world ),
+			_simAgent( simAgent ) { }
+
+		Simulation( Guid guid, World* world, const SimAgent& simAgent )
+			: _world( world ),
+			_guid( guid ),
+			_context( world, &world->context() ),
+			_simAgent( simAgent ) { }
+
+		Simulation( Guid guid, World* world, const Blackboard& parentContext, const SimAgent& simAgent )
+			: _world( world ),
+			_guid( guid ),
+			_context( parentContext ),
+			_simAgent( simAgent ) { }
+
 		Simulation( Simulation&& ) = default;
 		~Simulation() = default;
 
@@ -671,6 +737,9 @@ namespace gie
 		const Blackboard& context() const { return _context; }
 		Blackboard& context() { return _context; }
 		World* world() { return _world; }
+		const World* world() const { return _world; }
+		SimAgent& agent() { return _simAgent; }
+		const SimAgent& agent() const { return _simAgent; }
 
 		float cost{ MaxCost };
 		float heuristic{ MaxHeuristic };
@@ -724,59 +793,19 @@ namespace gie
 			}
 		}
 
-		// Set property in simulation context.
-		// @param guid: property unique identifier
-		// @param value: variant value to be assigned to property
-		// @return True if property is set successfully, False otherwise
-		bool setProperty( Guid guid, Property::Variant value )
+		// Return set of entities with tag
+		const std::set< Guid >* tagSet( Tag tag ) const
 		{
-			Property* ppt{ nullptr };
+			auto& simulationTagRegister = context().entityTagRegister();
+			const auto simulationTagSet = simulationTagRegister.tagSet( tag );
 
-			if( ppt = _context.property( guid ) )
+			// no tag set in simulation context yet, need to check world context
+			if( !simulationTagSet )
 			{
-				ppt->value = value;
-			}
-			else if( ppt = _context.world()->property( guid ) )
-			{
-				auto [ newPptGuid, newPpt ] = _context.createProperty( guid, ppt->name() );
-				newPpt->value = value;
-				ppt = newPpt;
+				return world()->context().entityTagRegister().tagSet( tag );
 			}
 
-			return ppt != nullptr;
-		}
-
-		enum PropertyContextType : uint8_t
-		{
-			None,
-			Sim,
-			World
-		};
-
-		struct FetchPropertyResult
-		{
-			PropertyContextType contextType{ None };
-			const Property* property{ nullptr };
-		};
-
-		// Get property from either simulation context or world.
-		// @param guid: property unique identifier
-		// @return Pointer to property if property is set successfully, False otherwise
-		FetchPropertyResult getProperty( Guid guid )
-		{
-			const Property* ppt{ nullptr };
-
-			if( ppt = _context.property( guid ) )
-			{
-				return { Sim, ppt };
-			}
-			else if( ppt = _context.world()->property( guid ) )
-			{
-				auto newPpt = _context.createProperty( guid, ppt->name() );
-				return { World, newPpt.second };
-			}
-
-			return { None, nullptr };
+			return simulationTagSet;
 		}
 
 		// Incoming simulation connections.
@@ -955,10 +984,10 @@ namespace gie
 		const NamedGuidArguments& arguments() const { return _arguments; }
 
 		// @Return True in case simulation context meets prerequisites, False otherwise.
-		virtual bool prerequisites( const Simulation& simulation, const Agent& agent ) const { return false; }
+		virtual bool prerequisites( const Simulation& simulation, const SimAgent& agent, const class Goal& goal ) const { return false; }
 
 		// @Return True if simulation done successfuly, False otherwise.
-		virtual bool simulate( Agent& agent, Simulation& simulation ) const { return false; }
+		virtual bool simulate( Simulation& simulation, SimAgent& agent, const class Goal& goal ) const { return false; }
 
 	};
 
@@ -979,16 +1008,12 @@ namespace gie
 		// @Return True if given simulation has reached goal targets, False otherwise.
 		bool reached( const Simulation& simulation ) const
 		{
-			auto& properties = simulation.context().properties();
 			for( auto targetItr = targets.cbegin(); targetItr != targets.cend(); targetItr++ )
 			{
-				const auto propertyItr = properties.find( targetItr->first );
-				if( propertyItr != properties.cend() )
+				auto ppt = simulation.context().property( targetItr->first );
+				if( ppt && ppt->value != targetItr->second )
 				{
-					if( propertyItr->second.value != targetItr->second )
-					{
-						return false;
-					}
+					return false;
 				}
 			}
 			return true;
@@ -1064,6 +1089,21 @@ namespace gie
 			return entry.second ? entry.first->second : nullptr;
 		}
 
+		std::pair< Guid, Simulation* > createRootSimulation( const Agent* agent )
+		{
+			Guid newRandGuid{ randGuid() };
+			Simulation* newSimulation{ nullptr };
+			Simulation sim( newRandGuid, world(), SimAgent( agent ) );
+			auto empl = _simulations.emplace( newRandGuid, std::move( sim ) );
+			if( empl.second )
+			{
+				newSimulation = &empl.first->second;
+				return { newRandGuid, newSimulation };
+			}
+
+			return { NullGuid, nullptr };
+		}
+
 		std::pair< Guid, Simulation* > createSimulation( Guid currentSimulationGuid = NullGuid )
 		{
 			auto currentSimulation = simulation( currentSimulationGuid );
@@ -1073,35 +1113,20 @@ namespace gie
 			}
 
 			Guid newRandGuid{ randGuid() };
-			Simulation* newSimulation;
 
 			if( currentSimulation )
 			{
-				auto empl = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, world(), currentSimulation->context() } ) );
+				Simulation sim( newRandGuid, world(), currentSimulation->context(), currentSimulation->agent() );
+				auto empl = _simulations.emplace( newRandGuid, std::move( sim ) );
 				if( empl.second )
 				{
-					newSimulation = &empl.first->second;
-				}
-			}
-			else
-			{
-				auto empl = _simulations.emplace( newRandGuid, std::move( Simulation{ newRandGuid, world() } ) );
-				if( empl.second )
-				{
-					newSimulation = &empl.first->second;
+					auto newSimulation = &empl.first->second;
+					newSimulation->incoming.emplace_back( currentSimulationGuid );
+					newSimulation->depth = currentSimulation->depth + 1;
+					return { newRandGuid, newSimulation };
 				}
 			}
 			
-			if( newSimulation )
-			{
-				if( currentSimulation )
-				{
-					newSimulation->incoming.emplace_back( currentSimulationGuid );
-					newSimulation->depth = currentSimulation->depth + 1;
-				}
-				return { newRandGuid, newSimulation };
-			}
-
 			return { NullGuid, nullptr };
 		}
 
@@ -1153,7 +1178,7 @@ namespace gie
 		_simulations.clear();
 
 		// creating root simulation node
-		auto [ rootSimulationGuid, rootSimulation ] = createSimulation();
+		auto [ rootSimulationGuid, rootSimulation ] = createRootSimulation( agent() );
 		if( !rootSimulation )
 		{
 			return;
@@ -1165,62 +1190,72 @@ namespace gie
 		// defining max depth to avoid endless expansions
 		constexpr size_t depthLimit = 10;
 
-		// go through all opened nodes
-		auto openedNodesItr = openedNodes.begin();
-		while( openedNodesItr != openedNodes.end() )
+		while( !openedNodes.empty() )
 		{
-			// getting simulation from opened node
-			auto baseSimulation = simulation( *openedNodesItr );
+			// simulation nodes created during this loop,
+			// to be added to opened nodes
+			std::vector< Guid > expandedNodes{ };
 
-			for( auto [ _, actionSetEntry ] : _actionSet )
+			// go through all opened nodes
+			for( auto openedNodesItr : openedNodes )
 			{
-				// getting simulator for action
-				auto actionSimulator = actionSetEntry->simulator( { } );
-				if( !actionSimulator )
+				// getting simulation from opened node
+				auto baseSimulation = simulation( openedNodesItr );
+
+				// cannot expand this node if it has reached simulation depth limit
+				if( baseSimulation->depth >= depthLimit )
 				{
 					continue;
 				}
-
-				// checking if current simulation context meets action's conditions
-				if( !actionSimulator->prerequisites( *baseSimulation, *agent() ) )
+				// expanding simulation over all available actions
+				for( auto [ _, actionSetEntry ] : _actionSet )
 				{
-					continue;
-				}
+					// getting simulator for action
+					auto actionSimulator = actionSetEntry->simulator( { } );
+					if( !actionSimulator )
+					{
+						continue;
+					}
 
-				// creating new simulation node for action simulation
-				auto [ newSimulationGuid, newSimulation ] = createSimulation( *openedNodesItr );
+					// checking if current simulation context meets action's conditions
+					if( !actionSimulator->prerequisites( *baseSimulation, baseSimulation->agent(), *goal() ) )
+					{
+						continue;
+					}
 
-				// running action simulation on new node
-				bool simulationSuccess = actionSimulator->simulate( *agent(), *newSimulation );
+					// creating new simulation node for action simulation
+					auto [ newSimulationGuid, newSimulation ] = createSimulation( openedNodesItr );
 
-				// removing new node in case simulation has failed
-				if( !simulationSuccess )
-				{
-					deleteSimulation( newSimulationGuid );
-					continue;
-				}
+					// running action simulation on new node
+					bool simulationSuccess = actionSimulator->simulate( *newSimulation, newSimulation->agent(), *goal() );
 
-				// stopping simulation loop if goal has been reached here
-				if( goal()->reached( *newSimulation ) )
-				{
-					_goalSimulationGuid = newSimulationGuid;
-					openedNodesItr = openedNodes.end();
-					break;
-				}
+					// removing new node in case simulation has failed
+					if( !simulationSuccess )
+					{
+						deleteSimulation( newSimulationGuid );
+						continue;
+					}
 
-				// adding new simulation node as opened node for further expansion
-				if( newSimulation->depth < depthLimit )
-				{
-					openedNodes.push_back( newSimulationGuid );
+					// keeping track of expanded nodes
+					expandedNodes.push_back( newSimulationGuid );
+
+					// stopping simulation loop if goal has been reached here
+					if( goal()->reached( *newSimulation ) )
+					{
+						// marking simulation which reached the goal for backtracking
+						_goalSimulationGuid = newSimulationGuid;
+						// no need to keep expanding nodes
+						expandedNodes.clear();
+						break;
+					}
 				}
 			}
 
-			// getting next opened node
-			if( openedNodesItr != openedNodes.end() )
-			{
-				openedNodesItr = openedNodes.erase( openedNodesItr );
-			}
+			// setting next iteration
+			openedNodes = expandedNodes;
 		}
+
+		
 		
 	}
 
