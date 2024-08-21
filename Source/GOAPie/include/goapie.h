@@ -60,15 +60,15 @@ namespace gie
 		};
 
 		std::pair< bool, bool >				getBool()			const { return std::pair{ type() == Boolean,		std::get< bool >			( value ) }; }
-		std::pair< bool, BooleanVector >	getBooleanArray()	const { return std::pair{ type() == BooleanArray,	std::get< BooleanVector >	( value ) }; }
+		std::pair< bool, BooleanVector& >	getBooleanArray()	const { return std::pair{ type() == BooleanArray,	std::get< BooleanVector >	( value ) }; }
 		std::pair< bool, float >			getFloat()			const { return std::pair{ type() == Float,			std::get< float >			( value ) }; }
-		std::pair< bool, FloatVector >		getFloatArray()		const { return std::pair{ type() == FloatArray,		std::get< FloatVector >		( value ) }; }
+		std::pair< bool, FloatVector& >		getFloatArray()		const { return std::pair{ type() == FloatArray,		std::get< FloatVector >		( value ) }; }
 		std::pair< bool, int32_t >			getInteger()		const { return std::pair{ type() == Integer,		std::get< int32_t >			( value ) }; }
-		std::pair< bool, IntegerVector >	getIntegerArray()	const { return std::pair{ type() == IntegerArray,	std::get< IntegerVector >	( value ) }; }
+		std::pair< bool, IntegerVector& >	getIntegerArray()	const { return std::pair{ type() == IntegerArray,	std::get< IntegerVector >	( value ) }; }
 		std::pair< bool, Guid >				getGuid()			const { return std::pair{ type() == GUID,			std::get< Guid >			( value ) }; }
-		std::pair< bool, GuidVector >		getGuidArray()		const { return std::pair{ type() == GUIDArray,		std::get< GuidVector >		( value ) }; }
+		std::pair< bool, GuidVector& >		getGuidArray()		const { return std::pair{ type() == GUIDArray,		std::get< GuidVector >		( value ) }; }
 		std::pair< bool, glm::vec3 >		getVec3()			const { return std::pair{ type() == Vec3,			std::get< glm::vec3 >		( value ) }; }
-		std::pair< bool, Vec3Vector >		getVec3Array()		const { return std::pair{ type() == Vec3Array,		std::get< Vec3Vector >		( value ) }; }
+		std::pair< bool, Vec3Vector& >		getVec3Array()		const { return std::pair{ type() == Vec3Array,		std::get< Vec3Vector >		( value ) }; }
 
 		// @return Type of data being stored in this property.
 		Type type() const
