@@ -24,49 +24,65 @@ namespace gie
 		Property( Property&& ) noexcept = default;
 		~Property() = default;
 
-		typedef std::vector< Guid > ArrayType;
+		typedef std::vector< bool >			BooleanVector;
+		typedef std::vector< float >		FloatVector;
+		typedef std::vector< int32_t >		IntegerVector;
+		typedef std::vector< Guid >			GuidVector;
+		typedef std::vector< glm::vec3 >	Vec3Vector;
 
 		typedef std::variant<
 			bool,
+			BooleanVector,
 			float,
+			FloatVector,
 			int32_t,
+			IntegerVector,
 			Guid,
-			ArrayType,
+			GuidVector,
 			glm::vec3,
-			void* > Variant;
+			Vec3Vector > Variant;
 
 		Variant value;
-
-		std::pair< bool, bool >			getBool()		const { return std::pair{ type() == Boolean, std::get< bool >( value ) }; }
-		std::pair< bool, float >		getFloat()		const { return std::pair{ type() == Float, std::get< float >( value ) }; }
-		std::pair< bool, int32_t >		getInteger()	const { return std::pair{ type() == Integer, std::get< int32_t >( value ) }; }
-		std::pair< bool, Guid >			getGuid()		const { return std::pair{ type() == GUID, std::get< Guid >( value ) }; }
-		std::pair< bool, ArrayType >	getArray()		const { return std::pair{ type() == Array, std::get< ArrayType >( value ) }; }
-		std::pair< bool, glm::vec3 >	getVec3()		const { return std::pair{ type() == Vec3, std::get< glm::vec3 >( value ) }; }
-		std::pair< bool, void* >		getCustom()		const { return std::pair{ type() == Custom, std::get< void* >( value ) }; }
 
 		enum Type : uint8_t
 		{
 			Unknow,
 			Boolean,
+			BooleanArray,
 			Float,
+			FloatArray,
 			Integer,
+			IntegerArray,
 			GUID,
-			Array,
+			GUIDArray,
 			Vec3,
-			Custom
+			Vec3Array
 		};
+
+		std::pair< bool, bool >				getBool()			const { return std::pair{ type() == Boolean,		std::get< bool >			( value ) }; }
+		std::pair< bool, BooleanVector >	getBooleanArray()	const { return std::pair{ type() == BooleanArray,	std::get< BooleanVector >	( value ) }; }
+		std::pair< bool, float >			getFloat()			const { return std::pair{ type() == Float,			std::get< float >			( value ) }; }
+		std::pair< bool, FloatVector >		getFloatArray()		const { return std::pair{ type() == FloatArray,		std::get< FloatVector >		( value ) }; }
+		std::pair< bool, int32_t >			getInteger()		const { return std::pair{ type() == Integer,		std::get< int32_t >			( value ) }; }
+		std::pair< bool, IntegerVector >	getIntegerArray()	const { return std::pair{ type() == IntegerArray,	std::get< IntegerVector >	( value ) }; }
+		std::pair< bool, Guid >				getGuid()			const { return std::pair{ type() == GUID,			std::get< Guid >			( value ) }; }
+		std::pair< bool, GuidVector >		getGuidArray()		const { return std::pair{ type() == GUIDArray,		std::get< GuidVector >		( value ) }; }
+		std::pair< bool, glm::vec3 >		getVec3()			const { return std::pair{ type() == Vec3,			std::get< glm::vec3 >		( value ) }; }
+		std::pair< bool, Vec3Vector >		getVec3Array()		const { return std::pair{ type() == Vec3Array,		std::get< Vec3Vector >		( value ) }; }
 
 		// @return Type of data being stored in this property.
 		Type type() const
 		{
 			if( std::holds_alternative< bool >			( value ) )	return Boolean;
+			if( std::holds_alternative< BooleanVector >	( value ) )	return BooleanArray;
 			if( std::holds_alternative< float >			( value ) )	return Float;
+			if( std::holds_alternative< FloatVector >	( value ) )	return FloatArray;
 			if( std::holds_alternative< int32_t >		( value ) )	return Integer;
-			if( std::holds_alternative< StringHash >	( value ) ) return GUID;
-			if( std::holds_alternative< ArrayType >		( value ) )	return Array;
+			if( std::holds_alternative< IntegerVector >	( value ) )	return IntegerArray;
+			if( std::holds_alternative< Guid >			( value ) ) return GUID;
+			if( std::holds_alternative< GuidVector >	( value ) )	return GUIDArray;
 			if( std::holds_alternative< glm::vec3 >		( value ) )	return Vec3;
-			if( std::holds_alternative< void* >			( value ) )	return Custom;
+			if( std::holds_alternative< Vec3Vector >	( value ) )	return Vec3Array;
 			return Unknow;
 		};
 
@@ -1183,7 +1199,7 @@ namespace gie
 
 	};
 
-	constexpr bool printSteps = true;
+	constexpr bool printSteps = false;
 
 	void Planner::simulate()
 	{
