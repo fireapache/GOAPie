@@ -49,7 +49,7 @@ void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& p
 	{
 		if( action )
 		{
-			auto registeredString = stringRegister.get( action->name() );
+			auto registeredString = stringRegister.get( action->hash() );
 			if( !registeredString.empty() )
 			{
 				std::cout << registeredString << std::endl;
@@ -93,7 +93,7 @@ int basicGoal()
 	// creating string register to point string hashes back to strings
 	static gie::StringRegister stringRegister;
 
-	// Defining a move action to be used by open door action
+	// defining a move action to be used by open door action
 	class MoveAction : public gie::Action
 	{
 	public:
@@ -101,13 +101,14 @@ int basicGoal()
 		// inheriting constructors
 		using gie::Action::Action;
 
-		gie::StringHash name() const override { return stringRegister.add( "Move" ); }
+		std::string_view name() const override { return "Move"; }
+		gie::StringHash hash() const override { return stringRegister.add( "Move" ); }
 
-		// defines how world and agent are affected by this action
+		// defines how world context and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
 		{
 			// geting target location
-			gie::Guid targetLocationPptGuid = arguments().guid( "TargetLocation" );
+			gie::Guid targetLocationPptGuid = std::get< gie::Guid >( arguments().get( "TargetLocation" ) );
 			auto locationPpt = agent.world()->property( targetLocationPptGuid );
 			if( !locationPpt )
 			{
@@ -141,13 +142,13 @@ int basicGoal()
 		// inheriting constructors
 		using gie::Action::Action;
 
-		gie::StringHash name() const override { return stringRegister.add( "OpenDoor" ); }
+		gie::StringHash hash() const override { return stringRegister.add( "OpenDoor" ); }
 
-		// defines how world and agent are affected by this action
+		// defines how world context and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
 		{
 			// updating agent opinion over world
-			gie::Guid openedPptGuid = arguments().guid( "Opened" );
+			gie::Guid openedPptGuid = std::get< gie::Guid >( arguments().get( "Opened" ) );
 			auto localPpt = agent.opinions().property( openedPptGuid );
 			if( localPpt )
 			{
@@ -175,7 +176,8 @@ int basicGoal()
 		
 		using gie::ActionSimulator::ActionSimulator;
 
-		gie::StringHash name() const override { return stringRegister.add( "OpenDoor" ); }
+		std::string_view name() const override { return "OpenDoor"; }
+		gie::StringHash hash() const override { return stringRegister.add( "OpenDoor" ); }
 
 		// define conditions for action
 		bool prerequisites( const gie::Simulation& simulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
@@ -267,9 +269,10 @@ int basicGoal()
 				openDoorAction->arguments().add( { gie::stringHasher( "DoorEntity" ), doorEntity->guid() } );
 				// queueing open door action
 				simulation.actions.emplace_back( openDoorAction );
+				return true;
 			}
 
-			return true;
+			return false;
 		}
 
 	};
@@ -303,8 +306,17 @@ int woodHouse()
 	// property telling if agent has a wood house
 	 auto [ agentWoodHousePptGuid, agentWoodHousePpt ] = agentEntity->createProperty( "WoodHouse", false );
 
-	 // creating agent's wallet
-	 agentEntity->createProperty( "Money", 0.f );
+	// creating agent properties for this tutorial
+	agentEntity->createProperty( "Money", 0.f );
+	agentEntity->createProperty( "MoneyNeeded", 0.f );
+	agentEntity->createProperty( "AxeIntegrity", 0.f );
+
+	// cost of buying an axe
+	constexpr float axeCost = 15.f;
+	// money earn from work
+	constexpr float workSalary = 20.0;
+	// brand new axe integrity 
+	static constexpr float newAxeIntegrityValue = 3.f;
 
 	// creating goal
 	gie::Goal goal{ world };
@@ -315,7 +327,7 @@ int woodHouse()
 	// creating string register to point string hashes back to strings
 	static gie::StringRegister stringRegister;
 
-	// Defining a cut down tree action aiming a target tree
+	// defining a cut down tree action aiming a target tree
 	class CutDownTreeAction : public gie::Action
 	{
 	public:
@@ -323,13 +335,14 @@ int woodHouse()
 		// inheriting constructors
 		using gie::Action::Action;
 
-		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
+		std::string_view name() const override { return "CutDownTree"; }
+		gie::StringHash hash() const override { return stringRegister.add( "CutDownTree" ); }
 
-		// defines how world and agent are affected by this action
+		// defines how world context and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
 		{
 			// getting target tree from arguments
-			gie::Guid targetTreeGuid = arguments().guid( "TargetTree" );
+			gie::Guid targetTreeGuid = std::get< gie::Guid >( arguments().get( "TargetTree" ) );
 			auto targetTree = agent.world()->entity( targetTreeGuid );
 			if( !targetTree )
 			{
@@ -345,6 +358,9 @@ int woodHouse()
 		}
 	};
 
+	// minimal amount of integrity an axe need to have to cut down a tree, so there is no need to buy another one
+	constexpr float minIntegrity = 1.f;
+
 	// defining simulator for action cut down tree
 	class CutDownTreeSimulator : public gie::ActionSimulator
 	{
@@ -352,11 +368,30 @@ int woodHouse()
 		
 		using gie::ActionSimulator::ActionSimulator;
 
-		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
+		std::string_view name() const override { return "CutDownTree"; }
+		gie::StringHash hash() const override { return stringRegister.add( "CutDownTree" ); }
 
 		// define conditions for action
 		bool prerequisites( const gie::Simulation& baseSimulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
+			// getting Axe Integrity property guid from world context
+			auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
+
+			// getting Axe Integrity property from current simulation context
+			auto simAxeIntegrityPpt = baseSimulation.context().property( axeIntegrityPptGuid );
+
+			// return if no property was found
+			if( !simAxeIntegrityPpt )
+			{
+				return false;
+			}
+
+			// checking minimal axe integrity to cut down a tree
+			if( simAxeIntegrityPpt->getFloat().second <= minIntegrity )
+			{
+				return false;
+			}
+
 			// getting set of trees still up
 			const auto treeUpTagSet = baseSimulation.tagSet( gie::stringHasher( "TreeUp" ) );
 
@@ -378,8 +413,23 @@ int woodHouse()
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
 		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
+			// getting Axe Integrity property guid from world context
+			auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
+
+			// getting Axe Integrity property from current simulation context
+			auto simAxeIntegrityPpt = simulation.context().property( axeIntegrityPptGuid );
+
+			// decreasing axe integrity once tree was cut down
+			simAxeIntegrityPpt->value = simAxeIntegrityPpt->getFloat().second - 1.f;
+
 			// getting set of trees still up
 			const auto treeUpTagSet = simulation.tagSet( gie::stringHasher( "TreeUp" ) );
+
+			// consuming first tree
+			gie::Guid treeEntityGuid = *treeUpTagSet->cbegin();
+			auto& simEntityTagRegister = simulation.context().entityTagRegister();
+			simEntityTagRegister.untag( treeEntityGuid, { gie::stringHasher( "TreeUp" ) } );
+			simEntityTagRegister.tag( treeEntityGuid, { gie::stringHasher( "TreeDown" ) } );
 
 			// creating cut down tree action
 			if( auto cutDownTreeAction = std::make_shared< CutDownTreeAction >( arguments() ) )
@@ -388,16 +438,15 @@ int woodHouse()
 				cutDownTreeAction->arguments().add( { gie::stringHasher( "TargetTree" ), *treeUpTagSet->cbegin() } );
 				// queueing action
 				simulation.actions.emplace_back( cutDownTreeAction );
+				return true;
 			}
 
-			return true;
+			return false;
 		}
 
 	};
 
-	constexpr float workSalary = 10.0;
-
-	// Defining a cut down tree action aiming a target tree
+	// defining a cut down tree action aiming a target tree
 	class WorkAction : public gie::Action
 	{
 	public:
@@ -405,19 +454,20 @@ int woodHouse()
 		// inheriting constructors
 		using gie::Action::Action;
 
-		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
+		std::string_view name() const override { return "Work"; }
+		gie::StringHash hash() const override { return stringRegister.add( "Work" ); }
 
-		// defines how world and agent are affected by this action
+		// defines how world context and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
 		{
-			auto [ moneyPptGuid, moneyPpt ] = agent.property( "Money" );
-			if( !moneyPpt )
-			{
-				return false;
-			}
+			auto [ _, moneyPpt ] = agent.property( "Money" );
+			auto [ __, moneyNeededPpt ] = agent.property( "MoneyNeeded" );
 
 			// adding money to agent in world's context
 			moneyPpt->value = moneyPpt->getFloat().second + workSalary;
+
+			// updating money needed
+			moneyNeededPpt->value = std::get< float >( arguments().get( "NewMoneyNeeded" ) );
 
 			return true;
 		}
@@ -430,21 +480,22 @@ int woodHouse()
 		
 		using gie::ActionSimulator::ActionSimulator;
 
-		gie::StringHash name() const override { return stringRegister.add( "CutDownTree" ); }
+		std::string_view name() const override { return "Work"; }
+		gie::StringHash hash() const override { return stringRegister.add( "Work" ); }
 
 		// define conditions for action
 		bool prerequisites( const gie::Simulation& baseSimulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
-			// getting agent's world money property Guid to refer in the simulation
-			auto [ moneyPptGuid, moneyPpt ] = agent.worldContextAgent()->property( "Money" );
+			// getting property Guid to refer in the simulation
+			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
+			auto [ moneyNeededPptGuid, __ ] = agent.worldContextAgent()->property( "MoneyNeeded" );
 
-			// getting simulation's context money property
+			// getting property in simulation property
 			const auto simMoneyPpt = baseSimulation.context().property( moneyPptGuid );
+			const auto simMoneyNeededPpt = baseSimulation.context().property( moneyNeededPptGuid );
 
-			// minimal amount of money agent need to have so there's no need to work
-			constexpr float minMoney = 5.f;
-
-			if( simMoneyPpt->getFloat().second >= minMoney )
+			// no need to work if has all money needed
+			if( simMoneyPpt->getFloat().second >= simMoneyNeededPpt->getFloat().second )
 			{
 				return false;
 			}
@@ -455,14 +506,214 @@ int woodHouse()
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
 		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
-			// getting agent's world money property Guid to refer in the simulation
-			auto [ moneyPptGuid, moneyPpt ] = agent.worldContextAgent()->property( "Money" );
+			// getting property Guid to refer in the simulation
+			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
+			auto [ moneyNeededPptGuid, __ ] = agent.worldContextAgent()->property( "MoneyNeeded" );
 
-			// getting simulation's context money property
+			// getting property in simulation property
 			auto simMoneyPpt = simulation.context().property( moneyPptGuid );
+			const auto simMoneyNeededPpt = simulation.context().property( moneyNeededPptGuid );
 
 			// setting money property in simulation's context
 			simMoneyPpt->value = simMoneyPpt->getFloat().second + workSalary;
+
+			// remove the need for money if all money needed was raised
+			if( simMoneyPpt->getFloat().second >= simMoneyNeededPpt->getFloat().second )
+			{
+				simMoneyNeededPpt->value = 0.f;
+			}
+
+			// creating arguments for action
+			gie::NamedArguments actionArguments{};
+			actionArguments.add( { gie::stringHasher( "NewMoneyNeeded" ), simMoneyNeededPpt->getFloat().second } );
+
+			// creating work action
+			if( auto workAction = std::make_shared< WorkAction >( actionArguments ) )
+			{
+				// queueing action
+				simulation.actions.emplace_back( workAction );
+				return true;
+			}
+
+			return false;
+		}
+
+	};
+
+	// defining a raise money needed action so npc need to find an way to get more money
+	class RaiseMoneyNeededAction : public gie::Action
+	{
+	public:
+
+		// inheriting constructors
+		using gie::Action::Action;
+
+		std::string_view name() const override { return "MoneyNeeded"; }
+		gie::StringHash hash() const override { return stringRegister.add( "MoneyNeeded" ); }
+
+		// defines how world context and agent are affected by this action
+		bool outcome( gie::Agent& agent ) override
+		{
+			// getting agent property in world context
+			auto [ _, MoneyNeededPpt ] = agent.property( "MoneyNeeded" );
+			if( !MoneyNeededPpt )
+			{
+				return false;
+			}
+
+			// setting axe integrity to agent in world context
+			MoneyNeededPpt->value = MoneyNeededPpt->getFloat().second + std::get< float >( arguments().get( gie::stringHasher( "MoreMoneyNeeded" ) ) );
+
+			return true;
+		}
+	};
+
+
+	// defining a buy axe action in case npc needs it
+	class BuyAxeAction : public gie::Action
+	{
+	public:
+
+		// inheriting constructors
+		using gie::Action::Action;
+
+		std::string_view name() const override { return "BuyAxe"; }
+		gie::StringHash hash() const override { return stringRegister.add( "BuyAxe" ); }
+
+		// defines how world context and agent are affected by this action
+		bool outcome( gie::Agent& agent ) override
+		{
+			// getting agent axe integrity property in world context
+			auto [ _, axeIntegrityPpt ] = agent.property( "AxeIntegrity" );
+			if( !axeIntegrityPpt )
+			{
+				return false;
+			}
+
+			// setting axe integrity to agent in world context
+			axeIntegrityPpt->value = newAxeIntegrityValue;
+
+			// getting agent money property in world context
+			auto [ __, moneyPpt ] = agent.property( "Money" );
+			if( !moneyPpt )
+			{
+				return false;
+			}
+
+			// setting new money value to agent in world context
+			moneyPpt->value = std::max( moneyPpt->getFloat().second - axeCost, 0.f );
+
+			return true;
+		}
+	};
+
+	// defining simulator for action buy axe
+	class BuyAxeSimulator : public gie::ActionSimulator
+	{
+	public:
+		
+		using gie::ActionSimulator::ActionSimulator;
+
+		std::string_view name() const override { return "BuyAxe"; }
+		gie::StringHash hash() const override { return stringRegister.add( "BuyAxe" ); }
+
+		// define conditions for action
+		bool prerequisites( const gie::Simulation& baseSimulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
+		{
+			// getting agent axe integrity property guid from world context
+			auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
+
+			// getting axe integrity property from simulation context
+			auto simAxeIntegrityPpt = baseSimulation.context().property( axeIntegrityPptGuid );
+			if( !simAxeIntegrityPpt )
+			{
+				return false;
+			}
+
+			// checking minimal axe integrity
+			if( simAxeIntegrityPpt->getFloat().second >= minIntegrity )
+			{
+				return false;
+			}
+
+			// getting agent money property guid from world context
+			auto [ moneyPptGuid, __ ] = agent.worldContextAgent()->property( "Money" );
+
+			// getting money property from simulation context
+			auto simMoneyPpt = baseSimulation.context().property( moneyPptGuid );
+			if( !simMoneyPpt )
+			{
+				return false;
+			}
+
+			// checking if has enough money to buy axe
+			if( simMoneyPpt->getFloat().second < axeCost )
+			{
+				// it will raise money needed later in simulation
+				// so no axe is going to bought but it will queue
+				// a RaiseMoneyNeeded action so npc need to get
+				// more money so it can actually afford an axe.
+				return true;
+			}
+
+			return true;
+		}
+
+		// calculate cost and necessary steps (other actions) to achieve the action being simulated
+		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
+		{
+			// getting agent money property guid from world context
+			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
+
+			// getting money property from simulation context
+			auto simMoneyPpt = simulation.context().property( moneyPptGuid );
+			if( !simMoneyPpt )
+			{
+				return false;
+			}
+
+			// checking if has enough money to buy axe
+			if( simMoneyPpt->getFloat().second >= axeCost )
+			{
+				// creating buy axe action
+				if( auto buyAxeAction = std::make_shared< BuyAxeAction >( arguments() ) )
+				{
+					// queueing action
+					simulation.actions.emplace_back( buyAxeAction );
+					return true;
+				}
+			}
+			else
+			{
+				// no money to buy an axe, lets raise money needed so
+				// agent (character in simulation) and npc (actual character in game)
+				// will look for more money.
+
+				// getting agent money property guid from world context
+				auto [ moneyNeededPptGuid, __ ] = agent.worldContextAgent()->property( "Money" );
+
+				// getting money property from simulation context
+				auto simMoneyNeededPpt = simulation.context().property( moneyNeededPptGuid );
+				if( !simMoneyNeededPpt )
+				{
+					return false;
+				}
+
+				// raising money needed in simulation context
+				simMoneyNeededPpt->value = simMoneyNeededPpt->getFloat().second + axeCost;
+
+				// creating arguments for action
+				gie::NamedArguments actionArguments{};
+				actionArguments.add( { gie::stringHasher( "MoreMoneyNeeded" ), simMoneyNeededPpt->getFloat().second } );
+
+				// creating raise money needed action
+				if( auto raiseMoneyNeededAction = std::make_shared< RaiseMoneyNeededAction >( actionArguments ) )
+				{
+					// queueing action
+					simulation.actions.emplace_back( raiseMoneyNeededAction );
+					return true;
+				}
+			}
 
 			return true;
 		}
@@ -483,13 +734,61 @@ int woodHouse()
 	// defining available actions and their simulators for planner
 	DEFINE_ACTION_SET_ENTRY( CutDownTree )
 	DEFINE_ACTION_SET_ENTRY( Work )
+	DEFINE_ACTION_SET_ENTRY( BuyAxe )
 
 	// setting available actions
 	planner.addActionSetEntry< CutDownTreeActionSetEntry >( gie::stringHasher( "CutDownTree" ) );
 	planner.addActionSetEntry< WorkActionSetEntry >( gie::stringHasher( "Work" ) );
+	planner.addActionSetEntry< BuyAxeActionSetEntry >( gie::stringHasher( "BuyAxe" ) );
 
 	// finally planner doing its thing
 	planner.plan();
+
+	// printing actions from simulation leaf nodes
+	std::vector< gie::Guid > leafSimulationGuids{ };
+	auto& simulations = planner.simulations();
+	for( auto& simulationItr : simulations )
+	{
+		if( simulationItr.second.outgoing.empty() )
+		{
+			leafSimulationGuids.push_back( simulationItr.first );
+		}
+	}
+
+	for( auto leafSimulationGuid : leafSimulationGuids )
+	{
+		std::vector< std::string_view > actionNames;
+		auto simulationItr = simulations.find( leafSimulationGuid );
+
+		// iterating until root simulation
+		while( !simulationItr->second.incoming.empty() )
+		{
+			auto& simulationActions = simulationItr->second.actions;
+			for( auto simulationAction : simulationActions )
+			{
+				auto actionName = stringRegister.get( simulationAction->hash() );
+				actionNames.push_back( actionName );
+			}
+			simulationItr = simulations.find( *simulationItr->second.incoming.begin() );
+		}
+		
+		if( actionNames.empty() )
+		{
+			continue;
+		}
+
+		auto actionNameItr = actionNames.rbegin();
+		std::cout << *actionNameItr;
+		actionNameItr++;
+
+		while( actionNameItr != actionNames.rend() )
+		{
+			std::cout << " | " << *actionNameItr;
+			actionNameItr++;
+		}
+
+		std::cout << std::endl << "==============" << std::endl;
+	}
 
 	// printing planned actions
 	printPlannedActions( planner.planActions(), stringRegister );

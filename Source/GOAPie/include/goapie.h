@@ -17,8 +17,8 @@ namespace gie
 		StringHash _name{ InvalidStringHash };
 
 	public:
-		Property( Guid guid, Guid owner, StringHash name ) : _guid( guid ), _owner( owner ), _name( name ) { }
-		Property( Guid owner, StringHash name ) : _guid( randGuid() ), _owner( owner ), _name( name ) { }
+		Property( Guid guid, Guid owner, StringHash hash ) : _guid( guid ), _owner( owner ), _name( hash ) { }
+		Property( Guid owner, StringHash hash ) : _guid( randGuid() ), _owner( owner ), _name( hash ) { }
 		Property() = delete;
 		Property( const Property& ) noexcept = default;
 		Property( Property&& ) noexcept = default;
@@ -77,7 +77,7 @@ namespace gie
 		Guid ownerGuid() const { return _owner; }
 
 		// @return StringHash representing the name given to this property.
-		StringHash name() const { return _name; }
+		StringHash hash() const { return _name; }
 	};
 
 	typedef std::pair< Guid, Property::Variant > Definition;
@@ -155,7 +155,7 @@ namespace gie
 		// @return Guid and pointer to property.
 		FetchPropertyResult property( StringHash nameHash ) const;
 
-		void removeProperty( StringHash name ) { _propertyGuids.erase( name ); }
+		void removeProperty( StringHash hash ) { _propertyGuids.erase( hash ); }
 
 		class World* world() const { return _world; }
 
@@ -172,7 +172,7 @@ namespace gie
 		virtual void removeEntity( const Guid guid ) = 0;
 		// @return Guid to a new (orphan) property.
 		// NOTE: it is not assigned to an entity!
-		virtual std::pair< Guid, class Property* > createProperty( Guid guid, StringHash name, Guid owner = NullGuid, Property::Variant defaultValue = false ) = 0;
+		virtual std::pair< Guid, class Property* > createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false ) = 0;
 		virtual void removeProperty( const Guid guid ) = 0;
 		virtual void eraseAll() = 0;
 		// @return Pointer to an existing property.
@@ -354,7 +354,7 @@ namespace gie
 		void removeProperty( const Guid guid )				override { _properties.erase( guid ); }
 		void eraseAll()										override { _entities.clear(); }
 
-		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name, Guid owner = NullGuid, Property::Variant defaultValue = false )	override;
+		std::pair< Guid, Property* > createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false )	override;
 	};
 
 	std::pair< Guid, Entity* > Blackboard::createEntity()
@@ -368,13 +368,13 @@ namespace gie
 		return std::pair{ NullGuid, nullptr };
 	}
 
-	std::pair< Guid, Property* > Blackboard::createProperty( Guid guid, StringHash name, Guid owner, Property::Variant defaultValue )
+	std::pair< Guid, Property* > Blackboard::createProperty( Guid guid, StringHash hash, Guid owner, Property::Variant defaultValue )
 	{
 		if( guid == NullGuid )
 		{
 			guid = randGuid();
 		}
-		Property property{ guid, owner, name };
+		Property property{ guid, owner, hash };
 		auto result = _properties.emplace( guid, std::move( property ) );
 		if( result.second )
 		{
@@ -401,7 +401,7 @@ namespace gie
 		{
 			if( const Property* parentPpt = parent()->property( guid ) )
 			{
-				auto [ newPptGuid, newPpt ] = createProperty( guid, parentPpt->name(), parentPpt->ownerGuid(), parentPpt->value );
+				auto [ newPptGuid, newPpt ] = createProperty( guid, parentPpt->hash(), parentPpt->ownerGuid(), parentPpt->value );
 				return newPpt;
 			}
 		}
@@ -480,6 +480,8 @@ namespace gie
 	class World : public IDataEntityManager
 	{
 		Blackboard _context{ this };
+		// TODO: string register need to be singleton and used by all worlds
+		StringRegister _stringRegister{};
 
     public:
 		World() = default;
@@ -488,6 +490,8 @@ namespace gie
 		auto& context() { return _context; };
 		const auto& context() const { return _context; };
 		auto& properties() { return _context.properties(); };
+		auto& stringRegiter() { return _stringRegister; }
+		const auto& stringRegister() { return _stringRegister; }
 
 		// IDataEntityManager interface
 		std::pair< Guid, class Agent* > createAgent()		override { return _context.createAgent(); };
@@ -503,9 +507,9 @@ namespace gie
 		class Agent* agent( const Guid guid )				override { return _context.agent( guid ); }
 		const class Agent* agent( const Guid guid ) const	override { return _context.agent( guid ); }
 
-		std::pair< Guid, Property* > createProperty( Guid guid, StringHash name, Guid owner = NullGuid, Property::Variant defaultValue = false ) override
+		std::pair< Guid, Property* > createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false ) override
 		{
-			return _context.createProperty( guid, name, owner, defaultValue );
+			return _context.createProperty( guid, hash, owner, defaultValue );
 		};
 
 	};
@@ -577,7 +581,7 @@ namespace gie
 			return { NullGuid, nullptr };
 		}
 
-		// mapping property name to property guid
+		// mapping property hash to property guid
 		auto registeredPropertyGuid = _propertyGuids.emplace( nameHash, emplaceResult.first->first );
 		if( registeredPropertyGuid.second )
 		{
@@ -816,106 +820,113 @@ namespace gie
 		std::vector< std::shared_ptr< class Action > > actions;
 	};
 
-	Checksum getChecksum( const std::vector< size_t >& values )
+	typedef Property::Variant ArgumentType;
+	typedef std::pair< StringHash, ArgumentType > NamedArgument;
+
+	Checksum getChecksum( const std::vector< Guid >& guids )
 	{
 		Checksum type = NullArguments;
-		for( const auto& name : values )
+		for( const auto& guid : guids )
 		{
-			type += static_cast< Checksum >( name );
+			type += static_cast< Checksum >( guid );
 		}
 		return type;
 	}
 
-	Checksum getChecksum( std::vector< size_t >&& values )
+	Checksum getChecksum( std::vector< Guid >&& guids )
 	{
-		return getChecksum( values );
+		return getChecksum( guids );
 	}
 
-	Checksum getChecksum( const std::vector< NamedGuid >& namedGuids )
+	Checksum getChecksum( const std::unordered_map< StringHash, ArgumentType >& namedArguments )
 	{
 		Checksum type = NullArguments;
-		for( const auto& namedGuid : namedGuids )
+		for( const auto& namedArgument : namedArguments )
 		{
-			type += static_cast< Checksum >( namedGuid.first );
+			type += static_cast< Checksum >( namedArgument.first );
 		}
 		return type;
 	}
 
-	Checksum getChecksum( std::vector< NamedGuid >&& namedGuids )
+	Checksum getChecksum( std::unordered_map< StringHash, ArgumentType >&& namedArguments )
 	{
-		return getChecksum( namedGuids );
+		return getChecksum( namedArguments );
 	}
 
-	class NamedGuidArguments
+	class NamedArguments
 	{
 		// it's checksum of all string hashes in arguments.
 		Checksum _type{ NullArguments };
-		std::vector< NamedGuid > _namedGuids;
+		std::unordered_map< StringHash, ArgumentType > _arguments{ };
 
 		void updateType()
 		{
-			_type = getChecksum( _namedGuids );
+			_type = getChecksum( _arguments );
 		}
 
 	public:
 
 		size_t type() const { return _type; }
 
-		NamedGuidArguments() = default;
-		NamedGuidArguments( const std::vector< NamedGuid >& arguments )
-			: _namedGuids( arguments )
+		NamedArguments() = default;
+		NamedArguments( const std::unordered_map< StringHash, ArgumentType >& arguments )
+			: _arguments( arguments )
 		{
 			updateType();
 		};
 
-		NamedGuidArguments( std::vector< NamedGuid >&& arguments )
-			: _namedGuids( std::move( arguments ) )
+		NamedArguments( std::unordered_map< StringHash, ArgumentType >&& arguments )
+			: _arguments( std::move( arguments ) )
 		{
 			updateType();
 		};
 
-		NamedGuidArguments( const NamedGuidArguments& other )
-			: _namedGuids( other._namedGuids ),
+		NamedArguments( const NamedArguments& other )
+			: _arguments( other._arguments ),
 			_type( other._type ) { };
 
-		NamedGuidArguments( NamedGuidArguments&& other )
-			: _namedGuids( std::move( other._namedGuids ) ),
+		NamedArguments( NamedArguments&& other )
+			: _arguments( std::move( other._arguments ) ),
 			_type( other._type ) { };
 
-		~NamedGuidArguments() = default;
+		~NamedArguments() = default;
 
-		void add( const NamedGuid newArgument )
+		void add( const NamedArgument newArgument )
 		{
-			_namedGuids.push_back( newArgument );
+			_arguments.emplace( newArgument );
 			updateType();
 		}
 
-		void add( const std::vector< NamedGuid >& arguments )
+		void add( const std::vector< NamedArgument >& arguments )
 		{
 			if( arguments.empty() )
 			{
 				return;
 			}
 
-			_namedGuids.insert( _namedGuids.end(), arguments.begin(), arguments.end() );
+			for( auto& argument : arguments )
+			{
+				_arguments.emplace( argument );
+			}
+
 			updateType();
 		}
 
-		Guid guid( std::string_view name ) const
+		ArgumentType get( std::string_view name ) const
 		{
-			return guid( stringHasher( name.data() ) );
+			return get( stringHasher( name.data() ) );
 		}
 
-		Guid guid( const char* name ) const
+		ArgumentType get( const char* name ) const
 		{
-			return guid( stringHasher( name ) );
+			return get( stringHasher( name ) );
 		}
 
-		Guid guid( const StringHash name ) const
+		ArgumentType get( const StringHash hash ) const
 		{
-			for( const auto& argument : _namedGuids )
+			for( const auto& argument : _arguments )
 			{
-				if( argument.first == name )
+				if( argument.first == hash )
 				{
 					return argument.second;
 				}
@@ -928,19 +939,20 @@ namespace gie
 	// It has a state machine for asyncronous execution.
 	class Action
 	{
-		NamedGuidArguments _arguments{ };
+		NamedArguments _arguments{ };
 
     public:
 		Action() = default;
 		Action( const Action& other ) : _arguments( other._arguments ) { };
 		Action( Action&& other ) : _arguments( std::move( other._arguments ) ) { };
-		Action( const NamedGuidArguments& arguments ) : _arguments( arguments ) {  };
-		Action( NamedGuidArguments&& arguments ) : _arguments( std::move( arguments ) ) {  };
+		Action( const NamedArguments& arguments ) : _arguments( arguments ) {  };
+		Action( NamedArguments&& arguments ) : _arguments( std::move( arguments ) ) {  };
 		~Action() = default;
 
-		virtual StringHash name() const { return UndefinedName; }
+		virtual std::string_view name() const { return ""; }
+		virtual StringHash hash() const { return UndefinedName; }
 
-		NamedGuidArguments& arguments() { return _arguments; }
+		NamedArguments& arguments() { return _arguments; }
 
 		enum State : uint8_t
 		{
@@ -963,25 +975,26 @@ namespace gie
 	// containing current world definition.
 	class ActionSimulator
 	{
-		NamedGuidArguments _arguments{ };
+		NamedArguments _arguments{ };
 
 	public:
 		ActionSimulator() = delete;
 		ActionSimulator( const ActionSimulator& other ) = default;
 		ActionSimulator( ActionSimulator&& other ) = default;
 
-		ActionSimulator( const NamedGuidArguments& arguments )
+		ActionSimulator( const NamedArguments& arguments )
 			: _arguments( arguments ) {  };
 
-		ActionSimulator( NamedGuidArguments&& arguments )
+		ActionSimulator( NamedArguments&& arguments )
 			: _arguments( std::move( arguments ) ) {  };
 
 		~ActionSimulator() = default;
 
-		virtual StringHash name() const { return UndefinedName; }
+		virtual std::string_view name() const { return ""; }
+		virtual StringHash hash() const { return UndefinedName; }
 
-		NamedGuidArguments& arguments() { return _arguments; }
-		const NamedGuidArguments& arguments() const { return _arguments; }
+		NamedArguments& arguments() { return _arguments; }
+		const NamedArguments& arguments() const { return _arguments; }
 
 		// @Return True in case simulation context meets prerequisites, False otherwise.
 		virtual bool prerequisites( const Simulation& simulation, const SimAgent& agent, const class Goal& goal ) const { return false; }
@@ -1029,9 +1042,10 @@ namespace gie
 		ActionSetEntry() = default;
 		~ActionSetEntry() = default;
 
+		virtual std::string_view name() const { return "None"; }
 		virtual StringHash hash() const { return InvalidStringHash; }
-		virtual std::shared_ptr< ActionSimulator > simulator( const NamedGuidArguments& arguments ) const { return nullptr; };
-		virtual std::shared_ptr< Action > action( const NamedGuidArguments& arguments ) const { return nullptr; };
+		virtual std::shared_ptr< ActionSimulator > simulator( const NamedArguments& arguments ) const { return nullptr; };
+		virtual std::shared_ptr< Action > action( const NamedArguments& arguments ) const { return nullptr; };
 	};
 
 	// Macro for action set entry class generation.
@@ -1041,12 +1055,13 @@ namespace gie
 	class ActionName##ActionSetEntry : public gie::ActionSetEntry \
 	{ \
 		using gie::ActionSetEntry::ActionSetEntry; \
+		std::string_view name() const override { return #ActionName; } \
 		gie::StringHash hash() const override { return gie::stringHasher( #ActionName ); } \
-		std::shared_ptr< gie::ActionSimulator > simulator( const gie::NamedGuidArguments& arguments ) const override \
+		std::shared_ptr< gie::ActionSimulator > simulator( const gie::NamedArguments& arguments ) const override \
 		{ \
 			return std::make_shared< ActionName##Simulator >( arguments ); \
 		} \
-		std::shared_ptr< gie::Action > action( const gie::NamedGuidArguments& arguments ) const override \
+		std::shared_ptr< gie::Action > action( const gie::NamedArguments& arguments ) const override \
 		{ \
 			return std::make_shared< ActionName##Action >( arguments ); \
 		} \
@@ -1082,10 +1097,10 @@ namespace gie
 		auto& actionSet() { return _actionSet; }
 
 		template< typename T >
-		std::shared_ptr< ActionSetEntry > addActionSetEntry( StringHash name )
+		std::shared_ptr< ActionSetEntry > addActionSetEntry( StringHash hash )
 		{
 			static_assert( std::is_base_of_v< ActionSetEntry, T >, "Need to be sub class of ActionSetEntry" );
-			auto entry = _actionSet.emplace( name, std::make_shared< T >() );
+			auto entry = _actionSet.emplace( hash, std::make_shared< T >() );
 			return entry.second ? entry.first->second : nullptr;
 		}
 
@@ -1155,6 +1170,8 @@ namespace gie
 
 		void clearSimulations() { _simulations.clear(); }
 
+		const auto& simulations() { return _simulations; }
+
 		void plan()
 		{
 			simulate();
@@ -1164,6 +1181,8 @@ namespace gie
 		
 
 	};
+
+	constexpr bool printSteps = true;
 
 	void Planner::simulate()
 	{
@@ -1176,6 +1195,11 @@ namespace gie
 		// resetting simulation
 		_goalSimulationGuid = NullGuid;
 		_simulations.clear();
+
+		// logging
+		std::string logContent;
+		if( printSteps ) logContent.append( "Planner::simulate() started!\n" );
+		if( printSteps ) logContent.append( "Creating root simulation\n" );
 
 		// creating root simulation node
 		auto [ rootSimulationGuid, rootSimulation ] = createRootSimulation( agent() );
@@ -1190,26 +1214,41 @@ namespace gie
 		// defining max depth to avoid endless expansions
 		constexpr size_t depthLimit = 10;
 
+		if( printSteps ) logContent.append( "Starting !openedNodes.empty() while loop\n" );
+
 		while( !openedNodes.empty() )
 		{
 			// simulation nodes created during this loop,
 			// to be added to opened nodes
 			std::vector< Guid > expandedNodes{ };
 
+			if( printSteps ) logContent.append( "\nChecking opened nodes.\n" );
+
 			// go through all opened nodes
 			for( auto openedNodesItr : openedNodes )
 			{
+				if( printSteps ) logContent.append( "Getting base simulation.\n" );
 				// getting simulation from opened node
 				auto baseSimulation = simulation( openedNodesItr );
+				if( !baseSimulation )
+				{
+					continue;
+				}
 
 				// cannot expand this node if it has reached simulation depth limit
 				if( baseSimulation->depth >= depthLimit )
 				{
+					if( printSteps ) logContent.append( "Reached max depth, skipping opened node.\n" );
 					continue;
 				}
+
+				if( printSteps ) logContent.append( "Expanding opened node with available actions.\n" );
+
 				// expanding simulation over all available actions
 				for( auto [ _, actionSetEntry ] : _actionSet )
 				{
+					if( printSteps ) logContent.append( "\nExpanding for Action: " ).append( actionSetEntry->name() ).append( "\n" );
+
 					// getting simulator for action
 					auto actionSimulator = actionSetEntry->simulator( { } );
 					if( !actionSimulator )
@@ -1217,14 +1256,21 @@ namespace gie
 						continue;
 					}
 
+					if( printSteps ) logContent.append( "Checking prerequisites.\n" );
+
 					// checking if current simulation context meets action's conditions
 					if( !actionSimulator->prerequisites( *baseSimulation, baseSimulation->agent(), *goal() ) )
 					{
+						if( printSteps ) logContent.append( "Failed on prerequisites, skipping action.\n" );
 						continue;
 					}
 
+					if( printSteps ) logContent.append( "Creating simulation node for action.\n" );
+
 					// creating new simulation node for action simulation
 					auto [ newSimulationGuid, newSimulation ] = createSimulation( openedNodesItr );
+
+					if( printSteps ) logContent.append( "Simulating action.\n" );
 
 					// running action simulation on new node
 					bool simulationSuccess = actionSimulator->simulate( *newSimulation, newSimulation->agent(), *goal() );
@@ -1232,16 +1278,29 @@ namespace gie
 					// removing new node in case simulation has failed
 					if( !simulationSuccess )
 					{
+						if( printSteps ) logContent.append( "Simulation failed, deleting current simulation node.\n" );
 						deleteSimulation( newSimulationGuid );
 						continue;
 					}
 
-					// keeping track of expanded nodes
-					expandedNodes.push_back( newSimulationGuid );
+					if( printSteps ) logContent.append( "Simulation successful.\n" );
+
+					// cannot expand this node if it has reached simulation depth limit
+					if( newSimulation->depth >= depthLimit )
+					{
+						if( printSteps ) logContent.append( "Reached max depth, not further expanding current node.\n" );
+					}
+					else
+					{
+						if( printSteps ) logContent.append( "Marking node for further expansion.\n" );
+						// keeping track of expanded nodes
+						expandedNodes.push_back( newSimulationGuid );
+					}
 
 					// stopping simulation loop if goal has been reached here
 					if( goal()->reached( *newSimulation ) )
 					{
+						if( printSteps ) logContent.append( "Goal reached!\n" );
 						// marking simulation which reached the goal for backtracking
 						_goalSimulationGuid = newSimulationGuid;
 						// no need to keep expanding nodes
@@ -1255,7 +1314,7 @@ namespace gie
 			openedNodes = expandedNodes;
 		}
 
-		
+		std::cout << logContent << std::endl;
 		
 	}
 
