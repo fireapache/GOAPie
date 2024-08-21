@@ -1138,6 +1138,7 @@ namespace gie
 					auto newSimulation = &empl.first->second;
 					newSimulation->incoming.emplace_back( currentSimulationGuid );
 					newSimulation->depth = currentSimulation->depth + 1;
+					currentSimulation->outgoing.emplace_back( newRandGuid );
 					return { newRandGuid, newSimulation };
 				}
 			}

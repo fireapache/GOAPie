@@ -675,6 +675,19 @@ int woodHouse()
 			// checking if has enough money to buy axe
 			if( simMoneyPpt->getFloat().second >= axeCost )
 			{
+				// getting agent axe integrity property guid from world context
+				auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
+
+				// getting axe integrity property from simulation context
+				auto simAxeIntegrityPpt = simulation.context().property( axeIntegrityPptGuid );
+				if( !simAxeIntegrityPpt )
+				{
+					return false;
+				}
+
+				// setting new axe integrity value
+				simAxeIntegrityPpt->value = newAxeIntegrityValue;
+
 				// creating buy axe action
 				if( auto buyAxeAction = std::make_shared< BuyAxeAction >( arguments() ) )
 				{
@@ -690,7 +703,7 @@ int woodHouse()
 				// will look for more money.
 
 				// getting agent money property guid from world context
-				auto [ moneyNeededPptGuid, __ ] = agent.worldContextAgent()->property( "Money" );
+				auto [ moneyNeededPptGuid, __ ] = agent.worldContextAgent()->property( "MoneyNeeded" );
 
 				// getting money property from simulation context
 				auto simMoneyNeededPpt = simulation.context().property( moneyNeededPptGuid );
@@ -766,7 +779,7 @@ int woodHouse()
 			auto& simulationActions = simulationItr->second.actions;
 			for( auto simulationAction : simulationActions )
 			{
-				auto actionName = stringRegister.get( simulationAction->hash() );
+				auto actionName = simulationAction->name();
 				actionNames.push_back( actionName );
 			}
 			simulationItr = simulations.find( *simulationItr->second.incoming.begin() );
