@@ -59,16 +59,25 @@ namespace gie
 			Vec3Array
 		};
 
-		std::pair< bool, bool >				getBool()			const { return std::pair{ type() == Boolean,		std::get< bool >			( value ) }; }
-		std::pair< bool, BooleanVector& >	getBooleanArray()	const { return std::pair{ type() == BooleanArray,	std::get< BooleanVector >	( value ) }; }
-		std::pair< bool, float >			getFloat()			const { return std::pair{ type() == Float,			std::get< float >			( value ) }; }
-		std::pair< bool, FloatVector& >		getFloatArray()		const { return std::pair{ type() == FloatArray,		std::get< FloatVector >		( value ) }; }
-		std::pair< bool, int32_t >			getInteger()		const { return std::pair{ type() == Integer,		std::get< int32_t >			( value ) }; }
-		std::pair< bool, IntegerVector& >	getIntegerArray()	const { return std::pair{ type() == IntegerArray,	std::get< IntegerVector >	( value ) }; }
-		std::pair< bool, Guid >				getGuid()			const { return std::pair{ type() == GUID,			std::get< Guid >			( value ) }; }
-		std::pair< bool, GuidVector& >		getGuidArray()		const { return std::pair{ type() == GUIDArray,		std::get< GuidVector >		( value ) }; }
-		std::pair< bool, glm::vec3 >		getVec3()			const { return std::pair{ type() == Vec3,			std::get< glm::vec3 >		( value ) }; }
-		std::pair< bool, Vec3Vector& >		getVec3Array()		const { return std::pair{ type() == Vec3Array,		std::get< Vec3Vector >		( value ) }; }
+		std::pair< bool, bool >					getBool()			const	{ return std::pair{ type() == Boolean,		std::get< bool >			( value ) }; }
+		std::pair< bool, const BooleanVector* >	getBooleanArray()	const	{ return std::pair{ type() == BooleanArray,	&std::get< BooleanVector >	( value ) }; }
+		std::pair< bool, BooleanVector* >		getBooleanArray()			{ return std::pair{ type() == BooleanArray,	&std::get< BooleanVector >	( value ) }; }
+
+		std::pair< bool, float >				getFloat()			const	{ return std::pair{ type() == Float,		std::get< float >			( value ) }; }
+		std::pair< bool, const FloatVector* >	getFloatArray()		const	{ return std::pair{ type() == FloatArray,	&std::get< FloatVector >	( value ) }; }
+		std::pair< bool, FloatVector* >			getFloatArray()				{ return std::pair{ type() == FloatArray,	&std::get< FloatVector >	( value ) }; }
+
+		std::pair< bool, int32_t >				getInteger()		const	{ return std::pair{ type() == Integer,		std::get< int32_t >			( value ) }; }
+		std::pair< bool, const IntegerVector* >	getIntegerArray()	const	{ return std::pair{ type() == IntegerArray,	&std::get< IntegerVector >	( value ) }; }
+		std::pair< bool, IntegerVector* >		getIntegerArray()			{ return std::pair{ type() == IntegerArray,	&std::get< IntegerVector >	( value ) }; }
+
+		std::pair< bool, Guid >					getGuid()			const	{ return std::pair{ type() == GUID,			std::get< Guid >			( value ) }; }
+		std::pair< bool, const GuidVector* >	getGuidArray()		const	{ return std::pair{ type() == GUIDArray,	&std::get< GuidVector >		( value ) }; }
+		std::pair< bool, GuidVector* >			getGuidArray()				{ return std::pair{ type() == GUIDArray,	&std::get< GuidVector >		( value ) }; }
+
+		std::pair< bool, glm::vec3 >			getVec3()			const	{ return std::pair{ type() == Vec3,			std::get< glm::vec3 >		( value ) }; }
+		std::pair< bool, const Vec3Vector* >	getVec3Array()		const	{ return std::pair{ type() == Vec3Array,	&std::get< Vec3Vector >		( value ) }; }
+		std::pair< bool, Vec3Vector* >			getVec3Array()				{ return std::pair{ type() == Vec3Array,	&std::get< Vec3Vector >		( value ) }; }
 
 		// @return Type of data being stored in this property.
 		Type type() const
@@ -463,6 +472,12 @@ namespace gie
 		{
 			return &( itr->second );
 		}
+
+		if( parent() )
+		{
+			return parent()->entity( guid );
+		}
+
 		return nullptr;
 	}
 
@@ -947,7 +962,7 @@ namespace gie
 					return argument.second;
 				}
 			}
-			return NullGuid;
+			return ArgumentType();
 		}
 	};
 
@@ -1087,7 +1102,7 @@ namespace gie
 	// figuring out most effective action path towards goal.
 	class Planner
 	{
-		std::unordered_map< StringHash, std::shared_ptr< ActionSetEntry > > _actionSet;
+		std::vector< std::shared_ptr< ActionSetEntry > > _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
 		std::vector< std::shared_ptr< Action > > _planActions;
 		Goal* _goal{ nullptr };
@@ -1116,8 +1131,8 @@ namespace gie
 		std::shared_ptr< ActionSetEntry > addActionSetEntry( StringHash hash )
 		{
 			static_assert( std::is_base_of_v< ActionSetEntry, T >, "Need to be sub class of ActionSetEntry" );
-			auto entry = _actionSet.emplace( hash, std::make_shared< T >() );
-			return entry.second ? entry.first->second : nullptr;
+			auto& entry = _actionSet.emplace_back( std::make_shared< T >() );
+			return entry;
 		}
 
 		std::pair< Guid, Simulation* > createRootSimulation( const Agent* agent )
@@ -1262,7 +1277,7 @@ namespace gie
 				if( printSteps ) logContent.append( "Expanding opened node with available actions.\n" );
 
 				// expanding simulation over all available actions
-				for( auto [ _, actionSetEntry ] : _actionSet )
+				for( auto actionSetEntry : _actionSet )
 				{
 					if( printSteps ) logContent.append( "\nExpanding for Action: " ).append( actionSetEntry->name() ).append( "\n" );
 

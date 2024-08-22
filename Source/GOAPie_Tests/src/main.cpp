@@ -304,15 +304,27 @@ int woodHouse()
 	auto [ agentEntityGuid, agentEntity ] = world.createAgent();
 
 	// property telling if agent has a wood house
-	 auto [ agentWoodHousePptGuid, agentWoodHousePpt ] = agentEntity->createProperty( "WoodHouse", false );
+	auto [ agentWoodHousePptGuid, agentWoodHousePpt ] = agentEntity->createProperty( "WoodHouse", false );
 
 	// creating agent properties for this tutorial
+
+	// total money npc carries
 	agentEntity->createProperty( "Money", 0.f );
-	agentEntity->createProperty( "MoneyNeeded", 0.f );
+	// things (e.g. axe) npc need to buy
+	agentEntity->createProperty( "ThingsToBuy", gie::Property::GuidVector{} );
+	// integrity of axe npc is carrying
 	agentEntity->createProperty( "AxeIntegrity", 0.f );
 
-	// cost of buying an axe
-	constexpr float axeCost = 15.f;
+	// price to get an axe
+	constexpr float axePrice = 15.f;
+
+	// creating entity defining axe (a thing) npc can buy
+	auto [ axeInfoEntityGuid, axeInfoEntity ] = world.createEntity();
+	axeInfoEntity->createProperty( "Price", axePrice );
+
+	// registering entity with tag to be found later in simulation
+	world.context().entityTagRegister().tag( axeInfoEntity, { gie::stringHasher( "AxeInfo" ) } );
+
 	// money earn from work
 	constexpr float workSalary = 20.0;
 	// brand new axe integrity 
@@ -387,7 +399,7 @@ int woodHouse()
 			}
 
 			// checking minimal axe integrity to cut down a tree
-			if( simAxeIntegrityPpt->getFloat().second <= minIntegrity )
+			if( simAxeIntegrityPpt->getFloat().second < minIntegrity )
 			{
 				return false;
 			}
@@ -488,14 +500,29 @@ int woodHouse()
 		{
 			// getting property Guid to refer in the simulation
 			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
-			auto [ moneyNeededPptGuid, __ ] = agent.worldContextAgent()->property( "MoneyNeeded" );
+			auto [ thingsToBuyPptGuid, __ ] = agent.worldContextAgent()->property( "ThingsToBuy" );
 
 			// getting property in simulation property
 			const auto simMoneyPpt = baseSimulation.context().property( moneyPptGuid );
-			const auto simMoneyNeededPpt = baseSimulation.context().property( moneyNeededPptGuid );
+			const auto simThingsToBuyPpt = baseSimulation.context().property( thingsToBuyPptGuid );
 
-			// no need to work if has all money needed
-			if( simMoneyPpt->getFloat().second >= simMoneyNeededPpt->getFloat().second )
+			// getting cost of things to buy
+			float cost = 0.f;
+			auto thingsToBuyArray = simThingsToBuyPpt->getGuidArray().second;
+			for( gie::Guid thingToBuyGuid : *thingsToBuyArray )
+			{
+				if( const auto thingToBuyEntity = baseSimulation.context().entity( thingToBuyGuid ) )
+				{
+					auto [ ___, thingPricePpt ] = thingToBuyEntity->property( "Price" );
+					if( thingPricePpt )
+					{
+						cost += thingPricePpt->getFloat().second;
+					}
+				}
+			}
+
+			// no need to work if have enough money to buy stuff
+			if( simMoneyPpt->getFloat().second >= cost )
 			{
 				return false;
 			}
@@ -508,27 +535,15 @@ int woodHouse()
 		{
 			// getting property Guid to refer in the simulation
 			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
-			auto [ moneyNeededPptGuid, __ ] = agent.worldContextAgent()->property( "MoneyNeeded" );
 
 			// getting property in simulation property
 			auto simMoneyPpt = simulation.context().property( moneyPptGuid );
-			const auto simMoneyNeededPpt = simulation.context().property( moneyNeededPptGuid );
 
 			// setting money property in simulation's context
 			simMoneyPpt->value = simMoneyPpt->getFloat().second + workSalary;
 
-			// remove the need for money if all money needed was raised
-			if( simMoneyPpt->getFloat().second >= simMoneyNeededPpt->getFloat().second )
-			{
-				simMoneyNeededPpt->value = 0.f;
-			}
-
-			// creating arguments for action
-			gie::NamedArguments actionArguments{};
-			actionArguments.add( { gie::stringHasher( "NewMoneyNeeded" ), simMoneyNeededPpt->getFloat().second } );
-
 			// creating work action
-			if( auto workAction = std::make_shared< WorkAction >( actionArguments ) )
+			if( auto workAction = std::make_shared< WorkAction >( arguments() ) )
 			{
 				// queueing action
 				simulation.actions.emplace_back( workAction );
@@ -540,29 +555,32 @@ int woodHouse()
 
 	};
 
-	// defining a raise money needed action so npc need to find an way to get more money
-	class RaiseMoneyNeededAction : public gie::Action
+	// defining an action to tell npc it need to buy something
+	class NewThingToBuyAction : public gie::Action
 	{
 	public:
 
 		// inheriting constructors
 		using gie::Action::Action;
 
-		std::string_view name() const override { return "MoneyNeeded"; }
-		gie::StringHash hash() const override { return stringRegister.add( "MoneyNeeded" ); }
+		std::string_view name() const override { return "NewThingToBuy"; }
+		gie::StringHash hash() const override { return stringRegister.add( "NewThingToBuy" ); }
 
 		// defines how world context and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
 		{
+			// getting guid of thing npc is suppose to buy
+			auto thingToBuyGuid = std::get< gie::Guid >( arguments().get( gie::stringHasher( "ThingToBuy" ) ) );
+
 			// getting agent property in world context
-			auto [ _, MoneyNeededPpt ] = agent.property( "MoneyNeeded" );
-			if( !MoneyNeededPpt )
+			auto [ _, ThingsToBuyPpt ] = agent.property( "ThingsToBuy" );
+			if( !ThingsToBuyPpt )
 			{
 				return false;
 			}
 
-			// setting axe integrity to agent in world context
-			MoneyNeededPpt->value = MoneyNeededPpt->getFloat().second + std::get< float >( arguments().get( gie::stringHasher( "MoreMoneyNeeded" ) ) );
+			// adding axe as a thing to be bought by npc
+			ThingsToBuyPpt->getGuidArray().second->emplace_back( thingToBuyGuid );
 
 			return true;
 		}
@@ -601,7 +619,7 @@ int woodHouse()
 			}
 
 			// setting new money value to agent in world context
-			moneyPpt->value = std::max( moneyPpt->getFloat().second - axeCost, 0.f );
+			moneyPpt->value = std::max( moneyPpt->getFloat().second - axePrice, 0.f );
 
 			return true;
 		}
@@ -647,12 +665,10 @@ int woodHouse()
 			}
 
 			// checking if has enough money to buy axe
-			if( simMoneyPpt->getFloat().second < axeCost )
+			if( simMoneyPpt->getFloat().second < axePrice )
 			{
-				// it will raise money needed later in simulation
-				// so no axe is going to bought but it will queue
-				// a RaiseMoneyNeeded action so npc need to get
-				// more money so it can actually afford an axe.
+				// lets proceed with simulation so it will so it
+				// will add action to buy an axe.
 				return true;
 			}
 
@@ -662,6 +678,29 @@ int woodHouse()
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
 		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
+			// getting agent property guid from world context
+			auto [ thingsToBuyPptGuid, __ ] = agent.worldContextAgent()->property( "ThingsToBuy" );
+
+			// getting agent property from simulation context
+			auto thingsToBuyPpt = simulation.context().property( thingsToBuyPptGuid );
+			if( !thingsToBuyPpt )
+			{
+				return false;
+			}
+
+			// getting axe info entity
+			auto axeInfoTagSet = agent.worldContextAgent()->world()->context().entityTagRegister().tagSet( gie::stringHasher( "AxeInfo" ) );
+			// TODO: check if entity tag register in simulation context reflects world context
+			if( !axeInfoTagSet )
+			{
+				return false;
+			}
+			if( axeInfoTagSet->empty() )
+			{
+				return false;
+			}
+			gie::Guid axeInfoEntityGuid = *axeInfoTagSet->cbegin();
+
 			// getting agent money property guid from world context
 			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
 
@@ -673,7 +712,7 @@ int woodHouse()
 			}
 
 			// checking if has enough money to buy axe
-			if( simMoneyPpt->getFloat().second >= axeCost )
+			if( simMoneyPpt->getFloat().second >= axePrice )
 			{
 				// getting agent axe integrity property guid from world context
 				auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
@@ -687,6 +726,17 @@ int woodHouse()
 
 				// setting new axe integrity value
 				simAxeIntegrityPpt->value = newAxeIntegrityValue;
+
+				// consuming money
+				simMoneyPpt->value = simMoneyPpt->getFloat().second - axePrice;
+
+				// removing axe from things to buy property
+				auto thingsToBuyArray = thingsToBuyPpt->getGuidArray().second;
+				auto newArrayEnd = std::remove( thingsToBuyArray->begin(), thingsToBuyArray->end(), axeInfoEntityGuid );
+				if( newArrayEnd != thingsToBuyArray->end() )
+				{
+					thingsToBuyArray->erase( newArrayEnd, thingsToBuyArray->end() );
+				}
 
 				// creating buy axe action
 				if( auto buyAxeAction = std::make_shared< BuyAxeAction >( arguments() ) )
@@ -702,25 +752,23 @@ int woodHouse()
 				// agent (character in simulation) and npc (actual character in game)
 				// will look for more money.
 
-				// getting agent money property guid from world context
-				auto [ moneyNeededPptGuid, __ ] = agent.worldContextAgent()->property( "MoneyNeeded" );
+				auto thingsToBuyArray = thingsToBuyPpt->getGuidArray().second;
 
-				// getting money property from simulation context
-				auto simMoneyNeededPpt = simulation.context().property( moneyNeededPptGuid );
-				if( !simMoneyNeededPpt )
+				// is already set to buy thing
+				if( std::find( thingsToBuyArray->begin(), thingsToBuyArray->end(), axeInfoEntityGuid ) != thingsToBuyArray->end() )
 				{
 					return false;
 				}
 
-				// raising money needed in simulation context
-				simMoneyNeededPpt->value = simMoneyNeededPpt->getFloat().second + axeCost;
+				// finally adding axe to be bought by npc
+				thingsToBuyArray->emplace_back( axeInfoEntityGuid );
 
 				// creating arguments for action
 				gie::NamedArguments actionArguments{};
-				actionArguments.add( { gie::stringHasher( "MoreMoneyNeeded" ), simMoneyNeededPpt->getFloat().second } );
+				actionArguments.add( { gie::stringHasher( "ThingToBuy" ), axeInfoEntityGuid } );
 
 				// creating raise money needed action
-				if( auto raiseMoneyNeededAction = std::make_shared< RaiseMoneyNeededAction >( actionArguments ) )
+				if( auto raiseMoneyNeededAction = std::make_shared< NewThingToBuyAction >( actionArguments ) )
 				{
 					// queueing action
 					simulation.actions.emplace_back( raiseMoneyNeededAction );
