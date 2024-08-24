@@ -295,7 +295,55 @@ int basicGoal()
 	return 0;
 }
 
-int woodHouse()
+void printSimulatedActions( const gie::Planner& planner )
+{
+	std::vector< gie::Guid > leafSimulationGuids{ };
+	auto& simulations = planner.simulations();
+	for( auto& simulationItr : simulations )
+	{
+		if( simulationItr.second.outgoing.empty() )
+		{
+			leafSimulationGuids.push_back( simulationItr.first );
+		}
+	}
+
+	for( auto leafSimulationGuid : leafSimulationGuids )
+	{
+		std::vector< std::string_view > actionNames;
+		auto simulationItr = simulations.find( leafSimulationGuid );
+
+		// iterating until root simulation
+		while( !simulationItr->second.incoming.empty() )
+		{
+			auto& simulationActions = simulationItr->second.actions;
+			for( auto simulationAction : simulationActions )
+			{
+				auto actionName = simulationAction->name();
+				actionNames.push_back( actionName );
+			}
+			simulationItr = simulations.find( *simulationItr->second.incoming.begin() );
+		}
+		
+		if( actionNames.empty() )
+		{
+			continue;
+		}
+
+		auto actionNameItr = actionNames.rbegin();
+		std::cout << *actionNameItr;
+		actionNameItr++;
+
+		while( actionNameItr != actionNames.rend() )
+		{
+			std::cout << " | " << *actionNameItr;
+			actionNameItr++;
+		}
+
+		std::cout << std::endl << "==============" << std::endl;
+	}
+}
+
+int cutDownTrees()
 {
 	// creating world
 	gie::World world;
@@ -303,6 +351,9 @@ int woodHouse()
 	// creating agent (aka npc)
 	auto [ agentEntityGuid, agentEntity ] = world.createAgent();
 
+	// NOTE: this is a step towards the next (more complex)
+	// tutorial, a wood house is not being built here yet.
+	
 	// property telling if agent has a wood house
 	auto [ agentWoodHousePptGuid, agentWoodHousePpt ] = agentEntity->createProperty( "WoodHouse", false );
 
@@ -806,58 +857,12 @@ int woodHouse()
 	planner.plan();
 
 	// printing actions from simulation leaf nodes
-	std::vector< gie::Guid > leafSimulationGuids{ };
-	auto& simulations = planner.simulations();
-	for( auto& simulationItr : simulations )
-	{
-		if( simulationItr.second.outgoing.empty() )
-		{
-			leafSimulationGuids.push_back( simulationItr.first );
-		}
-	}
-
-	for( auto leafSimulationGuid : leafSimulationGuids )
-	{
-		std::vector< std::string_view > actionNames;
-		auto simulationItr = simulations.find( leafSimulationGuid );
-
-		// iterating until root simulation
-		while( !simulationItr->second.incoming.empty() )
-		{
-			auto& simulationActions = simulationItr->second.actions;
-			for( auto simulationAction : simulationActions )
-			{
-				auto actionName = simulationAction->name();
-				actionNames.push_back( actionName );
-			}
-			simulationItr = simulations.find( *simulationItr->second.incoming.begin() );
-		}
-		
-		if( actionNames.empty() )
-		{
-			continue;
-		}
-
-		auto actionNameItr = actionNames.rbegin();
-		std::cout << *actionNameItr;
-		actionNameItr++;
-
-		while( actionNameItr != actionNames.rend() )
-		{
-			std::cout << " | " << *actionNameItr;
-			actionNameItr++;
-		}
-
-		std::cout << std::endl << "==============" << std::endl;
-	}
-
-	// printing planned actions
-	printPlannedActions( planner.planActions(), stringRegister );
+	printSimulatedActions( planner );
 
 	return 0;
 }
 
 int main( int argc, char** argv )
 {
-	return woodHouse();
+	return cutDownTrees();
 }

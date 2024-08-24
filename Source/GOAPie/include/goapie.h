@@ -1202,7 +1202,7 @@ namespace gie
 
 		void clearSimulations() { _simulations.clear(); }
 
-		const auto& simulations() { return _simulations; }
+		const auto& simulations() const { return _simulations; }
 
 		void plan()
 		{
