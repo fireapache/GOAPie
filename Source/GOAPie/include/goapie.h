@@ -1,4 +1,5 @@
-#pragma once
+#ifndef GOAPIE_LIB
+#define GOAPIE_LIB
 
 #include <set>
 #include <string>
@@ -382,7 +383,7 @@ namespace gie
 		std::pair< Guid, Property* > createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false )	override;
 	};
 
-	std::pair< Guid, Entity* > Blackboard::createEntity()
+	inline std::pair< Guid, Entity* > Blackboard::createEntity()
 	{
 		Entity entity{ _world };
 		auto result = _entities.emplace( entity.guid(), std::move( entity ) );
@@ -393,7 +394,7 @@ namespace gie
 		return std::pair{ NullGuid, nullptr };
 	}
 
-	std::pair< Guid, Property* > Blackboard::createProperty( Guid guid, StringHash hash, Guid owner, Property::Variant defaultValue )
+	inline std::pair< Guid, Property* > Blackboard::createProperty( Guid guid, StringHash hash, Guid owner, Property::Variant defaultValue )
 	{
 		if( guid == NullGuid )
 		{
@@ -409,7 +410,7 @@ namespace gie
 		return std::pair{ NullGuid, nullptr };
 	}
 
-	Property* Blackboard::property( const Guid guid )
+	inline Property* Blackboard::property( const Guid guid )
 	{
 		if( guid == NullGuid )
 		{
@@ -434,7 +435,7 @@ namespace gie
 		return nullptr;
 	}
 
-	const Property* Blackboard::property( const Guid guid ) const
+	inline const Property* Blackboard::property( const Guid guid ) const
 	{
 		if( guid == NullGuid )
 		{
@@ -455,7 +456,7 @@ namespace gie
 		return nullptr;
 	}
 
-	Entity* Blackboard::entity( const Guid guid ) 
+	inline Entity* Blackboard::entity( const Guid guid ) 
 	{
 		auto itr = _entities.find( guid );
 		if( itr != _entities.end() )
@@ -465,7 +466,7 @@ namespace gie
 		return nullptr;
 	}
 
-	const Entity* Blackboard::entity( const Guid guid ) const
+	inline const Entity* Blackboard::entity( const Guid guid ) const
 	{
 		auto itr = _entities.find( guid );
 		if( itr != _entities.end() )
@@ -545,7 +546,7 @@ namespace gie
 
 	};
 
-	void EntityTagRegister::tag( Guid entityGuid, std::vector< Tag >& tags )
+	inline void EntityTagRegister::tag( Guid entityGuid, std::vector< Tag >& tags )
 	{
 		if( world() && !tags.empty() )
 		{
@@ -554,7 +555,7 @@ namespace gie
 		}
 	}
 
-	void EntityTagRegister::untag( Guid entityGuid, std::vector< Tag >& tags )
+	inline void EntityTagRegister::untag( Guid entityGuid, std::vector< Tag >& tags )
 	{
 		if( world() && !tags.empty() )
 		{
@@ -563,7 +564,7 @@ namespace gie
 		}
 	}
 
-	Entity::FetchPropertyResult Entity::property( StringHash hash ) const
+	inline Entity::FetchPropertyResult Entity::property( StringHash hash ) const
 	{
 		if( !_world )
 		{
@@ -589,7 +590,7 @@ namespace gie
 		return { propertyItr->first, &( propertyItr->second ) };
 	}
 
-	Entity::FetchPropertyResult Entity::createProperty( StringHash nameHash )
+	inline Entity::FetchPropertyResult Entity::createProperty( StringHash nameHash )
 	{
 		if( !_world )
 		{
@@ -658,19 +659,19 @@ namespace gie
 
 	};
 
-	Agent* Blackboard::agent( const Guid guid )
+	inline Agent* Blackboard::agent( const Guid guid )
 	{
 		Entity* dataEntity = entity( guid );
 		return static_cast< Agent* >( dataEntity );
 	}
 
-	const Agent* Blackboard::agent( const Guid guid ) const
+	inline const Agent* Blackboard::agent( const Guid guid ) const
 	{
 		const Entity* dataEntity = entity( guid );
 		return static_cast< const Agent* >( dataEntity );
 	}
 
-	std::pair< Guid, Agent* > Blackboard::createAgent()
+	inline std::pair< Guid, Agent* > Blackboard::createAgent()
 	{
 		Agent agent{ _world };
 		auto result = _entities.emplace( agent.guid(), std::move( agent ) );
@@ -681,7 +682,7 @@ namespace gie
 		return std::pair{ NullGuid, nullptr };
 	}
 
-	bool isTagged( const Entity* entity, Tag tag )
+	inline bool isTagged( const Entity* entity, Tag tag )
 	{
 		if( entity )
 		{
@@ -854,7 +855,7 @@ namespace gie
 	typedef Property::Variant ArgumentType;
 	typedef std::pair< StringHash, ArgumentType > NamedArgument;
 
-	Checksum getChecksum( const std::vector< Guid >& guids )
+	inline Checksum getChecksum( const std::vector< Guid >& guids )
 	{
 		Checksum type = NullArguments;
 		for( const auto& guid : guids )
@@ -864,12 +865,12 @@ namespace gie
 		return type;
 	}
 
-	Checksum getChecksum( std::vector< Guid >&& guids )
+	inline Checksum getChecksum( std::vector< Guid >&& guids )
 	{
 		return getChecksum( guids );
 	}
 
-	Checksum getChecksum( const std::unordered_map< StringHash, ArgumentType >& namedArguments )
+	inline Checksum getChecksum( const std::unordered_map< StringHash, ArgumentType >& namedArguments )
 	{
 		Checksum type = NullArguments;
 		for( const auto& namedArgument : namedArguments )
@@ -879,7 +880,7 @@ namespace gie
 		return type;
 	}
 
-	Checksum getChecksum( std::unordered_map< StringHash, ArgumentType >&& namedArguments )
+	inline Checksum getChecksum( std::unordered_map< StringHash, ArgumentType >&& namedArguments )
 	{
 		return getChecksum( namedArguments );
 	}
@@ -1216,7 +1217,7 @@ namespace gie
 
 	constexpr bool printSteps = false;
 
-	void Planner::simulate()
+	inline void Planner::simulate()
 	{
 		// validating world, agent and goal
 		if( !agent() || !world() || !goal() )
@@ -1350,7 +1351,7 @@ namespace gie
 		
 	}
 
-	void Planner::backtrack()
+	inline void Planner::backtrack()
 	{
 		// stop if no goal simulation node is assigned
 		if( _goalSimulationGuid == NullGuid )
@@ -1394,3 +1395,4 @@ namespace gie
 
 }
 
+#endif
