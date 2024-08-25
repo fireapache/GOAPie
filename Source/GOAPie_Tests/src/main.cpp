@@ -1,7 +1,12 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "examples.h"
+// example 1
+int fundamentals();
+// example 2
+int openDoor();
+// example 3
+int cutDownTrees();
 
 int main( int argc, char** argv )
 {
@@ -11,22 +16,24 @@ int main( int argc, char** argv )
 	{
 		ex = std::atoi( argv[ 1 ] );
 	}
-	
-	while( true )
+	else
 	{
-		std::printf( "Enter valid example number [1..3]: " );
-		std::scanf( "%d", &ex );
+		while( true )
+		{
+			std::printf( "Enter valid example number [1..3]: " );
+			std::scanf( "%d", &ex );
 
-		if( ex < 1 || ex > 3 )
-		{
-			std::printf( "Wrong example number!" );
-		}
-		else
-		{
-			break;
+			if( ex < 1 || ex > 3 )
+			{
+				std::printf( "Wrong example number!" );
+			}
+			else
+			{
+				break;
+			}
 		}
 	}
-
+	
 	int exResult = 1;
 
 	switch( ex )
