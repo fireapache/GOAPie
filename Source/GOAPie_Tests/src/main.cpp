@@ -8,10 +8,12 @@ int fundamentals();
 int openDoor();
 // example 3
 int cutDownTrees();
+// example 4
+int treesOnHill();
 
 int main( int argc, char** argv )
 {
-	std::vector< int(*)() > funcs { fundamentals, openDoor, cutDownTrees };
+	std::vector< int(*)() > funcs { fundamentals, openDoor, cutDownTrees, treesOnHill };
 
 	int ex = -1;
 
