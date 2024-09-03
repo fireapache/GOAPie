@@ -17,7 +17,7 @@ int insertingDataEntities()
 
 	for( size_t i = 0; i < 10; i++ )
 	{
-		lastEntityGuid = world.createEntity().first;
+		lastEntityGuid = world.createEntity()->guid();
 	}
 	
 	auto entity = world.entity( lastEntityGuid );
@@ -28,26 +28,23 @@ int insertingDataEntities()
 int insertingParameters()
 {
 	gie::World world;
-	auto entityGuid = world.createEntity().first;
-	auto entity = world.entity( entityGuid );
+	auto entity = world.createEntity();
 
 	if( !entity )
 	{
 		return 1;
 	}
 
-	auto [ param1Guid, param1Ptr ] = entity->createProperty( "AmmoCount" );
-
-	if( param1Ptr )
+	auto ammoCountPpt = entity->createProperty( "AmmoCount" );
+	if( ammoCountPpt )
 	{
-		param1Ptr->value = 5;
+		ammoCountPpt->value = 5;
 	}
 
-	auto [ param2Guid, param2Ptr ] = entity->createProperty( "Name" );
-
-	if( param2Ptr )
+	auto namePpt = entity->createProperty( "Name" );
+	if( namePpt )
 	{
-		param2Ptr->value = gie::stringHasher( "BFG" );
+		namePpt->value = gie::stringHasher( "BFG" );
 	}
 
 	return 0;

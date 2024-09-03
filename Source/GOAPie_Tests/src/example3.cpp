@@ -8,13 +8,13 @@ int cutDownTrees()
 	gie::World world;
 
 	// creating agent (aka npc)
-	auto [ agentEntityGuid, agentEntity ] = world.createAgent();
+	auto agentEntity = world.createAgent();
 
 	// NOTE: this is a step towards the next (more complex)
 	// tutorial, a wood house is not being built here yet.
 	
 	// property telling if agent has a wood house
-	auto [ agentWoodHousePptGuid, agentWoodHousePpt ] = agentEntity->createProperty( "WoodHouse", false );
+	auto agentWoodHousePpt = agentEntity->createProperty( "WoodHouse", false );
 
 	// creating agent properties for this tutorial
 
@@ -29,7 +29,7 @@ int cutDownTrees()
 	constexpr float axePrice = 15.f;
 
 	// creating entity defining axe (a thing) npc can buy
-	auto [ axeInfoEntityGuid, axeInfoEntity ] = world.createEntity();
+	auto axeInfoEntity = world.createEntity();
 	axeInfoEntity->createProperty( "Price", axePrice );
 
 	// registering entity with tag to be found later in simulation
@@ -44,7 +44,7 @@ int cutDownTrees()
 	gie::Goal goal{ world };
 
 	// setting goal targets (agent's wood house must exist)
-	goal.targets.emplace_back( agentWoodHousePptGuid, true );
+	goal.targets.emplace_back( agentWoodHousePpt->guid(), true );
 
 	// creating string register to point string hashes back to strings
 	static gie::StringRegister stringRegister;
@@ -97,10 +97,10 @@ int cutDownTrees()
 		bool prerequisites( const gie::Simulation& baseSimulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
 			// getting Axe Integrity property guid from world context
-			auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
+			auto axeIntegrityPpt = agent.worldContextAgent()->property( "AxeIntegrity" );
 
 			// getting Axe Integrity property from current simulation context
-			auto simAxeIntegrityPpt = baseSimulation.context().property( axeIntegrityPptGuid );
+			auto simAxeIntegrityPpt = baseSimulation.context().property( axeIntegrityPpt->guid() );
 
 			// return if no property was found
 			if( !simAxeIntegrityPpt )
@@ -136,10 +136,10 @@ int cutDownTrees()
 		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
 			// getting Axe Integrity property guid from world context
-			auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
+			auto axeIntegrityPpt = agent.worldContextAgent()->property( "AxeIntegrity" );
 
 			// getting Axe Integrity property from current simulation context
-			auto simAxeIntegrityPpt = simulation.context().property( axeIntegrityPptGuid );
+			auto simAxeIntegrityPpt = simulation.context().property( axeIntegrityPpt->guid() );
 
 			// decreasing axe integrity once tree was cut down
 			simAxeIntegrityPpt->value = simAxeIntegrityPpt->getFloat().second - 1.f;
@@ -182,8 +182,8 @@ int cutDownTrees()
 		// defines how world context and agent are affected by this action
 		bool outcome( gie::Agent& agent ) override
 		{
-			auto [ _, moneyPpt ] = agent.property( "Money" );
-			auto [ __, moneyNeededPpt ] = agent.property( "MoneyNeeded" );
+			auto moneyPpt = agent.property( "Money" );
+			auto moneyNeededPpt = agent.property( "MoneyNeeded" );
 
 			// adding money to agent in world's context
 			moneyPpt->value = moneyPpt->getFloat().second + workSalary;
@@ -209,12 +209,12 @@ int cutDownTrees()
 		bool prerequisites( const gie::Simulation& baseSimulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
 			// getting property Guid to refer in the simulation
-			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
-			auto [ thingsToBuyPptGuid, __ ] = agent.worldContextAgent()->property( "ThingsToBuy" );
+			auto moneyPpt = agent.worldContextAgent()->property( "Money" );
+			auto thingsToBuyPpt = agent.worldContextAgent()->property( "ThingsToBuy" );
 
 			// getting property in simulation property
-			const auto simMoneyPpt = baseSimulation.context().property( moneyPptGuid );
-			const auto simThingsToBuyPpt = baseSimulation.context().property( thingsToBuyPptGuid );
+			const auto simMoneyPpt = baseSimulation.context().property( moneyPpt->guid() );
+			const auto simThingsToBuyPpt = baseSimulation.context().property( thingsToBuyPpt->guid() );
 
 			// getting cost of things to buy
 			float cost = 0.f;
@@ -223,7 +223,7 @@ int cutDownTrees()
 			{
 				if( const auto thingToBuyEntity = baseSimulation.context().entity( thingToBuyGuid ) )
 				{
-					auto [ ___, thingPricePpt ] = thingToBuyEntity->property( "Price" );
+					auto thingPricePpt = thingToBuyEntity->property( "Price" );
 					if( thingPricePpt )
 					{
 						cost += thingPricePpt->getFloat().second;
@@ -244,10 +244,10 @@ int cutDownTrees()
 		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
 			// getting property Guid to refer in the simulation
-			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
+			auto moneyPpt = agent.worldContextAgent()->property( "Money" );
 
 			// getting property in simulation property
-			auto simMoneyPpt = simulation.context().property( moneyPptGuid );
+			auto simMoneyPpt = simulation.context().property( moneyPpt->guid() );
 
 			// setting money property in simulation's context
 			simMoneyPpt->value = simMoneyPpt->getFloat().second + workSalary;
@@ -283,7 +283,7 @@ int cutDownTrees()
 			auto thingToBuyGuid = std::get< gie::Guid >( arguments().get( gie::stringHasher( "ThingToBuy" ) ) );
 
 			// getting agent property in world context
-			auto [ _, ThingsToBuyPpt ] = agent.property( "ThingsToBuy" );
+			auto ThingsToBuyPpt = agent.property( "ThingsToBuy" );
 			if( !ThingsToBuyPpt )
 			{
 				return false;
@@ -312,7 +312,7 @@ int cutDownTrees()
 		bool outcome( gie::Agent& agent ) override
 		{
 			// getting agent axe integrity property in world context
-			auto [ _, axeIntegrityPpt ] = agent.property( "AxeIntegrity" );
+			auto axeIntegrityPpt = agent.property( "AxeIntegrity" );
 			if( !axeIntegrityPpt )
 			{
 				return false;
@@ -322,7 +322,7 @@ int cutDownTrees()
 			axeIntegrityPpt->value = newAxeIntegrityValue;
 
 			// getting agent money property in world context
-			auto [ __, moneyPpt ] = agent.property( "Money" );
+			auto moneyPpt = agent.property( "Money" );
 			if( !moneyPpt )
 			{
 				return false;
@@ -349,10 +349,10 @@ int cutDownTrees()
 		bool prerequisites( const gie::Simulation& baseSimulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
 			// getting agent axe integrity property guid from world context
-			auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
+			auto axeIntegrityPpt = agent.worldContextAgent()->property( "AxeIntegrity" );
 
 			// getting axe integrity property from simulation context
-			auto simAxeIntegrityPpt = baseSimulation.context().property( axeIntegrityPptGuid );
+			auto simAxeIntegrityPpt = baseSimulation.context().property( axeIntegrityPpt->guid() );
 			if( !simAxeIntegrityPpt )
 			{
 				return false;
@@ -365,10 +365,10 @@ int cutDownTrees()
 			}
 
 			// getting agent money property guid from world context
-			auto [ moneyPptGuid, __ ] = agent.worldContextAgent()->property( "Money" );
+			auto moneyPpt = agent.worldContextAgent()->property( "Money" );
 
 			// getting money property from simulation context
-			auto simMoneyPpt = baseSimulation.context().property( moneyPptGuid );
+			auto simMoneyPpt = baseSimulation.context().property( moneyPpt->guid() );
 			if( !simMoneyPpt )
 			{
 				return false;
@@ -389,7 +389,7 @@ int cutDownTrees()
 		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
 			// getting agent property guid from world context
-			auto [ thingsToBuyPptGuid, __ ] = agent.worldContextAgent()->property( "ThingsToBuy" );
+			auto thingsToBuyPptGuid = agent.worldContextAgent()->property( "ThingsToBuy" )->guid();
 
 			// getting agent property from simulation context
 			auto thingsToBuyPpt = simulation.context().property( thingsToBuyPptGuid );
@@ -412,10 +412,10 @@ int cutDownTrees()
 			gie::Guid axeInfoEntityGuid = *axeInfoTagSet->cbegin();
 
 			// getting agent money property guid from world context
-			auto [ moneyPptGuid, _ ] = agent.worldContextAgent()->property( "Money" );
+			auto moneyPpt = agent.worldContextAgent()->property( "Money" );
 
 			// getting money property from simulation context
-			auto simMoneyPpt = simulation.context().property( moneyPptGuid );
+			auto simMoneyPpt = simulation.context().property( moneyPpt->guid() );
 			if( !simMoneyPpt )
 			{
 				return false;
@@ -425,10 +425,10 @@ int cutDownTrees()
 			if( simMoneyPpt->getFloat().second >= axePrice )
 			{
 				// getting agent axe integrity property guid from world context
-				auto [ axeIntegrityPptGuid, _ ] = agent.worldContextAgent()->property( "AxeIntegrity" );
+				auto axeIntegrityPpt = agent.worldContextAgent()->property( "AxeIntegrity" );
 
 				// getting axe integrity property from simulation context
-				auto simAxeIntegrityPpt = simulation.context().property( axeIntegrityPptGuid );
+				auto simAxeIntegrityPpt = simulation.context().property( axeIntegrityPpt->guid() );
 				if( !simAxeIntegrityPpt )
 				{
 					return false;
@@ -495,7 +495,7 @@ int cutDownTrees()
 	constexpr size_t treeCount = 6;
 	for( size_t i = 0; i < treeCount; i++ )
 	{
-		auto [ treeEntityGuid, treeEntity ] = world.createEntity();
+		auto treeEntity = world.createEntity();
 		world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "Tree" ), gie::stringHasher( "TreeUp" ) } );
 	}
 

@@ -130,12 +130,10 @@ namespace gie
 		TagSet& tags() { return _tags; }
 		const TagSet& tags() const { return _tags; }
 
-		typedef std::pair< Guid, Property* > FetchPropertyResult;
-
 		// Register a property in data entity and world using its literal name.
 		// @param name: Property contextual name (e.g. "AmmoCount")
-		// @return Guid and pointer to property.
-		FetchPropertyResult createProperty( std::string_view name )
+		// @return Pointer to property.
+		Property* createProperty( std::string_view name )
 		{
 			return createProperty( stringHasher( name ) );
 		}
@@ -143,43 +141,43 @@ namespace gie
 		// Register a property in data entity and world using its literal name.
 		// @param name: Property contextual name (e.g. "AmmoCount")
 		// @param value: Default value of property
-		// @return Guid and pointer to property.
-		FetchPropertyResult createProperty( std::string_view name, Property::Variant value )
+		// @return Pointer to property.
+		Property* createProperty( std::string_view name, Property::Variant value )
 		{
 			return createProperty( stringHasher( name ), value );
 		}
 
 		// Register a property in data entity and world using its name hash.
 		// @param hash: Hash of property contextual name (e.g. "AmmoCount")
-		// @return Guid and pointer to property.
-		FetchPropertyResult createProperty( StringHash nameHash );
+		// @return Pointer to property.
+		Property* createProperty( StringHash nameHash );
 
 		// Register a property in data entity and world using its name hash.
 		// @param hash: Hash of property contextual name (e.g. "AmmoCount")
 		// @param value: Default value of property
-		// @return Guid and pointer to property.
-		FetchPropertyResult createProperty( StringHash nameHash, Property::Variant value )
+		// @return Pointer to property.
+		Property* createProperty( StringHash nameHash, Property::Variant value )
 		{
-			auto result = createProperty( nameHash );
-			if( result.second )
+			auto ppt = createProperty( nameHash );
+			if( ppt )
 			{
-				result.second->value = value;
+				ppt->value = value;
 			}
-			return result;
+			return ppt;
 		}
 
 		// Fetch a property registered in this data entity.
 		// @param name: Property contextual name (e.g. "AmmoCount")
-		// @return Guid and pointer to property.
-		FetchPropertyResult property( std::string_view name ) const
+		// @return Pointer to property.
+		Property* property( std::string_view name ) const
 		{
 			return property( stringHasher( name ) );
 		}
 
 		// Fetch a property registered in this data entity.
 		// @param hash: Hash of property contextual name (e.g. "AmmoCount")
-		// @return Guid and pointer to property.
-		FetchPropertyResult property( StringHash nameHash ) const;
+		// @return Pointer to property.
+		Property* property( StringHash nameHash ) const;
 
 		void removeProperty( StringHash hash ) { _propertyGuids.erase( hash ); }
 
@@ -190,15 +188,15 @@ namespace gie
 	class IDataEntityManager
 	{
 	public:
-		// @return Guid to a new agent entity.
-		virtual std::pair< Guid, class Agent* > createAgent() = 0;
+		// @return Pointer to a new agent entity.
+		virtual class Agent* createAgent() = 0;
 		virtual void removeAgent( const Guid guid ) = 0;
-		// @return Guid to a new data entity.
-		virtual std::pair< Guid, class Entity* > createEntity() = 0;
+		// @return Pointer to a new data entity.
+		virtual class Entity* createEntity() = 0;
 		virtual void removeEntity( const Guid guid ) = 0;
-		// @return Guid to a new (orphan) property.
+		// @return Pointer to a new (orphan) property.
 		// NOTE: it is not assigned to an entity!
-		virtual std::pair< Guid, class Property* > createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false ) = 0;
+		virtual class Property* createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false ) = 0;
 		virtual void removeProperty( const Guid guid ) = 0;
 		virtual void eraseAll() = 0;
 		// @return Pointer to an existing property.
@@ -367,8 +365,8 @@ namespace gie
 		void setParent( const Blackboard* parent ) { _parent = parent; }
 
 		// IDataEntityManager interface
-		std::pair< Guid, class Agent* > createAgent()		override;
-		std::pair< Guid, Entity* > createEntity()			override;
+		class Agent* createAgent()							override;
+		Entity* createEntity()								override;
 		Property* property( const Guid guid )				override;
 		const Property* property( const Guid guid )	const	override;
 		Entity* entity( const Guid guid )					override;
@@ -380,21 +378,21 @@ namespace gie
 		void removeProperty( const Guid guid )				override { _properties.erase( guid ); }
 		void eraseAll()										override { _entities.clear(); }
 
-		std::pair< Guid, Property* > createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false )	override;
+		Property* createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false )	override;
 	};
 
-	inline std::pair< Guid, Entity* > Blackboard::createEntity()
+	inline Entity* Blackboard::createEntity()
 	{
 		Entity entity{ _world };
 		auto result = _entities.emplace( entity.guid(), std::move( entity ) );
 		if( result.second )
 		{
-			return std::pair{ result.first->first, &result.first->second };
+			return &result.first->second;
 		}
-		return std::pair{ NullGuid, nullptr };
+		return nullptr;
 	}
 
-	inline std::pair< Guid, Property* > Blackboard::createProperty( Guid guid, StringHash hash, Guid owner, Property::Variant defaultValue )
+	inline Property* Blackboard::createProperty( Guid guid, StringHash hash, Guid owner, Property::Variant defaultValue )
 	{
 		if( guid == NullGuid )
 		{
@@ -405,9 +403,9 @@ namespace gie
 		if( result.second )
 		{
 			result.first->second.value = defaultValue;
-			return std::pair{ result.first->first, &result.first->second };
+			return &result.first->second;
 		}
-		return std::pair{ NullGuid, nullptr };
+		return nullptr;
 	}
 
 	inline Property* Blackboard::property( const Guid guid )
@@ -427,7 +425,7 @@ namespace gie
 		{
 			if( const Property* parentPpt = parent()->property( guid ) )
 			{
-				auto [ newPptGuid, newPpt ] = createProperty( guid, parentPpt->hash(), parentPpt->ownerGuid(), parentPpt->value );
+				auto newPpt = createProperty( guid, parentPpt->hash(), parentPpt->ownerGuid(), parentPpt->value );
 				return newPpt;
 			}
 		}
@@ -526,9 +524,9 @@ namespace gie
 		const auto& stringRegister() { return _stringRegister; }
 
 		// IDataEntityManager interface
-		std::pair< Guid, class Agent* > createAgent()		override { return _context.createAgent(); };
+		class Agent* createAgent()							override { return _context.createAgent(); };
 		void removeAgent( const Guid guid )					override { _context.removeAgent( guid ); };
-		std::pair< Guid, Entity* > createEntity()			override { return _context.createEntity(); };
+		Entity* createEntity()								override { return _context.createEntity(); };
 		void removeEntity( const Guid guid )				override { _context.removeEntity( guid ); };
 		void removeProperty( const Guid guid )				override { _context.removeProperty( guid ); };
 		void eraseAll()										override { _context.eraseAll(); };
@@ -539,7 +537,7 @@ namespace gie
 		class Agent* agent( const Guid guid )				override { return _context.agent( guid ); }
 		const class Agent* agent( const Guid guid ) const	override { return _context.agent( guid ); }
 
-		std::pair< Guid, Property* > createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false ) override
+		Property* createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false ) override
 		{
 			return _context.createProperty( guid, hash, owner, defaultValue );
 		};
@@ -564,11 +562,11 @@ namespace gie
 		}
 	}
 
-	inline Entity::FetchPropertyResult Entity::property( StringHash hash ) const
+	inline Property* Entity::property( StringHash hash ) const
 	{
 		if( !_world )
 		{
-			return { NullGuid, nullptr };
+			return nullptr;
 		}
 
 		// getting guid of property
@@ -577,29 +575,28 @@ namespace gie
 		// property doesn't exist in this data entity
 		if( propertyGuid == _propertyGuids.end() )
 		{
-			return { NullGuid, nullptr };
+			return nullptr;
 		}
 
 		// getting actual property
 		const auto propertyItr = _world->properties().find( propertyGuid->second );
 		if( propertyItr == _world->properties().end() )
 		{
-			return { NullGuid, nullptr };
+			return nullptr;
 		}
 
-		return { propertyItr->first, &( propertyItr->second ) };
+		return &( propertyItr->second );
 	}
 
-	inline Entity::FetchPropertyResult Entity::createProperty( StringHash nameHash )
+	inline Property* Entity::createProperty( StringHash nameHash )
 	{
 		if( !_world )
 		{
-			return { NullGuid, nullptr };
+			return nullptr;
 		}
 
 		// checking if it's already registered
-		auto existentProperty = property( nameHash );
-		if( existentProperty.second )
+		if( auto existentProperty = property( nameHash ) )
 		{
 			return existentProperty;
 		}
@@ -610,20 +607,20 @@ namespace gie
 
 		if( !emplaceResult.second )
 		{
-			return { NullGuid, nullptr };
+			return nullptr;
 		}
 
 		// mapping property hash to property guid
 		auto registeredPropertyGuid = _propertyGuids.emplace( nameHash, emplaceResult.first->first );
 		if( registeredPropertyGuid.second )
 		{
-			return { emplaceResult.first->first, &( emplaceResult.first->second ) };
+			return &( emplaceResult.first->second );
 		}
 
 		// erasing property in case its guid could not be registered in data entity
 		_world->properties().erase( emplaceResult.first->first );
 
-		return { NullGuid, nullptr };
+		return nullptr;
 	}
 
 	// Represents a NPC in world context.
@@ -671,15 +668,15 @@ namespace gie
 		return static_cast< const Agent* >( dataEntity );
 	}
 
-	inline std::pair< Guid, Agent* > Blackboard::createAgent()
+	inline Agent* Blackboard::createAgent()
 	{
 		Agent agent{ _world };
 		auto result = _entities.emplace( agent.guid(), std::move( agent ) );
 		if( result.second )
 		{
-			return std::pair{ result.first->first, static_cast< Agent* >( &result.first->second ) };
+			return static_cast< Agent* >( &result.first->second );
 		}
-		return std::pair{ NullGuid, nullptr };
+		return nullptr;
 	}
 
 	inline bool isTagged( const Entity* entity, Tag tag )

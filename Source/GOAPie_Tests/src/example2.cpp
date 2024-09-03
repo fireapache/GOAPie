@@ -8,22 +8,22 @@ int openDoor()
 	gie::World world;
 
 	// adding door entity to world
-	auto [ doorEntityGuid, doorEntity ] = world.createEntity();
+	auto doorEntity = world.createEntity();
 
 	// adding property to door entity and setting its default value
-	auto [ doorOpenedPptGuid, doorOpenedPpt ] = doorEntity->createProperty( "Opened", false );
+	auto doorOpenedPpt = doorEntity->createProperty( "Opened", false );
 
 	// creating goal
 	gie::Goal goal{ world };
 
 	// setting goal targets (door must get opened)
-	goal.targets.emplace_back( doorOpenedPptGuid, true );
+	goal.targets.emplace_back( doorOpenedPpt->guid(), true );
 
 	// creating agent (aka npc)
-	auto [ agentEntityGuid, agentEntity ] = world.createAgent();
+	auto agentEntity = world.createAgent();
 
 	// agent holds a property used by open door simulator
-	agentEntity->createProperty( "TargetDoorEntity", doorEntityGuid );
+	agentEntity->createProperty( "TargetDoorEntity", doorEntity->guid() );
 
 	// setting agent and door locations so there will be a Move action before OpenDoor
 	// NOTE: these can be commented out and plan will only contain an OpenDoor action
@@ -63,12 +63,12 @@ int openDoor()
 
 			// updating agent world location
 			auto agentLocation = agent.property( "Location" );
-			if( !agentLocation.second )
+			if( !agentLocation )
 			{
 				return false;
 			}
 			
-			agentLocation.second->value = location.second;
+			agentLocation->value = location.second;
 
 			return true;
 		}
@@ -123,7 +123,7 @@ int openDoor()
 		bool prerequisites( const gie::Simulation& simulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
 		{
 			// checking if world context agent has property telling which door entity is the target
-			auto [ targetDoorEntityPptGuid, targetDoorEntityPpt ] = agent.worldContextAgent()->property( "TargetDoorEntity" );
+			auto targetDoorEntityPpt = agent.worldContextAgent()->property( "TargetDoorEntity" );
 			if( !targetDoorEntityPpt )
 			{
 				return false;
@@ -138,13 +138,13 @@ int openDoor()
 
 			auto openedPpt = doorEntity->property( "Opened" );
 			// not valid if no property "Opened" exists
-			if( !openedPpt.second )
+			if( !openedPpt )
 			{
 				return false;
 			}
 
 			// not valid if door is already opened
-			if( openedPpt.second->getBool().second == true )
+			if( openedPpt->getBool().second == true )
 			{
 				return false;
 			}
@@ -160,7 +160,7 @@ int openDoor()
 			simulation.cost = baseCost;
 
 			// checking if world context agent has property telling which door entity is the target
-			auto [ targetDoorEntityPptGuid, targetDoorEntityPpt ] = agent.worldContextAgent()->property( "TargetDoorEntity" );
+			auto targetDoorEntityPpt = agent.worldContextAgent()->property( "TargetDoorEntity" );
 			if( !targetDoorEntityPpt )
 			{
 				return false;
@@ -174,7 +174,7 @@ int openDoor()
 			}
 
 			// setting simulation property
-			auto [ openedPptGuid, openedPpt ] = doorEntity->property( "Opened" );
+			auto openedPpt = doorEntity->property( "Opened" );
 			if( !openedPpt )
 			{
 				return false;
@@ -183,8 +183,8 @@ int openDoor()
 			simulation.context().property( openedPpt->guid() )->value = true;
 			
 			// adding distance cost in case there are location properties
-			auto [ doorLocationPptGuid, doorLocationPpt ] = doorEntity->property( "Location" );
-			auto [ agentLocationPptGuid, agentLocationPpt ] = agent.worldContextAgent()->property( "Location" );
+			auto doorLocationPpt = doorEntity->property( "Location" );
+			auto agentLocationPpt = agent.worldContextAgent()->property( "Location" );
 			if( doorLocationPpt && agentLocationPpt )
 			{
 				const glm::vec3 doorLocation = std::get< glm::vec3 >( doorLocationPpt->value );
@@ -196,7 +196,7 @@ int openDoor()
 				if( auto moveAction = std::make_shared< MoveAction >() )
 				{
 					// passing target location as argument for action
-					moveAction->arguments().add( { gie::stringHasher( "TargetLocation" ), doorLocationPptGuid } );
+					moveAction->arguments().add( { gie::stringHasher( "TargetLocation" ), doorLocationPpt->guid() } );
 					// queueing move action
 					simulation.actions.emplace_back( moveAction );
 				}
