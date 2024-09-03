@@ -60,25 +60,7 @@ namespace gie
 			Vec3Array
 		};
 
-		std::pair< bool, bool >					getBool()			const	{ return std::pair{ type() == Boolean,		std::get< bool >			( value ) }; }
-		std::pair< bool, const BooleanVector* >	getBooleanArray()	const	{ return std::pair{ type() == BooleanArray,	&std::get< BooleanVector >	( value ) }; }
-		std::pair< bool, BooleanVector* >		getBooleanArray()			{ return std::pair{ type() == BooleanArray,	&std::get< BooleanVector >	( value ) }; }
-
-		std::pair< bool, float >				getFloat()			const	{ return std::pair{ type() == Float,		std::get< float >			( value ) }; }
-		std::pair< bool, const FloatVector* >	getFloatArray()		const	{ return std::pair{ type() == FloatArray,	&std::get< FloatVector >	( value ) }; }
-		std::pair< bool, FloatVector* >			getFloatArray()				{ return std::pair{ type() == FloatArray,	&std::get< FloatVector >	( value ) }; }
-
-		std::pair< bool, int32_t >				getInteger()		const	{ return std::pair{ type() == Integer,		std::get< int32_t >			( value ) }; }
-		std::pair< bool, const IntegerVector* >	getIntegerArray()	const	{ return std::pair{ type() == IntegerArray,	&std::get< IntegerVector >	( value ) }; }
-		std::pair< bool, IntegerVector* >		getIntegerArray()			{ return std::pair{ type() == IntegerArray,	&std::get< IntegerVector >	( value ) }; }
-
-		std::pair< bool, Guid >					getGuid()			const	{ return std::pair{ type() == GUID,			std::get< Guid >			( value ) }; }
-		std::pair< bool, const GuidVector* >	getGuidArray()		const	{ return std::pair{ type() == GUIDArray,	&std::get< GuidVector >		( value ) }; }
-		std::pair< bool, GuidVector* >			getGuidArray()				{ return std::pair{ type() == GUIDArray,	&std::get< GuidVector >		( value ) }; }
-
-		std::pair< bool, glm::vec3 >			getVec3()			const	{ return std::pair{ type() == Vec3,			std::get< glm::vec3 >		( value ) }; }
-		std::pair< bool, const Vec3Vector* >	getVec3Array()		const	{ return std::pair{ type() == Vec3Array,	&std::get< Vec3Vector >		( value ) }; }
-		std::pair< bool, Vec3Vector* >			getVec3Array()				{ return std::pair{ type() == Vec3Array,	&std::get< Vec3Vector >		( value ) }; }
+		// clang-format off
 
 		// @return Type of data being stored in this property.
 		Type type() const
@@ -95,6 +77,33 @@ namespace gie
 			if( std::holds_alternative< Vec3Vector >	( value ) )	return Vec3Array;
 			return Unknow;
 		};
+
+		const	bool*			getBool()			const	{ return type() == Boolean ?		&std::get< bool >( value ) : nullptr; }
+				bool*			getBool()					{ return type() == Boolean ?		&std::get< bool >( value ) : nullptr; }
+		const	BooleanVector*	getBooleanArray()	const	{ return type() == BooleanArray ?	&std::get< BooleanVector >( value ) : nullptr; }
+				BooleanVector*	getBooleanArray()			{ return type() == BooleanArray ?	&std::get< BooleanVector >( value ) : nullptr; }
+
+		const	float*			getFloat()			const	{ return type() == Float ?			&std::get< float >( value ) : nullptr; }
+				float*			getFloat()					{ return type() == Float ?			&std::get< float >( value ) : nullptr; }
+		const	FloatVector*	getFloatArray()		const	{ return type() == FloatArray ?		&std::get< FloatVector >( value ) : nullptr; }
+				FloatVector*	getFloatArray()				{ return type() == FloatArray ?		&std::get< FloatVector >( value ) : nullptr; }
+
+		const	int32_t*		getInteger()		const	{ return type() == Integer ?		&std::get< int32_t >( value ) : nullptr; }
+				int32_t*		getInteger()				{ return type() == Integer ?		&std::get< int32_t >( value ) : nullptr; }
+		const	IntegerVector*	getIntegerArray()	const	{ return type() == IntegerArray ?	&std::get< IntegerVector >( value ) : nullptr; }
+				IntegerVector*	getIntegerArray()			{ return type() == IntegerArray ?	&std::get< IntegerVector >( value ) : nullptr; }
+
+		const	Guid*			getGuid()			const	{ return type() == GUID ?			&std::get< Guid >( value ) : nullptr; }
+				Guid*			getGuid()					{ return type() == GUID ?			&std::get< Guid >( value ) : nullptr; }
+		const	GuidVector*		getGuidArray()		const	{ return type() == GUIDArray ?		&std::get< GuidVector >( value ) : nullptr; }
+				GuidVector*		getGuidArray()				{ return type() == GUIDArray ?		&std::get< GuidVector >( value ) : nullptr; }
+
+		const	glm::vec3*		getVec3()			const	{ return type() == Vec3 ?			&std::get< glm::vec3 >( value ) : nullptr; }
+				glm::vec3*		getVec3()					{ return type() == Vec3 ?			&std::get< glm::vec3 >( value ) : nullptr; }
+		const	Vec3Vector*		getVec3Array()		const	{ return type() == Vec3Array ?		&std::get< Vec3Vector >( value ) : nullptr; }
+				Vec3Vector*		getVec3Array()				{ return type() == Vec3Array ?		&std::get< Vec3Vector >( value ) : nullptr; }
+
+		// clang-format on
 
 		// @return Guid for this property.
 		Guid guid() const { return _guid; };

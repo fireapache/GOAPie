@@ -109,7 +109,7 @@ int cutDownTrees()
 			}
 
 			// checking minimal axe integrity to cut down a tree
-			if( simAxeIntegrityPpt->getFloat().second < minIntegrity )
+			if( *simAxeIntegrityPpt->getFloat() < minIntegrity )
 			{
 				return false;
 			}
@@ -142,7 +142,7 @@ int cutDownTrees()
 			auto simAxeIntegrityPpt = simulation.context().property( axeIntegrityPpt->guid() );
 
 			// decreasing axe integrity once tree was cut down
-			simAxeIntegrityPpt->value = simAxeIntegrityPpt->getFloat().second - 1.f;
+			simAxeIntegrityPpt->value = *simAxeIntegrityPpt->getFloat() - 1.f;
 
 			// getting set of trees still up
 			const auto treeUpTagSet = simulation.tagSet( gie::stringHasher( "TreeUp" ) );
@@ -186,7 +186,7 @@ int cutDownTrees()
 			auto moneyNeededPpt = agent.property( "MoneyNeeded" );
 
 			// adding money to agent in world's context
-			moneyPpt->value = moneyPpt->getFloat().second + workSalary;
+			moneyPpt->value = *moneyPpt->getFloat() + workSalary;
 
 			// updating money needed
 			moneyNeededPpt->value = std::get< float >( arguments().get( "NewMoneyNeeded" ) );
@@ -218,7 +218,7 @@ int cutDownTrees()
 
 			// getting cost of things to buy
 			float cost = 0.f;
-			auto thingsToBuyArray = simThingsToBuyPpt->getGuidArray().second;
+			auto thingsToBuyArray = simThingsToBuyPpt->getGuidArray();
 			for( gie::Guid thingToBuyGuid : *thingsToBuyArray )
 			{
 				if( const auto thingToBuyEntity = baseSimulation.context().entity( thingToBuyGuid ) )
@@ -226,13 +226,13 @@ int cutDownTrees()
 					auto thingPricePpt = thingToBuyEntity->property( "Price" );
 					if( thingPricePpt )
 					{
-						cost += thingPricePpt->getFloat().second;
+						cost += *thingPricePpt->getFloat();
 					}
 				}
 			}
 
 			// no need to work if have enough money to buy stuff
-			if( simMoneyPpt->getFloat().second >= cost )
+			if( *simMoneyPpt->getFloat() >= cost )
 			{
 				return false;
 			}
@@ -250,7 +250,7 @@ int cutDownTrees()
 			auto simMoneyPpt = simulation.context().property( moneyPpt->guid() );
 
 			// setting money property in simulation's context
-			simMoneyPpt->value = simMoneyPpt->getFloat().second + workSalary;
+			simMoneyPpt->value = *simMoneyPpt->getFloat() + workSalary;
 
 			// creating work action
 			if( auto workAction = std::make_shared< WorkAction >( arguments() ) )
@@ -290,7 +290,7 @@ int cutDownTrees()
 			}
 
 			// adding axe as a thing to be bought by npc
-			ThingsToBuyPpt->getGuidArray().second->emplace_back( thingToBuyGuid );
+			ThingsToBuyPpt->getGuidArray()->emplace_back( thingToBuyGuid );
 
 			return true;
 		}
@@ -329,7 +329,7 @@ int cutDownTrees()
 			}
 
 			// setting new money value to agent in world context
-			moneyPpt->value = std::max( moneyPpt->getFloat().second - axePrice, 0.f );
+			moneyPpt->value = std::max( *moneyPpt->getFloat() - axePrice, 0.f );
 
 			return true;
 		}
@@ -359,7 +359,7 @@ int cutDownTrees()
 			}
 
 			// checking minimal axe integrity
-			if( simAxeIntegrityPpt->getFloat().second >= minIntegrity )
+			if( *simAxeIntegrityPpt->getFloat() >= minIntegrity )
 			{
 				return false;
 			}
@@ -375,7 +375,7 @@ int cutDownTrees()
 			}
 
 			// checking if has enough money to buy axe
-			if( simMoneyPpt->getFloat().second < axePrice )
+			if( *simMoneyPpt->getFloat() < axePrice )
 			{
 				// lets proceed with simulation so it will so it
 				// will add action to buy an axe.
@@ -422,7 +422,7 @@ int cutDownTrees()
 			}
 
 			// checking if has enough money to buy axe
-			if( simMoneyPpt->getFloat().second >= axePrice )
+			if( *simMoneyPpt->getFloat() >= axePrice )
 			{
 				// getting agent axe integrity property guid from world context
 				auto axeIntegrityPpt = agent.worldContextAgent()->property( "AxeIntegrity" );
@@ -438,10 +438,10 @@ int cutDownTrees()
 				simAxeIntegrityPpt->value = newAxeIntegrityValue;
 
 				// consuming money
-				simMoneyPpt->value = simMoneyPpt->getFloat().second - axePrice;
+				simMoneyPpt->value = *simMoneyPpt->getFloat() - axePrice;
 
 				// removing axe from things to buy property
-				auto thingsToBuyArray = thingsToBuyPpt->getGuidArray().second;
+				auto thingsToBuyArray = thingsToBuyPpt->getGuidArray();
 				auto newArrayEnd = std::remove( thingsToBuyArray->begin(), thingsToBuyArray->end(), axeInfoEntityGuid );
 				if( newArrayEnd != thingsToBuyArray->end() )
 				{
@@ -462,7 +462,7 @@ int cutDownTrees()
 				// agent (character in simulation) and npc (actual character in game)
 				// will look for more money.
 
-				auto thingsToBuyArray = thingsToBuyPpt->getGuidArray().second;
+				auto thingsToBuyArray = thingsToBuyPpt->getGuidArray();
 
 				// is already set to buy thing
 				if( std::find( thingsToBuyArray->begin(), thingsToBuyArray->end(), axeInfoEntityGuid ) != thingsToBuyArray->end() )

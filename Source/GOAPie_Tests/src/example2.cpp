@@ -56,7 +56,7 @@ int openDoor()
 			}
 
 			auto location = locationPpt->getVec3();
-			if( !location.first )
+			if( !location )
 			{
 				return false;
 			}
@@ -68,7 +68,7 @@ int openDoor()
 				return false;
 			}
 			
-			agentLocation->value = location.second;
+			agentLocation->value = *location;
 
 			return true;
 		}
@@ -130,7 +130,7 @@ int openDoor()
 			}
 
 			// checking if there is an actual door entity in the world
-			auto doorEntity = simulation.world()->entity( targetDoorEntityPpt->getGuid().second );
+			auto doorEntity = simulation.world()->entity( *targetDoorEntityPpt->getGuid() );
 			if( !doorEntity )
 			{
 				return false;
@@ -144,7 +144,7 @@ int openDoor()
 			}
 
 			// not valid if door is already opened
-			if( openedPpt->getBool().second == true )
+			if( *openedPpt->getBool() == true )
 			{
 				return false;
 			}
@@ -167,7 +167,7 @@ int openDoor()
 			}
 
 			// checking if there is an actual door entity in the world
-			auto doorEntity = simulation.world()->entity( targetDoorEntityPpt->getGuid().second );
+			auto doorEntity = simulation.world()->entity( *targetDoorEntityPpt->getGuid() );
 			if( !doorEntity )
 			{
 				return false;

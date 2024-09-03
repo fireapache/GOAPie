@@ -4,15 +4,16 @@
 
 namespace gie
 {
-	gie::Guid nearestEntityGuid(
-		gie::World& world,
-		const std::vector< gie::Guid >& waypointGuids,
-		glm::vec3 location ) 
+	gie::Guid nearestEntityGuid( gie::World& world, const std::vector< gie::Guid >& waypointGuids, glm::vec3 location )
 	{
+		gie::StringHash locationHash = gie::stringHasher( "Location" );
 		for( gie::Guid waypointGuid : waypointGuids )
 		{
 			auto waypointEntity = world.entity( waypointGuid );
-			waypointEntity->property( "Location" );
+			if( auto locationPpt = waypointEntity->property( locationHash ) )
+			{
+				locationPpt->getVec3()
+			}
 		}
 	}
 
@@ -24,8 +25,6 @@ namespace gie
 	{
 		std::vector< gie::Guid > result;
 
-
-
 		return result;
 	}
-}
+} // namespace gie
