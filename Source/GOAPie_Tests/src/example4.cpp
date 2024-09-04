@@ -146,16 +146,7 @@ int treesOnHill()
 	}
 
 	auto path = gie::getPath( world, waypointGuids, glm::vec3{ 0.f, 0.f, 0.f }, glm::vec3{ 0.f, 20.f, 20.f } );
-	if( path.size() > 0 )
-	{
-		for( gie::Guid pathNode : path )
-		{
-			auto waypointGuidItr = std::find( waypointGuids.begin(), waypointGuids.end(), pathNode );
-			auto waypointIndex = std::distance( waypointGuids.begin(), waypointGuidItr );
-			std::cout << "wp" << waypointIndex << " ";
-		}
-		std::cout << std::endl;
-	}
+	gie::printPath( waypointGuids, path );
 
 	// price to get an axe
 	constexpr float axePrice = 15.f;

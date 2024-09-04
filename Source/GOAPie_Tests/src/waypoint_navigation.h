@@ -158,4 +158,23 @@ namespace gie
 
 		return result;
 	}
+
+	inline void printPath( const std::vector< Guid >& waypointGuids, const std::vector< Guid >& path )
+	{
+		if( path.size() > 0 && waypointGuids.size() > 0 && waypointGuids.size() > path.size() )
+		{
+			for( gie::Guid pathNode : path )
+			{
+				auto waypointGuidItr = std::find( waypointGuids.begin(), waypointGuids.end(), pathNode );
+				if( waypointGuidItr == waypointGuids.end() )
+				{
+					continue;
+				}
+				auto waypointIndex = std::distance( waypointGuids.begin(), waypointGuidItr );
+				std::cout << "wp" << waypointIndex << " ";
+			}
+			std::cout << std::endl;
+		}
+	}
+
 } // namespace gie
