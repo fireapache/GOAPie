@@ -1,4 +1,5 @@
 #include "goapie.h"
+#include "waypoint_navigation.h"
 
 #include <functional>
 #include <array>
@@ -59,11 +60,14 @@ int treesOnHill()
 	std::array< gie::Property::GuidVector*, waypointCount > waypointLinks;
 
 	std::vector< gie::Entity* > waypoints;
+	std::vector< gie::Guid > waypointGuids;
 	waypoints.reserve( waypointCount );
+	waypointGuids.reserve( waypointCount );
 	for( size_t i = 0; i < waypointCount; i++ )
 	{
 		auto& waypointLocation = waypointLocations[ i ];
 		auto& createdWaypoint = waypoints.emplace_back( world.createEntity() );
+		waypointGuids.push_back( createdWaypoint->guid() );
 		createdWaypoint->createProperty( "Location", waypointLocation );
 		auto linksPpt = createdWaypoint->createProperty( "Links", gie::Property::GuidVector{} );
 		waypointLinks[ i ] = linksPpt->getGuidArray();
@@ -107,6 +111,7 @@ int treesOnHill()
 		// wp4
 		waypointLinks[ 4 ]->push_back( wp5Guid );
 		waypointLinks[ 4 ]->push_back( wp3Guid );
+		waypointLinks[ 4 ]->push_back( wp13Guid );
 		// wp5
 		waypointLinks[ 5 ]->push_back( wp6Guid );
 		waypointLinks[ 5 ]->push_back( wp4Guid );
@@ -137,6 +142,19 @@ int treesOnHill()
 		{
 			waypointLinks[ 13 ]->push_back( wp1Guid );
 		}
+		waypointLinks[ 13 ]->push_back( wp4Guid );
+	}
+
+	auto path = gie::getPath( world, waypointGuids, glm::vec3{ 0.f, 0.f, 0.f }, glm::vec3{ 0.f, 20.f, 20.f } );
+	if( path.size() > 0 )
+	{
+		for( gie::Guid pathNode : path )
+		{
+			auto waypointGuidItr = std::find( waypointGuids.begin(), waypointGuids.end(), pathNode );
+			auto waypointIndex = std::distance( waypointGuids.begin(), waypointGuidItr );
+			std::cout << "wp" << waypointIndex << " ";
+		}
+		std::cout << std::endl;
 	}
 
 	// price to get an axe
