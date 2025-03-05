@@ -17,6 +17,6 @@ namespace gie
 	constexpr size_t NullArguments{ 0 };
 	constexpr float MaxHeuristic{ std::numeric_limits< float >::max() };
 	constexpr float MinHeuristic{ 0.f };
-	constexpr float InvalidHeuristic{ std::numeric_limits< float >::infinity() };
+	constexpr float InvalidHeuristic{ std::numeric_limits< float >::quiet_NaN() };
 	constexpr float MaxCost{ std::numeric_limits< float >::max() };
 }

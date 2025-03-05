@@ -704,17 +704,8 @@ namespace gie
 		Heuristic() = default;
 		~Heuristic() = default;
 
-		enum Type : uint8_t
-		{
-			SmallerBetter,
-			GreaterBetter
-		};
-
-		virtual Type type() { return SmallerBetter; }
-
 		struct Result
 		{
-			Heuristic::Type type{ Heuristic::Type::SmallerBetter };
 			float value{ InvalidHeuristic };
 		};
 
@@ -784,8 +775,20 @@ namespace gie
 		const SimAgent& agent() const { return _simAgent; }
 
 		float cost{ MaxCost };
-		float heuristic{ MaxHeuristic };
+		Heuristic::Result heuristic{ InvalidHeuristic };
 		size_t depth{ 0 };
+
+		// comparison operator for std sorting
+		bool operator<( const Simulation& other ) const
+		{
+			return heuristic.value < other.heuristic.value;
+		}
+
+		// for std sorting
+		static bool smallerThan( const Simulation* lhs, const Simulation* rhs )
+		{
+			return *lhs < *rhs;
+		}
 
 		// Tag entity in simulation context.
 		void tag( Entity* entity, std::vector< Tag >& tags )
@@ -1040,6 +1043,9 @@ namespace gie
 		// @Return True if simulation done successfuly, False otherwise.
 		virtual bool simulate( Simulation& simulation, SimAgent& agent, const class Goal& goal ) const { return false; }
 
+		// Calculates heuristc value for simulation.
+		virtual void calculateHeuristic( Simulation& simulation, const SimAgent& agent, const class Goal& goal ) const {}
+
 	};
 
 	// Class representing a specific goal to be achieved by an agent.
@@ -1071,6 +1077,7 @@ namespace gie
 		}
 
 		World* world() const { return _world; }
+		const auto& heuristis() const { return _heuristics; }
 
 	};
 
@@ -1114,12 +1121,17 @@ namespace gie
 		std::vector< std::shared_ptr< Action > > _planActions;
 		Goal* _goal{ nullptr };
 		Agent* _agent{ nullptr };
+		bool _useHeuristics{ false };
+		std::string _logContent{ "" };
+		size_t _depthLimit{ 10 };
 
 		// simulation which reached goal
 		Guid _goalSimulationGuid{ NullGuid };
 
 		// runs simulations towards goal
 		void simulate();
+
+		void expandNode( Simulation* openedNode, std::vector< Simulation* >& expandedNodes );
 
 		// backtracks simulations building up plan actions
 		void backtrack();
@@ -1211,13 +1223,12 @@ namespace gie
 
 		const auto& simulations() const { return _simulations; }
 
-		void plan()
+		void plan( bool useHeuristic = false )
 		{
+			_useHeuristics = useHeuristic;
 			simulate();
 			backtrack();
 		}
-
-		
 
 	};
 
@@ -1236,9 +1247,9 @@ namespace gie
 		_simulations.clear();
 
 		// logging
-		std::string logContent;
-		if( printSteps ) logContent.append( "Planner::simulate() started!\n" );
-		if( printSteps ) logContent.append( "Creating root simulation\n" );
+		_logContent = "";
+		if( printSteps ) _logContent.append( "Planner::simulate() started!\n" );
+		if( printSteps ) _logContent.append( "Creating root simulation\n" );
 
 		// creating root simulation node
 		auto [ rootSimulationGuid, rootSimulation ] = createRootSimulation( agent() );
@@ -1247,114 +1258,143 @@ namespace gie
 			return;
 		}
 
-		// starting A* by expanding root node
-		std::vector< Guid > openedNodes{ rootSimulationGuid };
+		// starting search by expanding root node
+		std::vector< Simulation* > openedNodes{ rootSimulation };
 
-		// defining max depth to avoid endless expansions
-		constexpr size_t depthLimit = 10;
-
-		if( printSteps ) logContent.append( "Starting !openedNodes.empty() while loop\n" );
+		if( printSteps ) _logContent.append( "Starting !openedNodes.empty() while loop.\n" );
 
 		while( !openedNodes.empty() )
 		{
-			// simulation nodes created during this loop,
-			// to be added to opened nodes
-			std::vector< Guid > expandedNodes{ };
+			// simulation nodes created during this loop, to be added to opened nodes
+			std::vector< Simulation* > newNodes{ };
 
-			if( printSteps ) logContent.append( "\nChecking opened nodes.\n" );
-
-			// go through all opened nodes
-			for( auto openedNodesItr : openedNodes )
+			if( _useHeuristics )
 			{
-				if( printSteps ) logContent.append( "Getting base simulation.\n" );
-				// getting simulation from opened node
-				auto baseSimulation = simulation( openedNodesItr );
-				if( !baseSimulation )
+				if( printSteps ) _logContent.append( "Expanding high priority node.\n" );
+
+				auto highPriorityOpenedNode = *openedNodes.end();
+				openedNodes.pop_back();
+				expandNode( highPriorityOpenedNode, newNodes );
+
+				if( printSteps ) _logContent.append( "Adding " ).append( std::to_string( newNodes.size() ) ).append( " new nodes (sorted).\n" );
+
+				for( auto newNode : newNodes )
 				{
-					continue;
+					auto insertPos = std::upper_bound( openedNodes.begin(), openedNodes.end(), newNode, &Simulation::smallerThan );
+					openedNodes.insert( insertPos, newNode );
 				}
+			}
+			else
+			{
+				if( printSteps ) _logContent.append( "Expanding all opened nodes.\n" );
 
-				// cannot expand this node if it has reached simulation depth limit
-				if( baseSimulation->depth >= depthLimit )
+				// go through all opened nodes
+				for( auto openedNodesItr : openedNodes )
 				{
-					if( printSteps ) logContent.append( "Reached max depth, skipping opened node.\n" );
-					continue;
-				}
-
-				if( printSteps ) logContent.append( "Expanding opened node with available actions.\n" );
-
-				// expanding simulation over all available actions
-				for( auto actionSetEntry : _actionSet )
-				{
-					if( printSteps ) logContent.append( "\nExpanding for Action: " ).append( actionSetEntry->name() ).append( "\n" );
-
-					// getting simulator for action
-					auto actionSimulator = actionSetEntry->simulator( { } );
-					if( !actionSimulator )
+					expandNode( openedNodesItr, newNodes );
+					// checking if last node satified goal
+					if( !newNodes.empty() && goal()->reached( *newNodes.back() ) )
 					{
-						continue;
-					}
-
-					if( printSteps ) logContent.append( "Checking prerequisites.\n" );
-
-					// checking if current simulation context meets action's conditions
-					if( !actionSimulator->prerequisites( *baseSimulation, baseSimulation->agent(), *goal() ) )
-					{
-						if( printSteps ) logContent.append( "Failed on prerequisites, skipping action.\n" );
-						continue;
-					}
-
-					if( printSteps ) logContent.append( "Creating simulation node for action.\n" );
-
-					// creating new simulation node for action simulation
-					auto [ newSimulationGuid, newSimulation ] = createSimulation( openedNodesItr );
-
-					if( printSteps ) logContent.append( "Simulating action.\n" );
-
-					// running action simulation on new node
-					bool simulationSuccess = actionSimulator->simulate( *newSimulation, newSimulation->agent(), *goal() );
-
-					// removing new node in case simulation has failed
-					if( !simulationSuccess )
-					{
-						if( printSteps ) logContent.append( "Simulation failed, deleting current simulation node.\n" );
-						deleteSimulation( newSimulationGuid );
-						continue;
-					}
-
-					if( printSteps ) logContent.append( "Simulation successful.\n" );
-
-					// cannot expand this node if it has reached simulation depth limit
-					if( newSimulation->depth >= depthLimit )
-					{
-						if( printSteps ) logContent.append( "Reached max depth, not further expanding current node.\n" );
-					}
-					else
-					{
-						if( printSteps ) logContent.append( "Marking node for further expansion.\n" );
-						// keeping track of expanded nodes
-						expandedNodes.push_back( newSimulationGuid );
-					}
-
-					// stopping simulation loop if goal has been reached here
-					if( goal()->reached( *newSimulation ) )
-					{
-						if( printSteps ) logContent.append( "Goal reached!\n" );
+						if( printSteps ) _logContent.append( "Goal reached, stopping simulations!\n" );
 						// marking simulation which reached the goal for backtracking
-						_goalSimulationGuid = newSimulationGuid;
+						_goalSimulationGuid = ( *newNodes.end() )->guid();
 						// no need to keep expanding nodes
-						expandedNodes.clear();
+						newNodes.clear();
+						openedNodes.clear();
 						break;
 					}
 				}
+
+				// setting next iteration
+				openedNodes = newNodes;
 			}
 
-			// setting next iteration
-			openedNodes = expandedNodes;
+			
 		}
 
-		std::cout << logContent << std::endl;
+		std::cout << _logContent << std::endl;
 		
+	}
+
+	inline void Planner::expandNode( Simulation* openedNode, std::vector< Simulation* >& newNodes )
+	{
+		if( printSteps ) _logContent.append( "Getting base simulation.\n" );
+		// getting simulation from opened node
+		auto baseSimulation = openedNode;
+		if( !baseSimulation )
+		{
+			return;
+		}
+
+		// cannot expand this node if it has reached simulation depth limit
+		if( baseSimulation->depth >= _depthLimit )
+		{
+			if( printSteps ) _logContent.append( "Reached max depth, skipping opened node.\n" );
+			return;
+		}
+
+		if( printSteps ) _logContent.append( "Expanding opened node with available actions.\n" );
+
+		// expanding simulation over all available actions
+		for( auto actionSetEntry : _actionSet )
+		{
+			if( printSteps ) _logContent.append( "\nExpanding for Action: " ).append( actionSetEntry->name() ).append( "\n" );
+
+			// getting simulator for action
+			auto actionSimulator = actionSetEntry->simulator( {} );
+			if( !actionSimulator )
+			{
+				continue;
+			}
+
+			if( printSteps ) _logContent.append( "Checking prerequisites.\n" );
+
+			// checking if current simulation context meets action's conditions
+			if( !actionSimulator->prerequisites( *baseSimulation, baseSimulation->agent(), *goal() ) )
+			{
+				if( printSteps ) _logContent.append( "Failed on prerequisites, skipping action.\n" );
+				continue;
+			}
+
+			if( printSteps ) _logContent.append( "Creating simulation node for action.\n" );
+
+			// creating new simulation node for action simulation
+			auto [ newSimulationGuid, newSimulation ] = createSimulation( openedNode->guid() );
+
+			if( printSteps ) _logContent.append( "Simulating action.\n" );
+
+			// running action simulation on new node
+			bool simulationSuccess = actionSimulator->simulate( *newSimulation, newSimulation->agent(), *goal() );
+
+			// removing new node in case simulation has failed
+			if( !simulationSuccess )
+			{
+				if( printSteps ) _logContent.append( "Simulation failed, deleting current simulation node.\n" );
+				deleteSimulation( newSimulationGuid );
+				continue;
+			}
+
+			if( printSteps ) _logContent.append( "Simulation successful.\n" );
+
+			// cannot expand this node if it has reached simulation depth limit
+			if( newSimulation->depth >= _depthLimit )
+			{
+				if( printSteps ) _logContent.append( "Reached max depth, not further expanding current node.\n" );
+			}
+			else
+			{
+				if( printSteps ) _logContent.append( "Marking node for further expansion.\n" );
+				// keeping track of expanded nodes
+				newNodes.push_back( newSimulation );
+			}
+
+			// stopping simulation loop if goal has been reached here
+			if( goal()->reached( *newSimulation ) )
+			{
+				if( printSteps ) _logContent.append( "Goal reached, stopped expanding node!\n" );
+				break;
+			}
+		}
 	}
 
 	inline void Planner::backtrack()
