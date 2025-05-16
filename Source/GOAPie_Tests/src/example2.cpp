@@ -2,10 +2,9 @@
 
 void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions, gie::StringRegister& stringRegister );
 
-int openDoor()
+int openDoor( gie::World& world )
 {
-	// creating world
-	gie::World world;
+	// world is created when invoking this function
 
 	// adding door entity to world
 	auto doorEntity = world.createEntity();

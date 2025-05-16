@@ -1,18 +1,17 @@
 #include "goapie.h"
 
-int insertingDataEntities();
-int insertingParameters();
+int insertingDataEntities( gie::World& world );
+int insertingParameters( gie::World& world );
 
-int fundamentals()
+int fundamentals( gie::World& world )
 {
-	if( !insertingDataEntities() ) return 1;
-	if( !insertingParameters() ) return 1;
+	if( !insertingDataEntities( world ) ) return 1;
+	if( !insertingParameters( world ) ) return 1;
 	return 0;
 }
 
-int insertingDataEntities()
+int insertingDataEntities( gie::World& world )
 {
-	gie::World world;
 	gie::Guid lastEntityGuid{ gie::NullGuid };
 
 	for( size_t i = 0; i < 10; i++ )
@@ -25,9 +24,8 @@ int insertingDataEntities()
 	return 0;
 }
 
-int insertingParameters()
+int insertingParameters( gie::World& world )
 {
-	gie::World world;
 	auto entity = world.createEntity();
 
 	if( !entity )

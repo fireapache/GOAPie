@@ -1,21 +1,22 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#include <goapie.h>
 
 // example 1
-int fundamentals();
+extern int fundamentals( gie::World& world );
 // example 2
-int openDoor();
+extern int openDoor( gie::World& world );
 // example 3
-int cutDownTrees();
+extern int cutDownTrees( gie::World& world );
 // example 4
-int treesOnHill();
+extern int treesOnHill( gie::World& world );
 
-extern int visualization();
+extern int visualization( const gie::World& world );
 
 int main( int argc, char** argv )
 {
-	std::vector< int(*)() > funcs { fundamentals, openDoor, cutDownTrees, treesOnHill };
+	std::vector< int ( * )( gie::World& world ) > funcs{ fundamentals, openDoor, cutDownTrees, treesOnHill };
 
 	int ex = -1;
 
@@ -41,9 +42,11 @@ int main( int argc, char** argv )
 		}
 	}
 	
-	int exResult = funcs[ ex - 1 ]();
+	gie::World world{};
 
-	return visualization();
+	int exResult = funcs[ ex - 1 ]( world );
+
+	return visualization( world );
 
 	//return exResult;
 }

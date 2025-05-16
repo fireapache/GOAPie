@@ -2,10 +2,9 @@
 
 void printSimulatedActions( const gie::Planner& planner );
 
-int cutDownTrees()
+int cutDownTrees( gie::World& world )
 {
-	// creating world
-	gie::World world;
+	// world is created when invoking this function
 
 	// creating agent (aka npc)
 	auto agentEntity = world.createAgent();
