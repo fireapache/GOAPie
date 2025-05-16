@@ -222,87 +222,87 @@ void processInput( GLFWwindow* window )
 
 int visualization( const gie::World& world )  
 {  
-  // Initialize GLFW  
-  glfwInit();  
-  glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 3 );  
-  glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );  
-  glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE );  
+	// Initialize GLFW  
+	glfwInit();  
+	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 3 );  
+	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );  
+	glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE );  
 
-  // Create a window  
-  GLFWwindow* window = glfwCreateWindow( 800, 800, "OpenGL Window", NULL, NULL );  
-  if( !window )  
-  {  
-      std::cout << "Failed to create GLFW window\n";  
-      glfwTerminate();  
-      return -1;  
-  }  
-  glfwMakeContextCurrent( window );  
+	// Create a window  
+	GLFWwindow* window = glfwCreateWindow( 800, 800, "OpenGL Window", NULL, NULL );  
+	if( !window )  
+	{  
+		std::cout << "Failed to create GLFW window\n";  
+		glfwTerminate();  
+		return -1;  
+	}  
+	glfwMakeContextCurrent( window );  
 
-  // Load OpenGL functions using GLAD  
-  if( !gladLoadGLLoader( ( GLADloadproc )glfwGetProcAddress ) )  
-  {  
-      std::cout << "Failed to initialize GLAD\n";  
-      return -1;  
-  }  
+	// Load OpenGL functions using GLAD  
+	if( !gladLoadGLLoader( ( GLADloadproc )glfwGetProcAddress ) )  
+	{  
+		std::cout << "Failed to initialize GLAD\n";  
+		return -1;  
+	}  
 
-  // Set viewport and register resize callback  
-  glViewport( 0, 0, 800, 800 );  
-  glfwSetFramebufferSizeCallback( window, framebuffer_size_callback );  
+	// Set viewport and register resize callback  
+	glViewport( 0, 0, 800, 800 );  
+	glfwSetFramebufferSizeCallback( window, framebuffer_size_callback );  
 
-  // Initialize ImGui  
-  IMGUI_CHECKVERSION();  
-  ImGui::CreateContext();  
-  ImGuiIO& io = ImGui::GetIO(); (void)io;  
-  ImGui::StyleColorsDark();  
-  ImGui_ImplGlfw_InitForOpenGL( window, true );  
-  ImGui_ImplOpenGL3_Init( "#version 130" );  
+	// Initialize ImGui  
+	IMGUI_CHECKVERSION();  
+	ImGui::CreateContext();  
+	ImGuiIO& io = ImGui::GetIO(); 
+	ImGui::StyleColorsDark();  
+	ImGui_ImplGlfw_InitForOpenGL( window, true );  
+	ImGui_ImplOpenGL3_Init( "#version 130" );  
 
-  // Collect waypoint GUIDs from the world  
-  std::vector<gie::Guid> waypointGuids;  
-  for( const auto& itr : world.context().entities() )  
-  {  
-      if( itr.second.property( "Location" ) )  
-      {  
-          waypointGuids.push_back( itr.first );  
-      }  
-  }  
+	// Collect waypoint GUIDs from the world  
+	std::vector<gie::Guid> waypointGuids;  
+	for( const auto& itr : world.context().entities() )  
+	{  
+		if( itr.second.property( "Location" ) )  
+		{  
+			waypointGuids.push_back( itr.first );  
+		}  
+	}  
 
-  // Main loop  
-  while( !glfwWindowShouldClose( window ) )  
-  {  
-      processInput( window );  
+	// Main loop  
+	while( !glfwWindowShouldClose( window ) )  
+	{  
+		processInput( window );  
 
-      // Start ImGui frame  
-      ImGui_ImplOpenGL3_NewFrame();  
-      ImGui_ImplGlfw_NewFrame();  
-      ImGui::NewFrame();  
+		// Start ImGui frame  
+		ImGui_ImplOpenGL3_NewFrame();  
+		ImGui_ImplGlfw_NewFrame();  
+		ImGui::NewFrame();  
 
-      // Render ImGui UI  
-      ImGui::Begin( "GOAPie Visualization" );  
-      ImGui::Text( "Waypoint Count: %d", static_cast<int>(waypointGuids.size()) );  
-      ImGui::End();  
+		// Render ImGui UI  
+		ImGui::Begin( "GOAPie Visualization" );  
+		ImGui::Text( "Waypoint Count: %d", static_cast<int>( waypointGuids.size() ) );  
+		ImGui::End();  
 
-      ImGui::Render();  
+		ImGui::Render();  
 
-      // Render OpenGL content  
-      glClearColor( 0.2f, 0.3f, 0.3f, 1.0f );  
-      glClear( GL_COLOR_BUFFER_BIT );  
+		// Render OpenGL content  
+		glClearColor( 0.2f, 0.3f, 0.3f, 1.0f );  
+		glClear( GL_COLOR_BUFFER_BIT );  
 
-      drawWaypointsAndLinks( window, world, waypointGuids );  
+		drawWaypointsAndLinks( window, world, waypointGuids );  
 
-      // Render ImGui draw data  
-      ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );  
+		// Render ImGui draw data  
+		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );  
 
-      glfwSwapBuffers( window );  
-      glfwPollEvents();  
-  }  
+		glfwSwapBuffers( window );  
+		glfwPollEvents();  
+	}  
 
-  // Cleanup ImGui  
-  ImGui_ImplOpenGL3_Shutdown();  
-  ImGui_ImplGlfw_Shutdown();  
-  ImGui::DestroyContext();  
+	// Cleanup ImGui  
+	ImGui_ImplOpenGL3_Shutdown();  
+	ImGui_ImplGlfw_Shutdown();  
+	ImGui::DestroyContext();  
 
-  // Clean up  
-  glfwTerminate();  
-  return 0;  
+	// Clean up  
+	glfwTerminate();  
+	return 0;  
 }
