@@ -312,6 +312,7 @@ project "Tests"
 		"Source/GLAD/include/",
 		"Source/GLM/",
 		"Source/IMGUI/",
+		"Source/IMGUI/examples/",
 		"Source/IMGUI-NE/",
 		"Source/UUID_V4/"
 	}

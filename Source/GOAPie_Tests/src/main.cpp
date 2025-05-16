@@ -14,6 +14,13 @@ extern int treesOnHill( gie::World& world );
 
 extern int visualization( const gie::World& world );
 
+void DrawWaypointLinks(
+	const gie::Entity* waypointEntity,
+	const gie::World& world,
+	glm::vec3& offset,
+	glm::vec3& scale,
+	glm::vec3& scaledLocation );
+
 int main( int argc, char** argv )
 {
 	std::vector< int ( * )( gie::World& world ) > funcs{ fundamentals, openDoor, cutDownTrees, treesOnHill };
