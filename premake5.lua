@@ -121,18 +121,26 @@ project "GLFW"
 		{
 			"%{prj.location}/src/win32_platform.h",
 			"%{prj.location}/src/win32_joystick.h",
-			"%{prj.location}/src/wgl_context.h",
-			"%{prj.location}/src/egl_context.h",
-			"%{prj.location}/src/osmesa_context.h",
-			"%{prj.location}/src/win32_init.c",
 			"%{prj.location}/src/win32_joystick.c",
+			"%{prj.location}/src/win32_init.c",
 			"%{prj.location}/src/win32_monitor.c",
+			"%{prj.location}/src/win32_module.c",
+			"%{prj.location}/src/null_init.c",
+			"%{prj.location}/src/null_joystick.c",
+			"%{prj.location}/src/null_joystick.h",
+			"%{prj.location}/src/null_monitor.c",
+			"%{prj.location}/src/null_platform.h",
+			"%{prj.location}/src/null_window.c",
 			"%{prj.location}/src/win32_time.c",
 			"%{prj.location}/src/win32_thread.c",
 			"%{prj.location}/src/win32_window.c",
+			"%{prj.location}/src/wgl_context.h",
 			"%{prj.location}/src/wgl_context.c",
+			"%{prj.location}/src/egl_context.h",
 			"%{prj.location}/src/egl_context.c",
-			"%{prj.location}/src/osmesa_context.c"
+			"%{prj.location}/src/osmesa_context.h",
+			"%{prj.location}/src/osmesa_context.c",
+			"%{prj.location}/src/platform.c"
 		}
 
 	filter "configurations:Debug"
@@ -297,9 +305,33 @@ project "Tests"
 	objdir ("Intermediate/%{prj.name}-" .. outputdir)
 	
 	dependson { "GOAPie" }
-	includedirs { "Source/GOAPie/include/", "Source/GLM/", "Source/UUID_V4/" }
-	--links { "GOAPie.lib" }
-	--libdirs { ("Intermediate/GOAPie-" .. outputdir) }
+	includedirs
+	{
+		"Source/GOAPie/include/",
+		"Source/GLFW/include/",
+		"Source/GLAD/include/",
+		"Source/GLM/",
+		"Source/IMGUI/",
+		"Source/IMGUI-NE/",
+		"Source/UUID_V4/"
+	}
+	
+	links
+	{
+		"GLAD.lib",
+		"GLFW.lib",
+		"IMGUI.lib",
+		"IMGUI-NE.lib",
+		"opengl32.lib"
+	}
+
+	libdirs
+	{
+		("Intermediate/GLAD-" .. outputdir),
+		("Intermediate/GLFW-" .. outputdir),
+		("Intermediate/IMGUI-" .. outputdir),
+		("Intermediate/IMGUI-NE-" .. outputdir)
+	}
 
 	files
 	{

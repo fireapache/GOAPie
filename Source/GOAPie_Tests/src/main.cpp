@@ -11,6 +11,8 @@ int cutDownTrees();
 // example 4
 int treesOnHill();
 
+extern int visualization();
+
 int main( int argc, char** argv )
 {
 	std::vector< int(*)() > funcs { fundamentals, openDoor, cutDownTrees, treesOnHill };
@@ -25,7 +27,7 @@ int main( int argc, char** argv )
 	{
 		while( true )
 		{
-			std::printf( "Enter valid example number [1..3]: " );
+			std::printf( "Enter valid example number [1..4]: " );
 			std::scanf( "%d", &ex );
 
 			if( ex < 1 || ex > funcs.size() )
@@ -41,5 +43,7 @@ int main( int argc, char** argv )
 	
 	int exResult = funcs[ ex - 1 ]();
 
-	return exResult;
+	return visualization();
+
+	//return exResult;
 }
