@@ -138,6 +138,7 @@ namespace gie
 		Guid guid() const { return _guid; }
 		TagSet& tags() { return _tags; }
 		const TagSet& tags() const { return _tags; }
+		bool hasTag( Tag tag ) const { return _tags.find( tag ) != _tags.end(); }
 
 		// Register a property in data entity and world using its literal name.
 		// @param name: Property contextual name (e.g. "AmmoCount")
@@ -222,125 +223,150 @@ namespace gie
 		virtual const class Agent* agent( const Guid guid ) const = 0;
 	};
 
-	// Keep track of entity tags, grouping entities for tag based queries
-	class EntityTagRegister
-	{
-		friend class Simulation;
+    // Keep track of entity tags, grouping entities for tag based queries  
+    class EntityTagRegister  
+    {  
+		friend class Simulation;  
 
-		World* _world{ nullptr };
-		std::unordered_map< Tag, std::set< Guid > > _storage;
+		World* _world{ nullptr };  
+		std::unordered_map< Tag, std::set< Guid > > _storage;  
+		const EntityTagRegister* _parent{ nullptr }; // Parent property  
 
-		std::set< Guid >* _tagSet( Tag entityTag )
-		{
-			auto mapFind = _storage.find( entityTag );
-			if( mapFind != _storage.end() )
-			{
-				return &mapFind->second;
+		gie::TagSet* _tagSet( Tag entityTag )  
+		{  
+			auto mapFind = _storage.find( entityTag );  
+			if( mapFind != _storage.end() )  
+			{  
+				return &mapFind->second;  
 			}
-			return nullptr;
+
+			gie::TagSet* set = nullptr;
+
+			if( _parent )
+			{
+				set = _copyTagSet( *_parent, entityTag );
+			}
+			
+			if( !set )
+			{
+				set = _ensureTagSet( entityTag );
+			}
+
+			assert( set && "Tag set not found!" );
+
+			return set;
 		}
 
-		std::set< Guid >* _makeEmptyTagSet( Tag entityTag )
-		{
-			auto mapFind = _storage.find( entityTag );
-			if( mapFind != _storage.end() )
-			{
-				auto empl = _storage.emplace( entityTag, std::set< Guid >{ } );
-				return empl.second ? &empl.first->second : nullptr;
+		gie::TagSet* _ensureTagSet( Tag entityTag )  
+		{  
+			auto mapFind = _storage.find( entityTag );  
+			if( mapFind == _storage.end() )  
+			{  
+				auto empl = _storage.emplace( entityTag, std::set< Guid >{ } );  
+				return empl.second ? &empl.first->second : nullptr;  
 			}
-		}
+			return &mapFind->second;
+		}  
 
-		void _copyTagSet( const EntityTagRegister& sourceRegister, EntityTagRegister& targetRegister, Tag tag )
-		{
-			auto sourceTagSet = sourceRegister.tagSet( tag );
-			auto targetTagSet = targetRegister._tagSet( tag );
-			if( sourceTagSet && targetTagSet )
-			{
+		gie::TagSet* _copyTagSet( const EntityTagRegister& sourceRegister, Tag tag )  
+		{  
+			const gie::TagSet* sourceTagSet = sourceRegister.tagSet( tag );  
+			gie::TagSet* targetTagSet = nullptr;
+			
+			if( sourceTagSet )  
+			{  
+				targetTagSet = _ensureTagSet( tag );
 				*targetTagSet = *sourceTagSet;
 			}
-		}
 
-	public:
-		EntityTagRegister() = delete;
-		EntityTagRegister( World* world ) : _world( world ) { }
-		EntityTagRegister( const EntityTagRegister& other ) = default;
+			return targetTagSet;
+		}  
 
-		World* world() const { return _world; }
+	public:  
+		EntityTagRegister() = delete;  
+		EntityTagRegister( World* world, const EntityTagRegister* parent = nullptr )  
+			: _world( world ), _parent( parent ) { }  
+		EntityTagRegister( const EntityTagRegister& other ) = default;  
 
-		void tag( Guid entityGuid, std::vector< Tag >& tags );
+		World* world() const { return _world; }  
+		const EntityTagRegister* parent() const { return _parent; }  
+		void setParent( const EntityTagRegister* parent ) { _parent = parent; }  
 
-		void tag( Guid entityGuid, std::vector< Tag >&& tags )
-		{
-			tag( entityGuid, tags );
-		}
+		void tag( Guid entityGuid, std::vector< Tag >& tags );  
 
-		void tag( Entity* entity, std::vector< Tag >& tags )
-		{
-			if( entity )
+		void tag( Guid entityGuid, std::vector< Tag >&& tags )  
+		{  
+			tag( entityGuid, tags );  
+		}  
+
+		void tag( Entity* entity, std::vector< Tag >& tags )  
+		{  
+			if( !entity )
 			{
-				for( Tag entityTag : tags )
-				{
-					entity->_tags.insert( entityTag );
-					auto set = _tagSet( entityTag );
-					if( !set )
-					{
-						auto empl = _storage.emplace( entityTag, std::set< Guid >{ } );
-						if( empl.second )
-						{
-							set = &empl.first->second;
-						}
-					}
-					if( set )
-					{
-						set->insert( entity->guid() );
-					}
+				return;
+			}
+
+			for( Tag entityTag : tags )  
+			{  
+				entity->_tags.insert( entityTag );
+				if( auto set = _tagSet( entityTag ) )
+				{  
+					set->insert( entity->guid() );
 				}
 			}
-		}
+		}  
 
-		void tag( Entity* entity, std::vector< Tag >&& tags )
-		{
-			tag( entity, tags );
-		}
+		void tag( Entity* entity, std::vector< Tag >&& tags )  
+		{  
+			tag( entity, tags );  
+		}  
 
-		void untag( Guid entityGuid, std::vector< Tag >& tags );
+		void untag( Guid entityGuid, std::vector< Tag >& tags );  
 
-		void untag( Guid entityGuid, std::vector< Tag >&& tags )
-		{
-			untag( entityGuid, tags );
-		}
+		void untag( Guid entityGuid, std::vector< Tag >&& tags )  
+		{  
+			untag( entityGuid, tags );  
+		}  
 
-		void untag( Entity* entity, std::vector< Tag >& tags )
-		{
-			if( entity )
+		void untag( Entity* entity, std::vector< Tag >& tags )  
+		{  
+			if( !entity )
 			{
-				for( Tag entityTag : tags )
-				{
-					entity->_tags.erase( entityTag );
-					if( auto set = _tagSet( entityTag ) )
-					{
-						set->erase( entity->guid() );
-					}
-				}
+				return;
 			}
-		}
 
-		void untag( Entity* entity, std::vector< Tag >&& tags )
-		{
-			untag( entity, tags );
-		}
+			for( Tag entityTag : tags )  
+			{  
+				entity->_tags.erase( entityTag );  
+				if( auto set = _tagSet( entityTag ) )  
+				{  
+					set->erase( entity->guid() );  
+				}  
+			} 
+		}  
 
-		const std::set< Guid >* tagSet( Tag entityTag ) const
-		{
-			auto mapFind = _storage.find( entityTag );
-			if( mapFind != _storage.end() )
+		void untag( Entity* entity, std::vector< Tag >&& tags )  
+		{  
+			untag( entity, tags );  
+		}  
+
+		const std::set< Guid >* tagSet( Tag entityTag ) const  
+		{  
+			auto mapFind = _storage.find( entityTag );  
+			if( mapFind != _storage.end() )  
+			{  
+				return &mapFind->second;  
+			}  
+
+			// Getting from parent if possible
+			if( _parent )
 			{
-				return &mapFind->second;
+				return _parent->tagSet( entityTag );
 			}
+
 			return nullptr;
-		}
-
-	};
+		}  
+    };
 
 	typedef std::unordered_map< Guid, Entity > EntityMap;
 	typedef std::unordered_map< Guid, Property > PropertyMap;
@@ -354,7 +380,10 @@ namespace gie
 		const Blackboard* _parent{ nullptr };
 
 	public:
-		Blackboard( class World* world, const Blackboard* parent = nullptr ) : _world( world ), _parent( parent ), _entityTagRegister( world ) {  };
+		Blackboard( class World* world, const Blackboard* parent = nullptr )
+			: _world( world )
+			, _parent( parent )
+			, _entityTagRegister( world, parent ? &parent->entityTagRegister() : nullptr ) {};
 		Blackboard( const Blackboard& other ) = default;
 		~Blackboard() = default;
 
@@ -733,13 +762,13 @@ namespace gie
 			if( auto worldTagSet = worldTagRegister.tagSet( entityTag ) )
 			{
 				// world context has tag set, copying it over to simulation context
-				simulationTagSet = simulationTagRegister._makeEmptyTagSet( entityTag );
-				simulationTagRegister._copyTagSet( worldTagRegister, simulationTagRegister, entityTag );
+				simulationTagSet = simulationTagRegister._ensureTagSet( entityTag );
+				simulationTagRegister._copyTagSet( worldTagRegister, entityTag );
 			}
 			else
 			{
 				// create tag set in simulation context if none exist in world context
-				simulationTagSet = simulationTagRegister._makeEmptyTagSet( entityTag );
+				simulationTagSet = simulationTagRegister._ensureTagSet( entityTag );
 			}
 		}
 
@@ -1232,7 +1261,7 @@ namespace gie
 
 	};
 
-	constexpr bool printSteps = false;
+	constexpr bool printSteps = true;
 
 	inline void Planner::simulate()
 	{

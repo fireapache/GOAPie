@@ -1,6 +1,6 @@
 #include "goapie.h"
 
-void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions, gie::StringRegister& stringRegister );
+extern void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions, gie::StringRegister& stringRegister );
 
 int openDoor( gie::World& world )
 {
@@ -232,23 +232,4 @@ int openDoor( gie::World& world )
 	printPlannedActions( planner.planActions(), stringRegister );
 
 	return 0;
-}
-
-void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions, gie::StringRegister& stringRegister )
-{
-	for( auto action : plannedActions )
-	{
-		if( action )
-		{
-			auto registeredString = stringRegister.get( action->hash() );
-			if( !registeredString.empty() )
-			{
-				std::cout << registeredString << std::endl;
-			}
-			else
-			{
-				std::cout << action->name() << std::endl;
-			}
-		}
-	}
 }

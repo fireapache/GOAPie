@@ -28,8 +28,14 @@ namespace gie
 
 		return closestWaypoint;
 	}
+	
+	struct PathfindingResult
+	{
+		std::vector< Guid > path;
+		float length{ 0.f };
+	};
 
-	inline std::vector< Guid > getPath( World& world, const std::vector< Guid >& waypointGuids, glm::vec3 start, glm::vec3 end )
+	inline PathfindingResult getPath( World& world, const std::vector< Guid >& waypointGuids, glm::vec3 start, glm::vec3 end )
 	{
 		// validating inputs
 
@@ -66,7 +72,7 @@ namespace gie
 
 		// searching for path
 
-		std::vector< Guid > result{};
+		std::vector< Guid > path{};
 		std::vector< Guid > openedNodes{ startNode };
 		std::vector< Guid > visitedNodes{};
 		visitedNodes.reserve( waypointGuids.size() );
@@ -144,26 +150,31 @@ namespace gie
 		}
 
 		// backtracking path
+		float length = 0.f;
 		if( goalNode != NullGuid )
 		{
 			Guid backtrackNode = goalNode;
 			while( backtrackNode != NullGuid )
 			{
-				result.push_back( backtrackNode );
+				path.push_back( backtrackNode );
 				Entity* backtrackNodeEntity = world.entity( backtrackNode );
 				backtrackNode = *backtrackNodeEntity->property( "Backtrack" )->getGuid();
 			}
-			std::reverse( result.begin(), result.end() );
+			std::reverse( path.begin(), path.end() );
+			Entity* goalNodeEntity = world.entity( goalNode );
+			length = *goalNodeEntity->property( "Cost" )->getFloat();
 		}
 
-		return result;
+		return { path, length };
 	}
 
-	inline void printPath( const std::vector< Guid >& waypointGuids, const std::vector< Guid >& path )
+	inline void printPath( const std::vector< Guid >& waypointGuids, const PathfindingResult& pathResult )
 	{
-		if( path.size() > 0 && waypointGuids.size() > 0 && waypointGuids.size() > path.size() )
+		std::cout << "length: " << pathResult.length << " | ";
+
+		if( pathResult.path.size() > 0 && waypointGuids.size() > 0 && waypointGuids.size() > pathResult.path.size() )
 		{
-			for( gie::Guid pathNode : path )
+			for( gie::Guid pathNode : pathResult.path )
 			{
 				auto waypointGuidItr = std::find( waypointGuids.begin(), waypointGuids.end(), pathNode );
 				if( waypointGuidItr == waypointGuids.end() )

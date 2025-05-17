@@ -66,6 +66,7 @@ int treesOnHill( gie::World& world )
 	{
 		auto& waypointLocation = waypointLocations[ i ];
 		auto& createdWaypoint = waypoints.emplace_back( world.createEntity() );
+		world.context().entityTagRegister().tag( createdWaypoint, { gie::stringHasher( "Waypoint" ) } );
 		waypointGuids.push_back( createdWaypoint->guid() );
 		createdWaypoint->createProperty( "Location", waypointLocation );
 		auto linksPpt = createdWaypoint->createProperty( "Links", gie::Property::GuidVector{} );
@@ -144,8 +145,8 @@ int treesOnHill( gie::World& world )
 		waypointLinks[ 13 ]->push_back( wp4Guid );
 	}
 
-	auto path = gie::getPath( world, waypointGuids, glm::vec3{ 0.f, 0.f, 0.f }, glm::vec3{ 0.f, 20.f, 20.f } );
-	gie::printPath( waypointGuids, path );
+	auto pathResult = gie::getPath( world, waypointGuids, glm::vec3{ 0.f, 0.f, 0.f }, glm::vec3{ 0.f, 20.f, 20.f } );
+	gie::printPath( waypointGuids, pathResult );
 
 	// price to get an axe
 	constexpr float axePrice = 15.f;
@@ -613,11 +614,23 @@ int treesOnHill( gie::World& world )
 
 	};
 
-	// adding trees to world
+	// setting tree positions
 	constexpr size_t treeCount = 6;
+	std::array< glm::vec3, treeCount > treeLocations
+	{
+		glm::vec3{  -6.f,   0.f,  0.f },
+		glm::vec3{  12.f,  -3.f,  0.f },
+		glm::vec3{  25.f,   2.f,  0.f },
+		glm::vec3{   8.f,  -4.f,  0.f },
+		glm::vec3{   0.f,  -3.f,  0.f },
+		glm::vec3{ -12.f,  -4.f,  0.f }
+	};
+
+	// adding trees to world
 	for( size_t i = 0; i < treeCount; i++ )
 	{
 		auto treeEntity = world.createEntity();
+		treeEntity->createProperty( "Location", treeLocations[ i ] );
 		world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "Tree" ), gie::stringHasher( "TreeUp" ) } );
 	}
 

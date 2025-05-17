@@ -11,6 +11,13 @@
 #include <glm/glm.hpp>
 #include <goapie.h>
 
+struct DrawingLimits
+{
+	glm::vec3 minBounds{ std::numeric_limits< float >::max() };
+	glm::vec3 maxBounds{ std::numeric_limits< float >::lowest() };
+	const float margin = 0.1f; // 10% margin
+};
+
 void drawLinks(
 	const gie::Entity* waypointEntity,
 	const gie::World& world,
@@ -44,38 +51,38 @@ void drawLinks(
 	}
 }
 
-void drawWaypointsAndLinks( GLFWwindow* window, const gie::World& world, const std::vector< gie::Guid >& waypointGuids )
+void drawWaypointsAndLinks( const gie::World& world, DrawingLimits& drawingLimits )
 {  
-   // Set up OpenGL for rendering  
-   glPointSize( 10.0f );  
-   glColor3f( 1.0f, 1.0f, 1.0f ); // Set color to white for waypoints  
+	const auto waypointGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+	if( !waypointGuids )
+	{
+		return; // No waypoints to draw
+	}
 
-   // Calculate offset and scale based on current waypoints  
-   glm::vec3 minBounds( std::numeric_limits<float>::max() );  
-   glm::vec3 maxBounds( std::numeric_limits<float>::lowest() );  
-
-   for( gie::Guid waypointGuid : waypointGuids )  
+   for( gie::Guid waypointGuid : *waypointGuids )  
    {  
        auto waypointEntity = world.entity( waypointGuid );  
        if( auto locationPpt = waypointEntity->property( "Location" ) )  
        {  
            glm::vec3 location = *locationPpt->getVec3();  
-           minBounds = glm::min( minBounds, location );  
-           maxBounds = glm::max( maxBounds, location );  
+           drawingLimits.minBounds = glm::min( drawingLimits.minBounds, location );  
+           drawingLimits.maxBounds = glm::max( drawingLimits.maxBounds, location );  
        }  
    }  
 
-   // Add a margin around the bounds  
-   const float margin = 0.1f; // 10% margin  
-   glm::vec3 range = maxBounds - minBounds;  
-   minBounds -= range * margin;  
-   maxBounds += range * margin;  
-
+   // Setting up drawing offset
+   glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;  
+   glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;  
+   glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;  
    glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;  
    glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space  
 
+   // Set up OpenGL for rendering
+   glPointSize( 10.0f );		  // Set point size for waypoints
+   glColor3f( 1.0f, 1.0f, 1.0f ); // Set color to white for waypoints  
+
    // Iterate through waypoints and draw them as points and links  
-   for( gie::Guid waypointGuid : waypointGuids )  
+   for( gie::Guid waypointGuid : *waypointGuids )  
    {  
        auto waypointEntity = world.entity( waypointGuid );  
        if( auto locationPpt = waypointEntity->property( "Location" ) )  
@@ -93,118 +100,61 @@ void drawWaypointsAndLinks( GLFWwindow* window, const gie::World& world, const s
    }  
 }
 
-void drawWaypointsOnly( GLFWwindow* window, const gie::World& world, const std::vector< gie::Guid >& waypointGuids )  
-{  
-    // Set up OpenGL for rendering waypoints  
-    glPointSize( 10.0f );  
-    glColor3f( 1.0f, 1.0f, 1.0f ); // Set color to white  
+void drawTrees( const gie::World& world, DrawingLimits& drawingLimits )
+{
+	const auto treeGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
+	if( !treeGuids )
+	{
+		return; // No trees to draw
+	}
 
-    // Calculate offset and scale based on current waypoints  
-    glm::vec3 minBounds( std::numeric_limits<float>::max() );  
-    glm::vec3 maxBounds( std::numeric_limits<float>::lowest() );  
+	for( gie::Guid treeGuid : *treeGuids )
+	{
+		auto waypointEntity = world.entity( treeGuid );
+		if( auto locationPpt = waypointEntity->property( "Location" ) )
+		{
+			glm::vec3 location = *locationPpt->getVec3();
+			drawingLimits.minBounds = glm::min( drawingLimits.minBounds, location );
+			drawingLimits.maxBounds = glm::max( drawingLimits.maxBounds, location );
+		}
+	}
 
-    for( gie::Guid waypointGuid : waypointGuids )  
-    {  
-	    auto waypointEntity = world.entity( waypointGuid );  
-	    if( auto locationPpt = waypointEntity->property( "Location" ) )  
-	    {  
-		    glm::vec3 location = *locationPpt->getVec3();  
-		    minBounds = glm::min( minBounds, location );  
-		    maxBounds = glm::max( maxBounds, location );  
-	    }  
-    }  
+	// Setting up drawing offset
+	glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
+	glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
+	glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
+	glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
+	glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
 
-    // Add a margin around the bounds  
-    const float margin = 0.1f; // 10% margin  
-    glm::vec3 range = maxBounds - minBounds;  
-    minBounds -= range * margin;  
-    maxBounds += range * margin;  
+	auto treeUpTag = gie::stringHasher( "TreeUp" );
+	auto treeDownTag = gie::stringHasher( "TreeDown" );
 
-    glm::vec3 offset = -(minBounds + maxBounds) * 0.5f;  
-    glm::vec3 scale = 2.0f / (maxBounds - minBounds); // Scale to fit in clip space  
+	glPointSize( 10.0f ); // Set point size
 
-    // Iterate through waypoints and draw them as points  
-    for( gie::Guid waypointGuid : waypointGuids )  
-    {  
-	    auto waypointEntity = world.entity( waypointGuid );  
-	    if( auto locationPpt = waypointEntity->property( "Location" ) )  
-	    {  
-		    glm::vec3 location = *locationPpt->getVec3();  
-		    location += offset; // Apply calculated offset  
-		    location *= scale;  // Apply scaling to fit in clip space  
+	// Iterate through trees and draw them as points
+	for( gie::Guid treeGuid : *treeGuids )
+	{
+		auto treeEntity = world.entity( treeGuid );
+		if( auto locationPpt = treeEntity->property( "Location" ) )
+		{
+			glm::vec3 location = *locationPpt->getVec3();
+			glm::vec3 scaledLocation = ( location + offset ) * scale;
 
-		    // Draw a single point at the waypoint location  
-		    glBegin( GL_POINTS );  
-		    glVertex3f( location.x, location.y, location.z );  
-		    glEnd();  
-	    }  
-    }  
-}
+			if( treeEntity->hasTag( treeUpTag ) )
+			{
+				glColor3f( 0.0f, 1.0f, 0.0f ); // Set color to green for trees that are up
+			}
+			else
+			{
+				glColor3f( 1.0f, 0.0f, 0.0f ); // Set color to red for trees that are down
+			}
 
-void drawWaypointLinksOnly( GLFWwindow* window, const gie::World& world, const std::vector< gie::Guid >& waypointGuids )  
-{  
-	glColor3f( 0.5f, 0.5f, 0.5f ); // Set color to gray for links  
-
-	// Calculate offset and scale based on current waypoints  
-	glm::vec3 minBounds( std::numeric_limits<float>::max() );  
-	glm::vec3 maxBounds( std::numeric_limits<float>::lowest() );  
-
-	for( gie::Guid waypointGuid : waypointGuids )  
-	{  
-		auto waypointEntity = world.entity( waypointGuid );  
-		if( auto locationPpt = waypointEntity->property( "Location" ) )  
-		{  
-			glm::vec3 location = *locationPpt->getVec3();  
-			minBounds = glm::min( minBounds, location );  
-			maxBounds = glm::max( maxBounds, location );  
-		}  
-	}  
-
-	// Add a margin around the bounds  
-	const float margin = 0.1f; // 10% margin  
-	glm::vec3 range = maxBounds - minBounds;  
-	minBounds -= range * margin;  
-	maxBounds += range * margin;  
-
-	glm::vec3 offset = -(minBounds + maxBounds) * 0.5f;  
-	glm::vec3 scale = 2.0f / (maxBounds - minBounds); // Scale to fit in clip space  
-
-	for( gie::Guid waypointGuid : waypointGuids )  
-	{  
-		auto waypointEntity = world.entity( waypointGuid );  
-		if( auto locationPpt = waypointEntity->property( "Location" ) )  
-		{  
-			glm::vec3 startLocation = *locationPpt->getVec3();  
-			startLocation += offset; // Apply calculated offset  
-			startLocation *= scale;  // Apply scaling to fit in clip space  
-
-			if( auto linksPpt = waypointEntity->property( "Links" ) )  
-			{  
-				auto linkedGuids = linksPpt->getGuidArray();  
-				if( !linkedGuids )  
-				{  
-					continue;  
-				}  
-				// Iterate through linked waypoints  
-				for( const auto& linkedGuid : *linkedGuids )  
-				{  
-					auto linkedEntity = world.entity( linkedGuid );  
-					if( auto linkedLocationPpt = linkedEntity->property( "Location" ) )  
-					{  
-						glm::vec3 endLocation = *linkedLocationPpt->getVec3();  
-						endLocation += offset; // Apply calculated offset  
-						endLocation *= scale;  // Apply scaling to fit in clip space  
-
-						// Draw a line between startLocation and endLocation  
-						glBegin( GL_LINES );  
-						glVertex3f( startLocation.x, startLocation.y, startLocation.z );  
-						glVertex3f( endLocation.x, endLocation.y, endLocation.z );  
-						glEnd();  
-					}  
-				}  
-			}  
-		}  
-	}  
+			// Draw the waypoint as a point
+			glBegin( GL_POINTS );
+			glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
+			glEnd();
+		}
+	}
 }
 
 // Callback for resizing the window
@@ -257,39 +207,40 @@ int visualization( const gie::World& world )
 	ImGui_ImplGlfw_InitForOpenGL( window, true );  
 	ImGui_ImplOpenGL3_Init( "#version 130" );  
 
-	// Collect waypoint GUIDs from the world  
-	std::vector<gie::Guid> waypointGuids;  
-	for( const auto& itr : world.context().entities() )  
-	{  
-		if( itr.second.property( "Location" ) )  
-		{  
-			waypointGuids.push_back( itr.first );  
-		}  
-	}  
+	// Bounds of elements to be drawn
+	DrawingLimits drawingLimits;
 
 	// Main loop  
 	while( !glfwWindowShouldClose( window ) )  
 	{  
 		processInput( window );  
 
-		// Start ImGui frame  
-		ImGui_ImplOpenGL3_NewFrame();  
-		ImGui_ImplGlfw_NewFrame();  
-		ImGui::NewFrame();  
-
-		// Render ImGui UI  
-		ImGui::Begin( "GOAPie Visualization" );  
-		ImGui::Text( "Waypoint Count: %d", static_cast<int>( waypointGuids.size() ) );  
-		ImGui::End();  
-
-		ImGui::Render();  
-
 		// Render OpenGL content  
 		glClearColor( 0.2f, 0.3f, 0.3f, 1.0f );  
 		glClear( GL_COLOR_BUFFER_BIT );  
 
-		drawWaypointsAndLinks( window, world, waypointGuids );  
+		// rendering elements
+		drawWaypointsAndLinks( world, drawingLimits );
+		drawTrees( world, drawingLimits );
 
+		// Start ImGui frame
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		// Render ImGui UI
+		if( ImGui::Begin( "GOAPie Visualization" ) )
+		{
+			auto waypointGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+			if( waypointGuids )
+			{
+				ImGui::Text( "Waypoint Count: %d", static_cast< int >( waypointGuids->size() ) );
+			}
+		}
+		ImGui::End();
+
+		ImGui::Render();  
+		
 		// Render ImGui draw data  
 		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );  
 
