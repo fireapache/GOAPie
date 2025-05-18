@@ -292,13 +292,6 @@ namespace gie
 		const EntityTagRegister* parent() const { return _parent; }  
 		void setParent( const EntityTagRegister* parent ) { _parent = parent; }  
 
-		void tag( Guid entityGuid, std::vector< Tag >& tags );  
-
-		void tag( Guid entityGuid, std::vector< Tag >&& tags )  
-		{  
-			tag( entityGuid, tags );  
-		}  
-
 		void tag( Entity* entity, std::vector< Tag >& tags )  
 		{  
 			if( !entity )
@@ -319,13 +312,6 @@ namespace gie
 		void tag( Entity* entity, std::vector< Tag >&& tags )  
 		{  
 			tag( entity, tags );  
-		}  
-
-		void untag( Guid entityGuid, std::vector< Tag >& tags );  
-
-		void untag( Guid entityGuid, std::vector< Tag >&& tags )  
-		{  
-			untag( entityGuid, tags );  
 		}  
 
 		void untag( Entity* entity, std::vector< Tag >& tags )  
@@ -581,24 +567,6 @@ namespace gie
 		};
 
 	};
-
-	inline void EntityTagRegister::tag( Guid entityGuid, std::vector< Tag >& tags )
-	{
-		if( world() && !tags.empty() )
-		{
-			auto entity = world()->entity( entityGuid );
-			tag( entity, tags );
-		}
-	}
-
-	inline void EntityTagRegister::untag( Guid entityGuid, std::vector< Tag >& tags )
-	{
-		if( world() && !tags.empty() )
-		{
-			auto entity = world()->entity( entityGuid );
-			untag( entity, tags );
-		}
-	}
 
 	inline Property* Entity::property( StringHash hash ) const
 	{
@@ -1153,6 +1121,7 @@ namespace gie
 		bool _useHeuristics{ false };
 		std::string _logContent{ "" };
 		size_t _depthLimit{ 10 };
+		bool ready{ true };
 
 		// simulation which reached goal
 		Guid _goalSimulationGuid{ NullGuid };
@@ -1166,7 +1135,7 @@ namespace gie
 		void backtrack();
 
     public:
-		Planner() = delete;
+		Planner() = default;
 		Planner( Goal& goal, Agent& agent ) : _goal( &goal ), _agent( &agent ) { }
 		~Planner() = default;
 
@@ -1174,6 +1143,13 @@ namespace gie
 		Goal* goal() const { return _goal; }
 		Agent* agent() const { return _agent; }
 		auto& actionSet() { return _actionSet; }
+		bool isReady() const { return ready; }
+
+		void setup( Goal& goal, Agent& agent )
+		{
+			_goal = &goal;
+			_agent = &agent;
+		}
 
 		template< typename T >
 		std::shared_ptr< ActionSetEntry > addActionSetEntry( StringHash hash )
@@ -1254,14 +1230,16 @@ namespace gie
 
 		void plan( bool useHeuristic = false )
 		{
+			ready = false;
 			_useHeuristics = useHeuristic;
 			simulate();
 			backtrack();
+			ready = true;
 		}
 
 	};
 
-	constexpr bool printSteps = true;
+	constexpr bool printSteps = false;
 
 	inline void Planner::simulate()
 	{

@@ -1,19 +1,22 @@
-#include "goapie.h"
+#include <goapie.h>
+
+#include "example.h"
 
 extern void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions, gie::StringRegister& stringRegister );
 
-int openDoor( gie::World& world )
+int openDoor( ExampleParameters params )
 {
-	// world is created when invoking this function
+	assert( params.isValid() && "Invalid example parameters!" );
+
+	gie::World& world = *params.world;
+	gie::Planner& planner = *params.planner;
+	gie::Goal& goal = *params.goal;
 
 	// adding door entity to world
 	auto doorEntity = world.createEntity();
 
 	// adding property to door entity and setting its default value
 	auto doorOpenedPpt = doorEntity->createProperty( "Opened", false );
-
-	// creating goal
-	gie::Goal goal{ world };
 
 	// setting goal targets (door must get opened)
 	goal.targets.emplace_back( doorOpenedPpt->guid(), true );
@@ -216,8 +219,8 @@ int openDoor( gie::World& world )
 
 	};
 
-	// creating planner passing goal and agent to reach the goal
-	gie::Planner planner{ goal, *agentEntity };
+	// setting up planner passing goal and agent to reach the goal
+	planner.setup( goal, *agentEntity );
 
 	// defining available action and its simulator for planner
 	DEFINE_ACTION_SET_ENTRY( OpenDoor )

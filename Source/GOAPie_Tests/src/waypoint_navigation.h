@@ -1,8 +1,9 @@
 #pragma once
 
-#include "goapie.h"
-
+#include <iostream>
 #include <limits>
+
+#include <goapie.h>
 
 namespace gie
 {
@@ -28,7 +29,7 @@ namespace gie
 
 		return closestWaypoint;
 	}
-	
+
 	struct PathfindingResult
 	{
 		std::vector< Guid > path;

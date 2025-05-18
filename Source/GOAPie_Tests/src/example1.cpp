@@ -1,10 +1,18 @@
-#include "goapie.h"
+#include <goapie.h>
+
+#include "example.h"
 
 int insertingDataEntities( gie::World& world );
 int insertingParameters( gie::World& world );
 
-int fundamentals( gie::World& world )
+int fundamentals( ExampleParameters params )
 {
+	assert( params.isValid() && "Invalid example parameters!" );
+
+	gie::World& world = *params.world;
+	gie::Planner& planner = *params.planner;
+	gie::Goal& goal = *params.goal;
+
 	if( !insertingDataEntities( world ) ) return 1;
 	if( !insertingParameters( world ) ) return 1;
 	return 0;

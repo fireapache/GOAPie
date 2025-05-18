@@ -1,14 +1,23 @@
-#include "goapie.h"
-#include "waypoint_navigation.h"
 
 #include <functional>
 #include <array>
 
+#include <goapie.h>
+
+#include "example.h"
+#include "waypoint_navigation.h"
+
 void printSimulatedActions( const gie::Planner& planner );
 float remapRange( float source, float sourceFrom, float sourceTo, float targetFrom, float targetTo );
 
-int treesOnHill( gie::World& world )
+int treesOnHill( ExampleParameters params )
 {
+	assert( params.isValid() && "Invalid example parameters!" );
+
+	gie::World& world = *params.world;
+	gie::Planner& planner = *params.planner;
+	gie::Goal& goal = *params.goal;
+
 	// world is created when invoking this function
 
 	// creating agent (aka npc)
@@ -163,9 +172,6 @@ int treesOnHill( gie::World& world )
 	// brand new axe integrity 
 	static constexpr float newAxeIntegrityValue = 3.f;
 
-	// creating goal
-	gie::Goal goal{ world };
-
 	// setting goal targets (agent's wood house must exist)
 	goal.targets.emplace_back( agentWoodHousePpt->guid(), true );
 
@@ -272,9 +278,10 @@ int treesOnHill( gie::World& world )
 
 			// consuming first tree
 			gie::Guid treeEntityGuid = *treeUpTagSet->cbegin();
+			gie::Entity* treeEntity = simulation.context().entity( treeEntityGuid );
 			auto& simEntityTagRegister = simulation.context().entityTagRegister();
-			simEntityTagRegister.untag( treeEntityGuid, { gie::stringHasher( "TreeUp" ) } );
-			simEntityTagRegister.tag( treeEntityGuid, { gie::stringHasher( "TreeDown" ) } );
+			simEntityTagRegister.untag( treeEntity, { gie::stringHasher( "TreeUp" ) } );
+			simEntityTagRegister.tag( treeEntity, { gie::stringHasher( "TreeDown" ) } );
 
 			// creating cut down tree action
 			if( auto cutDownTreeAction = std::make_shared< CutDownTreeAction >( arguments() ) )
@@ -634,8 +641,8 @@ int treesOnHill( gie::World& world )
 		world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "Tree" ), gie::stringHasher( "TreeUp" ) } );
 	}
 
-	// creating planner passing goal and agent to reach the goal
-	gie::Planner planner{ goal, *agentEntity };
+	// setting up planner passing goal and agent to reach the goal
+	planner.setup( goal, *agentEntity );
 
 	// defining available actions and their simulators for planner
 	DEFINE_ACTION_SET_ENTRY( CutDownTree )
@@ -646,12 +653,6 @@ int treesOnHill( gie::World& world )
 	planner.addActionSetEntry< CutDownTreeActionSetEntry >( gie::stringHasher( "CutDownTree" ) );
 	planner.addActionSetEntry< WorkActionSetEntry >( gie::stringHasher( "Work" ) );
 	planner.addActionSetEntry< BuyAxeActionSetEntry >( gie::stringHasher( "BuyAxe" ) );
-
-	// finally planner doing its thing
-	planner.plan();
-
-	// printing actions from simulation leaf nodes
-	printSimulatedActions( planner );
 
 	return 0;
 }

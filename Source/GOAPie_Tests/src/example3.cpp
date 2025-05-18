@@ -1,10 +1,16 @@
-#include "goapie.h"
+#include <goapie.h>
+
+#include "example.h"
 
 extern void printSimulatedActions( const gie::Planner& planner );
 
-int cutDownTrees( gie::World& world )
+int cutDownTrees( ExampleParameters params )
 {
-	// world is created when invoking this function
+	assert( params.isValid() && "Invalid example parameters!" );
+
+	gie::World& world = *params.world;
+	gie::Planner& planner = *params.planner;
+	gie::Goal& goal = *params.goal;
 
 	// creating agent (aka npc)
 	auto agentEntity = world.createAgent();
@@ -38,9 +44,6 @@ int cutDownTrees( gie::World& world )
 	constexpr float workSalary = 20.0;
 	// brand new axe integrity 
 	static constexpr float newAxeIntegrityValue = 3.f;
-
-	// creating goal
-	gie::Goal goal{ world };
 
 	// setting goal targets (agent's wood house must exist)
 	goal.targets.emplace_back( agentWoodHousePpt->guid(), true );
@@ -148,9 +151,10 @@ int cutDownTrees( gie::World& world )
 
 			// consuming first tree
 			gie::Guid treeEntityGuid = *treeUpTagSet->cbegin();
+			gie::Entity* treeEntity = simulation.context().entity( treeEntityGuid );
 			auto& simEntityTagRegister = simulation.context().entityTagRegister();
-			simEntityTagRegister.untag( treeEntityGuid, { gie::stringHasher( "TreeUp" ) } );
-			simEntityTagRegister.tag( treeEntityGuid, { gie::stringHasher( "TreeDown" ) } );
+			simEntityTagRegister.untag( treeEntity, { gie::stringHasher( "TreeUp" ) } );
+			simEntityTagRegister.tag( treeEntity, { gie::stringHasher( "TreeDown" ) } );
 
 			// creating cut down tree action
 			if( auto cutDownTreeAction = std::make_shared< CutDownTreeAction >( arguments() ) )
@@ -498,8 +502,8 @@ int cutDownTrees( gie::World& world )
 		world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "Tree" ), gie::stringHasher( "TreeUp" ) } );
 	}
 
-	// creating planner passing goal and agent to reach the goal
-	gie::Planner planner{ goal, *agentEntity };
+	// setting up planner passing goal and agent to reach the goal
+	planner.setup( goal, *agentEntity );
 
 	// defining available actions and their simulators for planner
 	DEFINE_ACTION_SET_ENTRY( CutDownTree )

@@ -1,29 +1,36 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+
 #include <goapie.h>
 
+#include "example.h"
+
 // example 1
-extern int fundamentals( gie::World& world );
+extern int fundamentals( ExampleParameters params );
 // example 2
-extern int openDoor( gie::World& world );
+extern int openDoor( ExampleParameters params );
 // example 3
-extern int cutDownTrees( gie::World& world );
+extern int cutDownTrees( ExampleParameters params );
 // example 4
-extern int treesOnHill( gie::World& world );
+extern int treesOnHill( ExampleParameters params );
 
-extern int visualization( const gie::World& world );
-
-void DrawWaypointLinks(
-	const gie::Entity* waypointEntity,
-	const gie::World& world,
-	glm::vec3& offset,
-	glm::vec3& scale,
-	glm::vec3& scaledLocation );
+// used to draw elements using OpenGL
+extern int visualization( ExampleParameters params );
+// used to print actions from simulation leaf nodes
+extern void printSimulatedActions( const gie::Planner& planner );
 
 int main( int argc, char** argv )
 {
-	std::vector< int ( * )( gie::World& world ) > funcs{ fundamentals, openDoor, cutDownTrees, treesOnHill };
+	typedef int ( *ExampleFunc )( ExampleParameters );
+
+	std::vector< ExampleFunc > funcs
+	{
+		fundamentals,
+		openDoor,
+		cutDownTrees,
+		treesOnHill
+	};
 
 	int ex = -1;
 
@@ -31,16 +38,17 @@ int main( int argc, char** argv )
 	{
 		ex = std::atoi( argv[ 1 ] );
 	}
-	else
+	
+	if( ex < 1 || ex > funcs.size() )
 	{
 		while( true )
 		{
-			std::printf( "Enter valid example number [1..4]: " );
+			std::printf( "Enter valid example number [1..%d]: ", static_cast< int >( funcs.size() ) );
 			std::scanf( "%d", &ex );
 
 			if( ex < 1 || ex > funcs.size() )
 			{
-				std::printf( "Wrong example number!" );
+				std::printf( "Wrong example number!\n" );
 			}
 			else
 			{
@@ -48,12 +56,42 @@ int main( int argc, char** argv )
 			}
 		}
 	}
+
+	// checking for -v parameter
+	bool visualize = false;
+	for( int i = 1; i < argc; ++i )
+	{
+		if( std::strcmp( argv[ i ], "-v" ) == 0 )
+		{
+			visualize = true;
+			break;
+		}
+	}
 	
+	// instantiating essential objects for the example
 	gie::World world{};
+	gie::Planner planner{};
+	gie::Goal goal{ world };
 
-	int exResult = funcs[ ex - 1 ]( world );
+	// running example function
+	int exResult = funcs[ ex - 1 ]( { &world, &planner, &goal } );
 
-	return visualization( world );
+	// example code set up the world, planner and goal,
+	// and now we can run the planner.
 
-	//return exResult;
+	if( visualize )
+	{
+		// using opengl to visualize the plan and world
+		return visualization( { &world, &planner, &goal } );
+	}
+	else
+	{
+		// simply run the planner
+		planner.plan();
+
+		// printing simulated nodes
+		printSimulatedActions( planner );
+	}
+
+	return 0;
 }
