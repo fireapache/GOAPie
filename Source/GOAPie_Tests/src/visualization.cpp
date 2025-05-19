@@ -23,6 +23,187 @@ struct DrawingLimits
 	const float margin = 0.1f; // 10% margin
 };
 
+// Add this at the top of your file or in a suitable scope
+static gie::Guid selectedSimulationGuid = gie::NullGuid;
+
+void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
+void drawTrees( const gie::World& world, DrawingLimits& drawingLimits );
+void drawWaypointsAndLinks( const gie::World& world, DrawingLimits& drawingLimits );
+void drawImGuiWindow( bool& useHeuristics, gie::Planner& planner, gie::World& world );
+void processInput( GLFWwindow* window );
+void framebuffer_size_callback( GLFWwindow* window, int width, int height );
+
+int visualization( ExampleParameters params )
+{
+	assert( params.world && params.planner && params.goal && "Invalid example parameters!" );
+
+	gie::World& world = *params.world;
+	gie::Planner& planner = *params.planner;
+	gie::Goal& goal = *params.goal;
+
+	// Initialize GLFW
+	glfwInit();
+	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 3 );
+	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );
+	glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE );
+
+	// Create a window
+	GLFWwindow* window = glfwCreateWindow( 800, 800, "OpenGL Window", NULL, NULL );
+	if( !window )
+	{
+		std::cout << "Failed to create GLFW window\n";
+		glfwTerminate();
+		return -1;
+	}
+	glfwMakeContextCurrent( window );
+
+	// Load OpenGL functions using GLAD
+	if( !gladLoadGLLoader( ( GLADloadproc )glfwGetProcAddress ) )
+	{
+		std::cout << "Failed to initialize GLAD\n";
+		return -1;
+	}
+
+	// Set viewport and register resize callback
+	glViewport( 0, 0, 800, 800 );
+	glfwSetFramebufferSizeCallback( window, framebuffer_size_callback );
+
+	// Initialize ImGui
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	ImGui::StyleColorsDark();
+	ImGui_ImplGlfw_InitForOpenGL( window, true );
+	ImGui_ImplOpenGL3_Init( "#version 130" );
+
+	// Bounds of elements to be drawn
+	DrawingLimits drawingLimits;
+	bool useHeuristics = false;
+
+	// Main loop
+	while( !glfwWindowShouldClose( window ) )
+	{
+		processInput( window );
+
+		// Render OpenGL content
+		glClearColor( 0.2f, 0.3f, 0.3f, 1.0f );
+		glClear( GL_COLOR_BUFFER_BIT );
+
+		// rendering elements
+		drawWaypointsAndLinks( world, drawingLimits );
+		drawTrees( world, drawingLimits );
+
+		// Start ImGui frame
+		ImGui_ImplOpenGL3_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		// Render ImGui UI
+		drawImGuiWindow( useHeuristics, planner, world );
+
+		ImGui::Render();
+
+		// Render ImGui draw data
+		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
+
+		glfwSwapBuffers( window );
+		glfwPollEvents();
+	}
+
+	// Cleanup ImGui
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
+
+	// Clean up
+	glfwTerminate();
+	return 0;
+}
+
+// Process input (close window on ESC)
+void processInput( GLFWwindow* window )
+{
+	if( glfwGetKey( window, GLFW_KEY_ESCAPE ) == GLFW_PRESS )
+		glfwSetWindowShouldClose( window, true );
+}
+
+// Callback for resizing the window
+void framebuffer_size_callback( GLFWwindow* window, int width, int height )
+{
+	glViewport( 0, 0, width, height );
+}
+
+void drawImGuiWindow( bool& useHeuristics, gie::Planner& planner, gie::World& world )
+{
+	if( ImGui::Begin( "GOAPie Visualization" ) )
+	{
+		ImGui::Checkbox( "Use Heuristics", &useHeuristics );
+
+		if( planner.isReady() )
+		{
+			if( ImGui::Button( "Plan!" ) )
+			{
+				planner.plan( useHeuristics );
+			}
+		}
+		else
+		{
+			ImGui::PushStyleVar( ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f );
+			ImGui::Button( "Plan!" );
+			ImGui::PopStyleVar();
+			ImGui::SameLine();
+			ImGui::Text( "Planner is busy!" );
+		}
+
+		auto waypointGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+		if( waypointGuids )
+		{
+			ImGui::Text( "Waypoint Count: %d", static_cast< int >( waypointGuids->size() ) );
+		}
+
+		// TreeView for simulation nodes
+		if( ImGui::CollapsingHeader( "Simulation Nodes" ) )
+		{
+			auto selectedSim = planner.simulation( selectedSimulationGuid );
+			ImGui::Separator();
+			ImGui::Text( "Selected Node Info:" );
+			if( selectedSim )
+			{
+				ImGui::Text( "Guid: %llu", selectedSim ? static_cast< unsigned long long >( selectedSim->guid() ) : 0 );
+			}
+			else
+			{
+				ImGui::TextUnformatted( "Guid: ?" );
+			}
+			ImGui::Text( "Actions: %zu", selectedSim ? selectedSim->actions.size() : 0 );
+			const bool isMaxCost = selectedSim ? selectedSim->cost == gie::MaxCost : true;
+			if( isMaxCost )
+			{
+				ImGui::TextUnformatted( "Cost: MAX" );
+			}
+			else if( selectedSim )
+			{
+				ImGui::Text( "Cost: %.2f", selectedSim ? selectedSim->cost : 0 );
+			}
+			else
+			{
+				ImGui::TextUnformatted( "Cost: ?" );
+			}
+
+			auto rootNode = planner.rootSimulation();
+			if( rootNode )
+			{
+				drawSimulationTreeView( planner, rootNode );
+			}
+			else
+			{
+				ImGui::Text( "No simulation nodes available." );
+			}
+		}
+	}
+	ImGui::End();
+}
+
 void drawLinks(
 	const gie::Entity* waypointEntity,
 	const gie::World& world,
@@ -162,128 +343,52 @@ void drawTrees( const gie::World& world, DrawingLimits& drawingLimits )
 	}
 }
 
-// Callback for resizing the window
-void framebuffer_size_callback( GLFWwindow* window, int width, int height )
+void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation )
 {
-	glViewport( 0, 0, width, height );
-}
+	if( !simulation )
+		return;
 
-// Process input (close window on ESC)
-void processInput( GLFWwindow* window )
-{
-	if( glfwGetKey( window, GLFW_KEY_ESCAPE ) == GLFW_PRESS )
-		glfwSetWindowShouldClose( window, true );
-}
-
-int visualization( ExampleParameters params )
-{
-	assert( params.world && params.planner && params.goal && "Invalid example parameters!" );
-
-	gie::World& world = *params.world;
-	gie::Planner& planner = *params.planner;
-	gie::Goal& goal = *params.goal;
-
-	// Initialize GLFW
-	glfwInit();
-	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 3 );
-	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );
-	glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE );
-
-	// Create a window
-	GLFWwindow* window = glfwCreateWindow( 800, 800, "OpenGL Window", NULL, NULL );
-	if( !window )
+	std::string actionsText{ "" };
+	for( auto action : simulation->actions )
 	{
-		std::cout << "Failed to create GLFW window\n";
-		glfwTerminate();
-		return -1;
-	}
-	glfwMakeContextCurrent( window );
-
-	// Load OpenGL functions using GLAD
-	if( !gladLoadGLLoader( ( GLADloadproc )glfwGetProcAddress ) )
-	{
-		std::cout << "Failed to initialize GLAD\n";
-		return -1;
-	}
-
-	// Set viewport and register resize callback
-	glViewport( 0, 0, 800, 800 );
-	glfwSetFramebufferSizeCallback( window, framebuffer_size_callback );
-
-	// Initialize ImGui
-	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
-	ImGuiIO& io = ImGui::GetIO();
-	ImGui::StyleColorsDark();
-	ImGui_ImplGlfw_InitForOpenGL( window, true );
-	ImGui_ImplOpenGL3_Init( "#version 130" );
-
-	// Bounds of elements to be drawn
-	DrawingLimits drawingLimits;
-	bool useHeuristics = false;
-
-	// Main loop
-	while( !glfwWindowShouldClose( window ) )
-	{
-		processInput( window );
-
-		// Render OpenGL content
-		glClearColor( 0.2f, 0.3f, 0.3f, 1.0f );
-		glClear( GL_COLOR_BUFFER_BIT );
-
-		// rendering elements
-		drawWaypointsAndLinks( world, drawingLimits );
-		drawTrees( world, drawingLimits );
-
-		// Start ImGui frame
-		ImGui_ImplOpenGL3_NewFrame();
-		ImGui_ImplGlfw_NewFrame();
-		ImGui::NewFrame();
-
-		// Render ImGui UI
-		if( ImGui::Begin( "GOAPie Visualization" ) )
+		if( action )
 		{
-			ImGui::Checkbox( "Use Heuristics", &useHeuristics );
-
-			if( planner.isReady() )
+			actionsText.append( action->name() );
+			if( action != simulation->actions.back() )
 			{
-				if( ImGui::Button( "Plan!" ) )
-				{
-					planner.plan( useHeuristics );
-				}
-			}
-			else
-			{
-				ImGui::PushStyleVar( ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f );
-				ImGui::Button( "Plan!" );
-				ImGui::PopStyleVar();
-				ImGui::SameLine();
-				ImGui::Text( "Planner is busy!" );
-			}
-
-			auto waypointGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-			if( waypointGuids )
-			{
-				ImGui::Text( "Waypoint Count: %d", static_cast< int >( waypointGuids->size() ) );
+				actionsText.append( ", " );
 			}
 		}
-		ImGui::End();
-
-		ImGui::Render();
-
-		// Render ImGui draw data
-		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
-
-		glfwSwapBuffers( window );
-		glfwPollEvents();
 	}
 
-	// Cleanup ImGui
-	ImGui_ImplOpenGL3_Shutdown();
-	ImGui_ImplGlfw_Shutdown();
-	ImGui::DestroyContext();
+	if( actionsText.empty() )
+	{
+		actionsText = "Root";
+	}
 
-	// Clean up
-	glfwTerminate();
-	return 0;
+	// Add unique ID to label
+	std::string label = actionsText + "##" + std::to_string( simulation->guid() );
+
+	ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+	if( selectedSimulationGuid == simulation->guid() )
+		nodeFlags |= ImGuiTreeNodeFlags_Selected;
+
+	bool nodeOpen = ImGui::TreeNodeEx( label.c_str(), nodeFlags );
+	if( ImGui::IsItemClicked() )
+	{
+		selectedSimulationGuid = simulation->guid();
+	}
+
+	if( nodeOpen )
+	{
+		for( auto childSimulationGuid : simulation->outgoing )
+		{
+			auto childSimulation = planner.simulation( childSimulationGuid );
+			if( childSimulation )
+			{
+				drawSimulationTreeView( planner, childSimulation );
+			}
+		}
+		ImGui::TreePop();
+	}
 }

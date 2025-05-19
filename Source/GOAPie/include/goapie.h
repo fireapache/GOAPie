@@ -1116,6 +1116,7 @@ namespace gie
 		std::vector< std::shared_ptr< ActionSetEntry > > _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
 		std::vector< std::shared_ptr< Action > > _planActions;
+		Simulation* _rootSimulation{ nullptr };
 		Goal* _goal{ nullptr };
 		Agent* _agent{ nullptr };
 		bool _useHeuristics{ false };
@@ -1144,6 +1145,7 @@ namespace gie
 		Agent* agent() const { return _agent; }
 		auto& actionSet() { return _actionSet; }
 		bool isReady() const { return ready; }
+		const Simulation* rootSimulation() const { return _rootSimulation; }
 
 		void setup( Goal& goal, Agent& agent )
 		{
@@ -1161,6 +1163,7 @@ namespace gie
 
 		std::pair< Guid, Simulation* > createRootSimulation( const Agent* agent )
 		{
+			_rootSimulation = nullptr;
 			Guid newRandGuid{ randGuid() };
 			Simulation* newSimulation{ nullptr };
 			Simulation sim( newRandGuid, world(), SimAgent( agent ) );
@@ -1168,6 +1171,7 @@ namespace gie
 			if( empl.second )
 			{
 				newSimulation = &empl.first->second;
+				_rootSimulation = newSimulation;
 				return { newRandGuid, newSimulation };
 			}
 
@@ -1252,6 +1256,7 @@ namespace gie
 		// resetting simulation
 		_goalSimulationGuid = NullGuid;
 		_simulations.clear();
+		_rootSimulation = nullptr;
 
 		// logging
 		_logContent = "";
