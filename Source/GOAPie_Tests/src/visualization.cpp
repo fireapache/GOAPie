@@ -38,8 +38,8 @@ struct DrawingLimits
 static gie::Guid selectedSimulationGuid = gie::NullGuid;
 
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
-void drawTrees( const gie::World& world, DrawingLimits& drawingLimits );
-void drawWaypointsAndLinks( const gie::World& world, DrawingLimits& drawingLimits );
+void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
+void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
 void drawImGuiWindows( bool& useHeuristics, gie::Planner& planner, gie::World& world );
 void processInput( GLFWwindow* window );
 void framebuffer_size_callback( GLFWwindow* window, int width, int height );
@@ -151,8 +151,8 @@ int visualization( ExampleParameters params )
 		glClear( GL_COLOR_BUFFER_BIT );
 
 		// rendering elements
-		drawWaypointsAndLinks( world, drawingLimits );
-		drawTrees( world, drawingLimits );
+		drawWaypointsAndLinks( world, planner, drawingLimits );
+		drawTrees( world, planner, drawingLimits );
 
 		// and unbind it again
 		unbind_framebuffer();
@@ -320,10 +320,20 @@ void drawLinks(
 	}
 }
 
-void drawWaypointsAndLinks( const gie::World& world, DrawingLimits& drawingLimits )
+void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits )
 {
-	const auto waypointGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-	if( !waypointGuids )
+	const gie::TagSet* waypointGuids = nullptr;
+	const gie::Blackboard* context = &world.context();
+
+	// in case we have a valid simulation selected, we use the simulation context
+	const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
+	if( selectedSimulation )
+	{
+		context = &selectedSimulation->context();
+	}
+
+	waypointGuids = context->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+	if( !waypointGuids || waypointGuids->empty() )
 	{
 		return; // No waypoints to draw
 	}
@@ -369,17 +379,27 @@ void drawWaypointsAndLinks( const gie::World& world, DrawingLimits& drawingLimit
 	}
 }
 
-void drawTrees( const gie::World& world, DrawingLimits& drawingLimits )
+void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits )
 {
-	const auto treeGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
-	if( !treeGuids )
+	const gie::TagSet* treeGuids = nullptr;
+	const gie::Blackboard* context = &world.context();
+
+	// in case we have a valid simulation selected, we use the simulation context
+	const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
+	if( selectedSimulation )
+	{
+		context = &selectedSimulation->context();
+	}
+
+	treeGuids = context->entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
+	if( !treeGuids || treeGuids->empty() )
 	{
 		return; // No trees to draw
 	}
 
 	for( gie::Guid treeGuid : *treeGuids )
 	{
-		auto waypointEntity = world.entity( treeGuid );
+		auto waypointEntity = context->entity( treeGuid );
 		if( auto locationPpt = waypointEntity->property( "Location" ) )
 		{
 			glm::vec3 location = *locationPpt->getVec3();
@@ -403,7 +423,7 @@ void drawTrees( const gie::World& world, DrawingLimits& drawingLimits )
 	// Iterate through trees and draw them as points
 	for( gie::Guid treeGuid : *treeGuids )
 	{
-		auto treeEntity = world.entity( treeGuid );
+		auto treeEntity = context->entity( treeGuid );
 		if( auto locationPpt = treeEntity->property( "Location" ) )
 		{
 			glm::vec3 location = *locationPpt->getVec3();
@@ -460,7 +480,7 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
 	// Add unique ID to label
 	std::string label = actionsText + "##" + std::to_string( simulation->guid() );
 
-	ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_DrawLinesToNodes | ImGuiTreeNodeFlags_SpanAvailWidth;
+	ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_DrawLinesToNodes | ImGuiTreeNodeFlags_SpanAvailWidth;
 	if( selectedSimulationGuid == simulation->guid() )
 		nodeFlags |= ImGuiTreeNodeFlags_Selected;
 

@@ -485,6 +485,19 @@ namespace gie
 		{
 			return &( itr->second );
 		}
+
+		// as return type is mutable, we need to copy 
+		// the entity over from parent if it exists
+		if( parent() )
+		{
+			auto parentEntity = parent()->entity( guid );
+			if( parentEntity )
+			{
+				auto copiedEntity = _entities.emplace( guid, *parentEntity );
+				return copiedEntity.second ? &copiedEntity.first->second : nullptr;
+			}
+		}
+
 		return nullptr;
 	}
 
