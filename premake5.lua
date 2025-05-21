@@ -172,7 +172,7 @@ project "IMGUI"
 	includedirs
 	{
 		"%{prj.location}/",
-		"%{prj.location}/examples",
+		"%{prj.location}/backends",
 		"Source/GLAD/include/",
 		"Source/GLFW/include/"
 	}
@@ -184,11 +184,12 @@ project "IMGUI"
 		"%{prj.location}/imgui_draw.cpp",
 		"%{prj.location}/imgui_internal.h",
 		"%{prj.location}/imgui_widgets.cpp",
+		"%{prj.location}/imgui_tables.cpp",
 		"%{prj.location}/imgui_demo.cpp",
-		"%{prj.location}/examples/imgui_impl_glfw.h",
-		"%{prj.location}/examples/imgui_impl_glfw.cpp",
-		"%{prj.location}/examples/imgui_impl_opengl3.h",
-		"%{prj.location}/examples/imgui_impl_opengl3.cpp"
+		"%{prj.location}/backends/imgui_impl_glfw.h",
+		"%{prj.location}/backends/imgui_impl_glfw.cpp",
+		"%{prj.location}/backends/imgui_impl_opengl3.h",
+		"%{prj.location}/backends/imgui_impl_opengl3.cpp"
 	}
 
 	filter "system:windows"
@@ -312,7 +313,7 @@ project "Tests"
 		"Source/GLAD/include/",
 		"Source/GLM/",
 		"Source/IMGUI/",
-		"Source/IMGUI/examples/",
+		"Source/IMGUI/backends/",
 		"Source/IMGUI-NE/",
 		"Source/UUID_V4/"
 	}

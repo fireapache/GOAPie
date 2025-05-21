@@ -193,16 +193,15 @@ void drawWorldViewWindow()
 		const float windowHeight = ImGui::GetContentRegionAvail().y;
 
 		// we rescale the framebuffer to the actual window size here and reset the glViewport
-		rescale_framebuffer( windowWidth, windowHeight );
-		glViewport( 0, 0, windowWidth, windowHeight );
+		rescale_framebuffer( static_cast< GLsizei >( windowWidth ), static_cast< GLsizei >( windowHeight ) );
+		glViewport( 0, 0, static_cast< GLsizei >( windowWidth ), static_cast< GLsizei >( windowHeight ) );
 
 		// we get the screen position of the window
 		ImVec2 pos = ImGui::GetCursorScreenPos();
 
 		// and here we can add our created texture as image to ImGui
-		// unfortunately we need to use the cast to void* or I didn't find another way tbh
 		ImGui::GetWindowDrawList()->AddImage(
-			( void* )texture_id,
+			texture_id,
 			ImVec2( pos.x, pos.y ),
 			ImVec2( pos.x + windowWidth, pos.y + windowHeight ),
 			ImVec2( 0, 1 ),
@@ -432,6 +431,14 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
 	if( !simulation )
 		return;
 
+	// Reduce horizontal padding for tree nodes
+	ImVec2 oldPadding = ImGui::GetStyle().FramePadding;
+	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 1.0f, oldPadding.y ) ); // 2.0f is a small horizontal padding
+
+	// Reduce indentation for child nodes
+	float oldIndent = ImGui::GetStyle().IndentSpacing;
+	ImGui::PushStyleVar( ImGuiStyleVar_IndentSpacing, 6.0f ); // child right padding
+
 	std::string actionsText{ "" };
 	for( auto action : simulation->actions )
 	{
@@ -453,7 +460,7 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
 	// Add unique ID to label
 	std::string label = actionsText + "##" + std::to_string( simulation->guid() );
 
-	ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+	ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_DrawLinesToNodes | ImGuiTreeNodeFlags_SpanAvailWidth;
 	if( selectedSimulationGuid == simulation->guid() )
 		nodeFlags |= ImGuiTreeNodeFlags_Selected;
 
@@ -475,6 +482,8 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
 		}
 		ImGui::TreePop();
 	}
+
+	ImGui::PopStyleVar( 2 ); // Restore previous padding
 }
 
 // here we create our framebuffer and our renderbuffer
@@ -521,163 +530,108 @@ void unbind_framebuffer()
 void rescale_framebuffer( float width, float height )
 {
 	glBindTexture( GL_TEXTURE_2D, texture_id );
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL );
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, static_cast< GLsizei >( width ), static_cast< GLsizei >( height ), 0, GL_RGB, GL_UNSIGNED_BYTE, NULL );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
 	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
 	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_id, 0 );
 
 	glBindRenderbuffer( GL_RENDERBUFFER, RBO );
-	glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height );
+	glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, static_cast< GLsizei >( width ), static_cast< GLsizei >( height ) );
 	glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, RBO );
 }
 
-// Demonstrate using DockSpace() to create an explicit docking node within an existing window.
-// Note: You can use most Docking facilities without calling any API. You DO NOT need to call DockSpace() to use Docking!
-// - Drag from window title bar or their tab to dock/undock. Hold SHIFT to disable docking.
-// - Drag from window menu button (upper-left button) to undock an entire node (all windows).
-// About dockspaces:
-// - Use DockSpace() to create an explicit dock node _within_ an existing window.
-// - Use DockSpaceOverViewport() to create an explicit dock node covering the screen or a specific viewport.
-//   This is often used with ImGuiDockNodeFlags_PassthruCentralNode.
-// - Important: Dockspaces need to be submitted _before_ any window they can host. Submit it early in your frame! (*)
-// - Important: Dockspaces need to be kept alive if hidden, otherwise windows docked into it will be undocked.
-//   e.g. if you have multiple tabs with a dockspace inside each tab: submit the non-visible dockspaces with ImGuiDockNodeFlags_KeepAliveOnly.
-// (*) because of this constraint, the implicit \"Debug\" window can not be docked into an explicit DockSpace() node,
-// because that window is submitted as part of the part of the NewFrame() call. An easy workaround is that you can create
-// your own implicit "Debug##2" window after calling DockSpace() and leave it in the window stack for anyone to use.
-void ShowExampleAppDockSpace( bool* p_open )
+void ShowExampleAppDockSpace(bool* p_open)
 {
-	// Variables to configure the Dockspace example.
-	static bool opt_fullscreen = true; // Is the Dockspace full-screen?
-	static bool opt_padding = false;   // Is there padding (a blank space) between the window edge and the Dockspace?
-	static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None; // Config flags for the Dockspace
+    // READ THIS !!!
+    // TL;DR; this demo is more complicated than what most users you would normally use.
+    // If we remove all options we are showcasing, this demo would become:
+    //     void ShowExampleAppDockSpace()
+    //     {
+    //         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+    //     }
+    // In most cases you should be able to just call DockSpaceOverViewport() and ignore all the code below!
+    // In this specific demo, we are not using DockSpaceOverViewport() because:
+    // - (1) we allow the host window to be floating/moveable instead of filling the viewport (when opt_fullscreen == false)
+    // - (2) we allow the host window to have padding (when opt_padding == true)
+    // - (3) we expose many flags and need a way to have them visible.
+    // - (4) we have a local menu bar in the host window (vs. you could use BeginMainMenuBar() + DockSpaceOverViewport()
+    //      in your code, but we don't here because we allow the window to be floating)
 
-	// In this example, we're embedding the Dockspace into an invisible parent window to make it more configurable.
-	// We set ImGuiWindowFlags_NoDocking to make sure the parent isn't dockable into because this is handled by the Dockspace.
-	//
-	// ImGuiWindowFlags_MenuBar is to show a menu bar with config options. This isn't necessary to the functionality of a
-	// Dockspace, but it is here to provide a way to change the configuration flags interactively.
-	// You can remove the MenuBar flag if you don't want it in your app, but also remember to remove the code which actually
-	// renders the menu bar, found at the end of this function.
-	ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    static bool opt_fullscreen = true;
+    static bool opt_padding = false;
+    static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
 
-	// Is the example in Fullscreen mode?
-	if( opt_fullscreen )
-	{
-		// If so, get the main viewport:
-		const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    // We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not dockable into,
+    // because it would be confusing to have two docking targets within each others.
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
+    if (opt_fullscreen)
+    {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(viewport->WorkPos);
+        ImGui::SetNextWindowSize(viewport->WorkSize);
+        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
+        window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+    }
+    else
+    {
+        dockspace_flags &= ~ImGuiDockNodeFlags_PassthruCentralNode;
+    }
 
-		// Set the parent window's position, size, and viewport to match that of the main viewport. This is so the parent window
-		// completely covers the main viewport, giving it a "full-screen" feel.
-		ImGui::SetNextWindowPos( viewport->Pos );
-		ImGui::SetNextWindowSize( viewport->Size );
-		ImGui::SetNextWindowViewport( viewport->ID );
+    // When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will render our background
+    // and handle the pass-thru hole, so we ask Begin() to not render a background.
+    if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
+        window_flags |= ImGuiWindowFlags_NoBackground;
 
-		// Set the parent window's styles to match that of the main viewport:
-		ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 0.0f );	 // No corner rounding on the window
-		ImGui::PushStyleVar( ImGuiStyleVar_WindowBorderSize, 0.0f ); // No border around the window
+    // Important: note that we proceed even if Begin() returns false (aka window is collapsed).
+    // This is because we want to keep our DockSpace() active. If a DockSpace() is inactive,
+    // all active windows docked into it will lose their parent and become undocked.
+    // We cannot preserve the docking relationship between an active window and an inactive docking, otherwise
+    // any change of dockspace/settings would lead to windows being stuck in limbo and never being visible.
+    if (!opt_padding)
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("DockSpace Demo", p_open, window_flags);
+    if (!opt_padding)
+        ImGui::PopStyleVar();
 
-		// Manipulate the window flags to make it inaccessible to the user (no titlebar, resize/move, or navigation)
-		window_flags
-			|= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
-		window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
-	}
-	else
-	{
-		// The example is not in Fullscreen mode (the parent window can be dragged around and resized), disable the
-		// ImGuiDockNodeFlags_PassthruCentralNode flag.
-		dockspace_flags &= ~ImGuiDockNodeFlags_PassthruCentralNode;
-	}
+    if (opt_fullscreen)
+        ImGui::PopStyleVar(2);
 
-	// When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will render our background
-	// and handle the pass-thru hole, so the parent window should not have its own background:
-	if( dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode )
-		window_flags |= ImGuiWindowFlags_NoBackground;
+    // Submit the DockSpace
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
+    {
+        ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
+        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+    }
 
-	// If the padding option is disabled, set the parent window's padding size to 0 to effectively hide said padding.
-	if( !opt_padding )
-		ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 0.0f, 0.0f ) );
+    if (ImGui::BeginMenuBar())
+    {
+        if (ImGui::BeginMenu("Options"))
+        {
+            // Disabling fullscreen would allow the window to be moved to the front of other windows,
+            // which we can't undo at the moment without finer window depth/z control.
+            ImGui::MenuItem("Fullscreen", NULL, &opt_fullscreen);
+            ImGui::MenuItem("Padding", NULL, &opt_padding);
+            ImGui::Separator();
 
-	// Important: note that we proceed even if Begin() returns false (aka window is collapsed).
-	// This is because we want to keep our DockSpace() active. If a DockSpace() is inactive,
-	// all active windows docked into it will lose their parent and become undocked.
-	// We cannot preserve the docking relationship between an active window and an inactive docking, otherwise
-	// any change of dockspace/settings would lead to windows being stuck in limbo and never being visible.
-	ImGui::Begin( "DockSpace Demo", p_open, window_flags );
+            if (ImGui::MenuItem("Flag: NoDockingOverCentralNode", "", (dockspace_flags & ImGuiDockNodeFlags_NoDockingOverCentralNode) != 0)) { dockspace_flags ^= ImGuiDockNodeFlags_NoDockingOverCentralNode; }
+            if (ImGui::MenuItem("Flag: NoDockingSplit",         "", (dockspace_flags & ImGuiDockNodeFlags_NoDockingSplit) != 0))             { dockspace_flags ^= ImGuiDockNodeFlags_NoDockingSplit; }
+            if (ImGui::MenuItem("Flag: NoUndocking",            "", (dockspace_flags & ImGuiDockNodeFlags_NoUndocking) != 0))                { dockspace_flags ^= ImGuiDockNodeFlags_NoUndocking; }
+            if (ImGui::MenuItem("Flag: NoResize",               "", (dockspace_flags & ImGuiDockNodeFlags_NoResize) != 0))                   { dockspace_flags ^= ImGuiDockNodeFlags_NoResize; }
+            if (ImGui::MenuItem("Flag: AutoHideTabBar",         "", (dockspace_flags & ImGuiDockNodeFlags_AutoHideTabBar) != 0))             { dockspace_flags ^= ImGuiDockNodeFlags_AutoHideTabBar; }
+            if (ImGui::MenuItem("Flag: PassthruCentralNode",    "", (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode) != 0, opt_fullscreen)) { dockspace_flags ^= ImGuiDockNodeFlags_PassthruCentralNode; }
+            ImGui::Separator();
 
-	// Remove the padding configuration - we pushed it, now we pop it:
-	if( !opt_padding )
-		ImGui::PopStyleVar();
+            if (ImGui::MenuItem("Close", NULL, false, p_open != NULL))
+                *p_open = false;
+            ImGui::EndMenu();
+        }
 
-	// Pop the two style rules set in Fullscreen mode - the corner rounding and the border size.
-	if( opt_fullscreen )
-		ImGui::PopStyleVar( 2 );
+        ImGui::EndMenuBar();
+    }
 
-	// Check if Docking is enabled:
-	ImGuiIO& io = ImGui::GetIO();
-	if( io.ConfigFlags & ImGuiConfigFlags_DockingEnable )
-	{
-		// If it is, draw the Dockspace with the DockSpace() function.
-		// The GetID() function is to give a unique identifier to the Dockspace - here, it's "MyDockSpace".
-		ImGuiID dockspace_id = ImGui::GetID( "MyDockSpace" );
-		ImGui::DockSpace( dockspace_id, ImVec2( 0.0f, 0.0f ), dockspace_flags );
-	}
-
-	// This is to show the menu bar that will change the config settings at runtime.
-	// If you copied this demo function into your own code and removed ImGuiWindowFlags_MenuBar at the top of the function,
-	// you should remove the below if-statement as well.
-	if( ImGui::BeginMenuBar() )
-	{
-		if( ImGui::BeginMenu( "Options" ) )
-		{
-			// Disabling fullscreen would allow the window to be moved to the front of other windows,
-			// which we can't undo at the moment without finer window depth/z control.
-			ImGui::MenuItem( "Fullscreen", NULL, &opt_fullscreen );
-			ImGui::MenuItem( "Padding", NULL, &opt_padding );
-			ImGui::Separator();
-
-			// Display a menu item for each Dockspace flag, clicking on one will toggle its assigned flag.
-			if( ImGui::MenuItem( "Flag: NoSplit", "", ( dockspace_flags & ImGuiDockNodeFlags_NoSplit ) != 0 ) )
-			{
-				dockspace_flags ^= ImGuiDockNodeFlags_NoSplit;
-			}
-			if( ImGui::MenuItem( "Flag: NoResize", "", ( dockspace_flags & ImGuiDockNodeFlags_NoResize ) != 0 ) )
-			{
-				dockspace_flags ^= ImGuiDockNodeFlags_NoResize;
-			}
-			if( ImGui::MenuItem(
-					"Flag: NoDockingInCentralNode",
-					"",
-					( dockspace_flags & ImGuiDockNodeFlags_NoDockingInCentralNode ) != 0 ) )
-			{
-				dockspace_flags ^= ImGuiDockNodeFlags_NoDockingInCentralNode;
-			}
-			if( ImGui::MenuItem( "Flag: AutoHideTabBar", "", ( dockspace_flags & ImGuiDockNodeFlags_AutoHideTabBar ) != 0 ) )
-			{
-				dockspace_flags ^= ImGuiDockNodeFlags_AutoHideTabBar;
-			}
-			if( ImGui::MenuItem(
-					"Flag: PassthruCentralNode",
-					"",
-					( dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode ) != 0,
-					opt_fullscreen ) )
-			{
-				dockspace_flags ^= ImGuiDockNodeFlags_PassthruCentralNode;
-			}
-			ImGui::Separator();
-
-			// Display a menu item to close this example.
-			if( ImGui::MenuItem( "Close", NULL, false, p_open != NULL ) )
-				if( p_open
-					!= NULL ) // Remove MSVC warning C6011 (NULL dereference) - the `p_open != NULL` in MenuItem() does prevent NULL derefs, but IntelliSense doesn't analyze that deep so we need to add this in ourselves.
-					*p_open
-						= false; // Changing this variable to false will close the parent window, therefore closing the Dockspace as well.
-			ImGui::EndMenu();
-		}
-
-		ImGui::EndMenuBar();
-	}
-
-	// End the parent window that contains the Dockspace:
-	ImGui::End();
+    ImGui::End();
 }

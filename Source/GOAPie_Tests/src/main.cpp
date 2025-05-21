@@ -17,7 +17,9 @@ extern int treesOnHill( ExampleParameters params );
 
 // used to draw elements using OpenGL
 extern int visualization( ExampleParameters params );
-void drawImGuiWindow( bool& useHeuristics, gie::Planner& planner, gie::World& world );
+void drawGoapieVisualizationWindow( bool& useHeuristics, gie::Planner& planner, gie::World& world );
+void drawImGuiWindows( bool& useHeuristics, gie::Planner& planner, gie::World& world );
+void drawWorldViewWindow();
 // used to print actions from simulation leaf nodes
 extern void printSimulatedActions( const gie::Planner& planner );
 
