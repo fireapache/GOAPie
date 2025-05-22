@@ -7,25 +7,25 @@
 #include "example.h"
 
 // example 1
-extern int fundamentals( ExampleParameters params );
+extern int fundamentals( ExampleParameters& params );
 // example 2
-extern int openDoor( ExampleParameters params );
+extern int openDoor( ExampleParameters& params );
 // example 3
-extern int cutDownTrees( ExampleParameters params );
+extern int cutDownTrees( ExampleParameters& params );
 // example 4
-extern int treesOnHill( ExampleParameters params );
+extern int treesOnHill( ExampleParameters& params );
 
 // used to draw elements using OpenGL
-extern int visualization( ExampleParameters params );
-void drawGoapieVisualizationWindow( bool& useHeuristics, gie::Planner& planner, gie::World& world );
-void drawImGuiWindows( bool& useHeuristics, gie::Planner& planner, gie::World& world );
+extern int visualization( ExampleParameters& params );
+void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& params );
+void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params );
 void drawWorldViewWindow();
 // used to print actions from simulation leaf nodes
 extern void printSimulatedActions( const gie::Planner& planner );
 
 int main( int argc, char** argv )
 {
-	typedef int ( *ExampleFunc )( ExampleParameters );
+	typedef int ( *ExampleFunc )( ExampleParameters& );
 
 	std::vector< ExampleFunc > funcs
 	{
@@ -77,7 +77,8 @@ int main( int argc, char** argv )
 	gie::Goal goal{ world };
 
 	// running example function
-	int exResult = funcs[ ex - 1 ]( { &world, &planner, &goal } );
+	ExampleParameters exampleParams{ world, planner, goal };
+	int exResult = funcs[ ex - 1 ]( exampleParams );
 
 	// example code set up the world, planner and goal,
 	// and now we can run the planner.
@@ -85,7 +86,7 @@ int main( int argc, char** argv )
 	if( visualize )
 	{
 		// using opengl to visualize the plan and world
-		return visualization( { &world, &planner, &goal } );
+		return visualization( exampleParams );
 	}
 	else
 	{

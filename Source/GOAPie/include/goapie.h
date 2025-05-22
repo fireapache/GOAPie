@@ -29,6 +29,7 @@ namespace gie
 		typedef std::vector< float >		FloatVector;
 		typedef std::vector< int32_t >		IntegerVector;
 		typedef std::vector< Guid >			GuidVector;
+		typedef std::vector< StringHash >	StringHashVector;
 		typedef std::vector< glm::vec3 >	Vec3Vector;
 
 		typedef std::variant<
@@ -98,6 +99,11 @@ namespace gie
 		const	GuidVector*		getGuidArray()		const	{ return type() == GUIDArray ?		&std::get< GuidVector >( value ) : nullptr; }
 				GuidVector*		getGuidArray()				{ return type() == GUIDArray ?		&std::get< GuidVector >( value ) : nullptr; }
 
+		const	StringHash*			getStringHash()			const	{ return type() == GUID ?		&std::get< Guid >( value ) : nullptr; }
+				StringHash*			getStringHash()					{ return type() == GUID ?		&std::get< Guid >( value ) : nullptr; }
+		const	StringHashVector*	getStringHashArray()	const	{ return type() == GUIDArray ?	reinterpret_cast< const StringHashVector* >( &std::get< GuidVector >( value ) ) : nullptr; }
+				StringHashVector*	getStringHashArray()			{ return type() == GUIDArray ?	reinterpret_cast<		StringHashVector* >( &std::get< GuidVector >( value ) ) : nullptr; }
+
 		const	glm::vec3*		getVec3()			const	{ return type() == Vec3 ?			&std::get< glm::vec3 >( value ) : nullptr; }
 				glm::vec3*		getVec3()					{ return type() == Vec3 ?			&std::get< glm::vec3 >( value ) : nullptr; }
 		const	Vec3Vector*		getVec3Array()		const	{ return type() == Vec3Array ?		&std::get< Vec3Vector >( value ) : nullptr; }
@@ -148,6 +154,13 @@ namespace gie
 			return createProperty( stringHasher( name ) );
 		}
 
+		template< typename T >
+		std::enable_if_t< std::is_convertible_v< T, std::string_view >, Property* >
+		createProperty( std::string_view name, T value )
+		{
+			return createProperty( stringHasher( name ), stringHasher( value ) );
+		}
+
 		// Register a property in data entity and world using its literal name.
 		// @param name: Property contextual name (e.g. "AmmoCount")
 		// @param value: Default value of property
@@ -179,7 +192,7 @@ namespace gie
 		// Fetch a property registered in this data entity.
 		// @param name: Property contextual name (e.g. "AmmoCount")
 		// @return Pointer to property.
-		Property* property( std::string_view name ) const
+		Property* property( std::string_view name )
 		{
 			return property( stringHasher( name ) );
 		}
@@ -187,7 +200,20 @@ namespace gie
 		// Fetch a property registered in this data entity.
 		// @param hash: Hash of property contextual name (e.g. "AmmoCount")
 		// @return Pointer to property.
-		Property* property( StringHash nameHash ) const;
+		Property* property( StringHash nameHash );
+
+		// Fetch a property registered in this data entity.
+		// @param name: Property contextual name (e.g. "AmmoCount")
+		// @return Const pointer to property.
+		const Property* property( std::string_view name ) const
+		{
+			return property( stringHasher( name ) );
+		}
+
+		// Fetch a property registered in this data entity.
+		// @param hash: Hash of property contextual name (e.g. "AmmoCount")
+		// @return Const pointer to property.
+		const Property* property( StringHash nameHash ) const;
 
 		void removeProperty( StringHash hash ) { _propertyGuids.erase( hash ); }
 
@@ -336,13 +362,15 @@ namespace gie
 			untag( entity, tags );  
 		}  
 
-		const std::set< Guid >* tagSet( Tag entityTag ) const  
-		{  
-			auto mapFind = _storage.find( entityTag );  
-			if( mapFind != _storage.end() )  
-			{  
-				return &mapFind->second;  
-			}  
+		const std::set< Guid >* tagSet( std::string_view tagName ) const
+		{
+			Tag entityTag = stringHasher( tagName );
+
+			auto mapFind = _storage.find( entityTag );
+			if( mapFind != _storage.end() )
+			{
+				return &mapFind->second;
+			}
 
 			// Getting from parent if possible
 			if( _parent )
@@ -351,7 +379,24 @@ namespace gie
 			}
 
 			return nullptr;
-		}  
+		}
+
+		const std::set< Guid >* tagSet( Tag entityTag ) const
+		{
+			auto mapFind = _storage.find( entityTag );
+			if( mapFind != _storage.end() )
+			{
+				return &mapFind->second;
+			}
+
+			// Getting from parent if possible
+			if( _parent )
+			{
+				return _parent->tagSet( entityTag );
+			}
+
+			return nullptr;
+		}
     };
 
 	typedef std::unordered_map< Guid, Entity > EntityMap;
@@ -517,38 +562,9 @@ namespace gie
 		return nullptr;
 	}
 
-	class StringRegister
-	{
-		std::unordered_map< StringHash, std::string > _storage;
-
-	public:
-
-		StringHash add( const std::string_view value )
-		{
-			StringHash key = stringHasher( value );
-			if( _storage.emplace( key, value ).second )
-			{
-				return key;
-			}
-			return InvalidStringHash;
-		}
-
-		std::string_view get( const StringHash key ) const
-		{
-			auto find = _storage.find( key );
-			if( find != _storage.end() )
-			{
-				return find->second;
-			}
-			return std::string_view{};
-		}
-	};
-
 	class World : public IDataEntityManager
 	{
 		Blackboard _context{ this };
-		// TODO: string register need to be singleton and used by all worlds
-		StringRegister _stringRegister{};
 
     public:
 		World() = default;
@@ -557,8 +573,7 @@ namespace gie
 		auto& context() { return _context; };
 		const auto& context() const { return _context; };
 		auto& properties() { return _context.properties(); };
-		auto& stringRegiter() { return _stringRegister; }
-		const auto& stringRegister() { return _stringRegister; }
+		const auto& properties() const { return _context.properties(); };
 
 		// IDataEntityManager interface
 		class Agent* createAgent()							override { return _context.createAgent(); };
@@ -581,7 +596,33 @@ namespace gie
 
 	};
 
-	inline Property* Entity::property( StringHash hash ) const
+	inline Property* Entity::property( StringHash hash )
+	{
+		if( !_world )
+		{
+			return nullptr;
+		}
+
+		// getting guid of property
+		auto propertyGuid = _propertyGuids.find( hash );
+
+		// property doesn't exist in this data entity
+		if( propertyGuid == _propertyGuids.end() )
+		{
+			return nullptr;
+		}
+
+		// getting actual property
+		const auto propertyItr = _world->properties().find( propertyGuid->second );
+		if( propertyItr == _world->properties().end() )
+		{
+			return nullptr;
+		}
+
+		return &( propertyItr->second );
+	}
+
+	inline const Property* Entity::property( StringHash hash ) const
 	{
 		if( !_world )
 		{
@@ -662,16 +703,13 @@ namespace gie
 	class SimAgent
 	{
 		const Agent* _agent{ nullptr };
-		Blackboard _opinions;
 
 	public:
 		SimAgent() = delete;
-		SimAgent( const Agent* agent ) : _agent( agent ), _opinions( agent->world(), &agent->opinions() ) { };
-
-		Blackboard& opinions() { return _opinions; }
-		const Blackboard& opinions() const { return _opinions; }
+		SimAgent( const Agent* agent ) : _agent( agent ) { };
 
 		const Agent* worldContextAgent() const { return _agent; }
+		Guid guid() const { return _agent ? _agent->guid() : NullGuid; }
 
 	};
 
@@ -846,6 +884,12 @@ namespace gie
 				// tagging entity in simulation context
 				simulationTagRegister.untag( entity, { entityTag } );
 			}
+		}
+
+		// Return set of entities with tag
+		const std::set< Guid >* tagSet( std::string_view tagName ) const
+		{
+			return tagSet( stringHasher( tagName ) );
 		}
 
 		// Return set of entities with tag

@@ -4,13 +4,11 @@
 
 extern void printSimulatedActions( const gie::Planner& planner );
 
-int cutDownTrees( ExampleParameters params )
+int cutDownTrees( ExampleParameters& params )
 {
-	assert( params.isValid() && "Invalid example parameters!" );
-
-	gie::World& world = *params.world;
-	gie::Planner& planner = *params.planner;
-	gie::Goal& goal = *params.goal;
+	gie::World& world = params.world;
+	gie::Planner& planner = params.planner;
+	gie::Goal& goal = params.goal;
 
 	// creating agent (aka npc)
 	auto agentEntity = world.createAgent();

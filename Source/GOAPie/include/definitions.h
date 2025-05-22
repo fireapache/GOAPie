@@ -6,9 +6,10 @@
 
 namespace gie
 {
-	typedef size_t Guid;
-	typedef size_t StringHash;
-	typedef size_t Tag;
+	typedef size_t IdType;
+	typedef IdType Guid;
+	typedef IdType StringHash;
+	typedef IdType Tag;
 	typedef std::set< Tag > TagSet;
 	typedef std::pair< StringHash, Guid > NamedGuid;
 	typedef size_t Checksum;

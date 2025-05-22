@@ -40,7 +40,7 @@ static gie::Guid selectedSimulationGuid = gie::NullGuid;
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
 void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
 void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
-void drawImGuiWindows( bool& useHeuristics, gie::Planner& planner, gie::World& world );
+void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params );
 void processInput( GLFWwindow* window );
 void framebuffer_size_callback( GLFWwindow* window, int width, int height );
 void create_framebuffer();
@@ -49,13 +49,11 @@ void unbind_framebuffer();
 void rescale_framebuffer( float width, float height );
 void ShowExampleAppDockSpace( bool* p_open );
 
-int visualization( ExampleParameters params )
+int visualization( ExampleParameters& params )
 {
-	assert( params.world && params.planner && params.goal && "Invalid example parameters!" );
-
-	gie::World& world = *params.world;
-	gie::Planner& planner = *params.planner;
-	gie::Goal& goal = *params.goal;
+	gie::World& world = params.world;
+	gie::Planner& planner = params.planner;
+	gie::Goal& goal = params.goal;
 
 	// Initialize GLFW
 	glfwInit();
@@ -127,7 +125,7 @@ int visualization( ExampleParameters params )
 		ShowExampleAppDockSpace( nullptr ); // Create a dockspace for the ImGui windows
 
 		// Render ImGui UI
-		drawImGuiWindows( useHeuristics, planner, world );
+		drawImGuiWindows( useHeuristics, params );
 
 		ImGui::Render();
 
@@ -210,8 +208,11 @@ void drawWorldViewWindow()
 	ImGui::End();
 }
 
-void drawGoapieVisualizationWindow( bool& useHeuristics, gie::Planner& planner, gie::World& world )
+void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& params )
 {
+	gie::World& world = params.world;
+	gie::Planner& planner = params.planner;
+
 	if( ImGui::Begin( "GOAPie Visualization" ) )
 	{
 		ImGui::Checkbox( "Use Heuristics", &useHeuristics );
@@ -267,6 +268,14 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, gie::Planner& planner, 
 				ImGui::TextUnformatted( "Cost: ?" );
 			}
 
+			ImGui::Separator();
+
+			if( params.imGuiDrawFunc )
+			{
+				params.imGuiDrawFunc( world, planner, params.goal, selectedSimulationGuid );
+				ImGui::Separator();
+			}
+
 			auto rootNode = planner.rootSimulation();
 			if( rootNode )
 			{
@@ -281,9 +290,9 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, gie::Planner& planner, 
 	ImGui::End();
 }
 
-void drawImGuiWindows( bool& useHeuristics, gie::Planner& planner, gie::World& world )
+void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
 {
-	drawGoapieVisualizationWindow( useHeuristics, planner, world );
+	drawGoapieVisualizationWindow( useHeuristics, params );
 	drawWorldViewWindow();
 }
 

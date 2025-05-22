@@ -7,14 +7,12 @@ namespace gie
 	class Goal;
 }
 
+typedef void ( *ImGuiDrawFunc )( gie::World&, gie::Planner&, gie::Goal&, gie::Guid );
+
 struct ExampleParameters
 {
-	gie::World* world{ nullptr };
-	gie::Planner* planner{ nullptr };
-	gie::Goal* goal{ nullptr };
-
-	inline bool isValid() const
-	{
-		return world && planner && goal;
-	}
+	gie::World& world;
+	gie::Planner& planner;
+	gie::Goal& goal;
+	ImGuiDrawFunc imGuiDrawFunc{ nullptr };
 };

@@ -4,13 +4,11 @@
 
 extern void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions, gie::StringRegister& stringRegister );
 
-int openDoor( ExampleParameters params )
+int openDoor( ExampleParameters& params )
 {
-	assert( params.isValid() && "Invalid example parameters!" );
-
-	gie::World& world = *params.world;
-	gie::Planner& planner = *params.planner;
-	gie::Goal& goal = *params.goal;
+	gie::World& world = params.world;
+	gie::Planner& planner = params.planner;
+	gie::Goal& goal = params.goal;
 
 	// adding door entity to world
 	auto doorEntity = world.createEntity();
