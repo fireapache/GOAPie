@@ -43,11 +43,7 @@ namespace gie
 		}
 	};
 
-	static inline StringRegister& stringRegister()
-	{
-		static StringRegister instance{};
-		return instance;
-	}
+    extern StringRegister& stringRegister();
 
 	inline Guid randGuid()
 	{

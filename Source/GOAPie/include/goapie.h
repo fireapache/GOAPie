@@ -119,6 +119,97 @@ namespace gie
 
 		// @return StringHash representing the name given to this property.
 		StringHash hash() const { return _name; }
+
+        // Returns a string representation of the value stored in the variant.
+		std::string toString() const
+		{
+			struct Visitor
+			{
+				std::string operator()( bool v ) const
+				{
+					return v ? "true" : "false";
+				}
+				std::string operator()( const BooleanVector& v ) const
+				{
+					std::string result = "[";
+					for( size_t i = 0; i < v.size(); ++i )
+					{
+						result += v[ i ] ? "true" : "false";
+						if( i < v.size() - 1 )
+							result += ", ";
+					}
+					result += "]";
+					return result;
+				}
+				std::string operator()( float v ) const
+				{
+					return std::to_string( v );
+				}
+				std::string operator()( const FloatVector& v ) const
+				{
+					std::string result = "[";
+					for( size_t i = 0; i < v.size(); ++i )
+					{
+						result += std::to_string( v[ i ] );
+						if( i < v.size() - 1 )
+							result += ", ";
+					}
+					result += "]";
+					return result;
+				}
+				std::string operator()( int32_t v ) const
+				{
+					return std::to_string( v );
+				}
+				std::string operator()( const IntegerVector& v ) const
+				{
+					std::string result = "[";
+					for( size_t i = 0; i < v.size(); ++i )
+					{
+						result += std::to_string( v[ i ] );
+						if( i < v.size() - 1 )
+							result += ", ";
+					}
+					result += "]";
+					return result;
+				}
+				std::string operator()( const Guid& v ) const
+				{
+					return std::to_string( v );
+				}
+				std::string operator()( const GuidVector& v ) const
+				{
+					std::string result = "[";
+					for( size_t i = 0; i < v.size(); ++i )
+					{
+						result += std::to_string( v[ i ] );
+						if( i < v.size() - 1 )
+							result += ", ";
+					}
+					result += "]";
+					return result;
+				}
+				std::string operator()( const glm::vec3& v ) const
+				{
+					return "vec3(" + std::to_string( v.x ) + ", " + std::to_string( v.y ) + ", " + std::to_string( v.z ) + ")";
+				}
+				std::string operator()( const Vec3Vector& v ) const
+				{
+					std::string result = "[";
+					for( size_t i = 0; i < v.size(); ++i )
+					{
+						result += "vec3(" + std::to_string( v[ i ].x ) + ", " + std::to_string( v[ i ].y ) + ", "
+								  + std::to_string( v[ i ].z ) + ")";
+						if( i < v.size() - 1 )
+							result += ", ";
+					}
+					result += "]";
+					return result;
+				}
+			};
+
+			return std::visit( Visitor{}, value );
+		}
 	};
 
 	typedef std::pair< Guid, Property::Variant > Definition;
@@ -448,6 +539,30 @@ namespace gie
 		void eraseAll()										override { _entities.clear(); }
 
 		Property* createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false )	override;
+
+		// Return all string hashes of property names, optionally including the ones from parents
+		std::set< StringHash > propertyNameHashes( bool accumulative = false ) const
+		{
+			std::set< StringHash > hashes;
+
+			// Add property hashes from current Blackboard
+			for( const auto& [ guid, property ] : _properties )
+			{
+				hashes.insert( property.hash() );
+			}
+
+			if( accumulative )
+			{
+				// Recursively add property hashes from the parent Blackboard, if it exists
+				if( _parent )
+				{
+					auto parentHashes = _parent->propertyNameHashes();
+					hashes.insert( parentHashes.begin(), parentHashes.end() );
+				}
+			}
+
+			return hashes;
+		}  
 	};
 
 	inline Entity* Blackboard::createEntity()

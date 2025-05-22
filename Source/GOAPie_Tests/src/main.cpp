@@ -2,7 +2,7 @@
 #include <cstdlib>
 #include <vector>
 
-#include <goapie.h>
+#include <goapie_main.h>
 
 #include "example.h"
 

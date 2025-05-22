@@ -208,6 +208,42 @@ void drawWorldViewWindow()
 	ImGui::End();
 }
 
+void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )  
+{  
+if( !simulation )  
+	return;  
+
+if( ImGui::Begin( "Blackboard Properties" ) )  
+{  
+	const gie::Blackboard* currentContext = &simulation->context();  
+	int level = 0;  
+
+	auto& stringregister = gie::stringRegister();  
+
+	while( currentContext )  
+	{  
+		ImGui::Text( "Blackboard Level: %d", level );  
+		ImGui::Separator();  
+
+		ImGui::Columns( 2, nullptr, false ); // Create two columns  
+		for( const auto& [ propertyGuid, property ] : currentContext->properties() )  
+		{  
+			auto propertyName = stringregister.get( property.hash() );  
+			ImGui::Text( "%s", propertyName.data() );  
+			ImGui::NextColumn();  
+			ImGui::Text( "%s", property.toString().c_str() );  
+			ImGui::NextColumn();  
+		}  
+		ImGui::Columns( 1 ); // Reset to single column  
+
+		currentContext = currentContext->parent();  
+		level++;  
+		ImGui::Separator();  
+	}  
+}  
+ImGui::End();  
+}
+
 void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& params )
 {
 	gie::World& world = params.world;
@@ -285,6 +321,8 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 			{
 				ImGui::Text( "No simulation nodes available." );
 			}
+
+			drawBlackboardPropertiesWindow( selectedSim );
 		}
 	}
 	ImGui::End();
