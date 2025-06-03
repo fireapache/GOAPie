@@ -2,7 +2,7 @@
 
 #include "example.h"
 
-extern void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions, gie::StringRegister& stringRegister );
+extern void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions );
 
 int openDoor( ExampleParameters& params )
 {
@@ -30,84 +30,11 @@ int openDoor( ExampleParameters& params )
 	agentEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
 	doorEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 1.f } );
 
-	// creating string register to point string hashes back to strings
-	static gie::StringRegister stringRegister;
-
 	// defining a move action to be used by open door action
-	class MoveAction : public gie::Action
-	{
-	public:
-
-		// inheriting constructors
-		using gie::Action::Action;
-
-		std::string_view name() const override { return "Move"; }
-		gie::StringHash hash() const override { return stringRegister.add( "Move" ); }
-
-		// defines how world context and agent are affected by this action
-		bool outcome( gie::Agent& agent ) override
-		{
-			// geting target location
-			gie::Guid targetLocationPptGuid = std::get< gie::Guid >( arguments().get( "TargetLocation" ) );
-			auto locationPpt = agent.world()->property( targetLocationPptGuid );
-			if( !locationPpt )
-			{
-				return false;
-			}
-
-			auto location = locationPpt->getVec3();
-			if( !location )
-			{
-				return false;
-			}
-
-			// updating agent world location
-			auto agentLocation = agent.property( "Location" );
-			if( !agentLocation )
-			{
-				return false;
-			}
-			
-			agentLocation->value = *location;
-
-			return true;
-		}
-	};
+	DEFINE_DUMMY_ACTION_CLASS( Move )
 
 	// defining action to open door
-	class OpenDoorAction : public gie::Action
-	{
-	public:
-		
-		// inheriting constructors
-		using gie::Action::Action;
-
-		gie::StringHash hash() const override { return stringRegister.add( "OpenDoor" ); }
-
-		// defines how world context and agent are affected by this action
-		bool outcome( gie::Agent& agent ) override
-		{
-			// updating agent opinion over world
-			gie::Guid openedPptGuid = std::get< gie::Guid >( arguments().get( "Opened" ) );
-			auto localPpt = agent.opinions().property( openedPptGuid );
-			if( localPpt )
-			{
-				localPpt->value = true;
-			}
-
-			// updating world property
-			auto globalPpt = agent.world()->property( openedPptGuid );
-			if( globalPpt )
-			{
-				globalPpt->value = true;
-			}
-
-			// all went good, outcome set properly
-			bool allGood = localPpt && globalPpt;
-
-			return allGood;
-		}
-	};
+	DEFINE_DUMMY_ACTION_CLASS( OpenDoor )
 
 	// defining simulator for action open door
 	class OpenDoorSimulator : public gie::ActionSimulator
@@ -115,22 +42,20 @@ int openDoor( ExampleParameters& params )
 	public:
 		
 		using gie::ActionSimulator::ActionSimulator;
-
-		std::string_view name() const override { return "OpenDoor"; }
-		gie::StringHash hash() const override { return stringRegister.add( "OpenDoor" ); }
+		gie::StringHash hash() const override { return gie::stringRegister().add( "OpenDoor" ); }
 
 		// define conditions for action
-		bool prerequisites( const gie::Simulation& simulation, const gie::SimAgent& agent, const gie::Goal& goal ) const override
+		bool evaluate( gie::EvaluateSimulationParams params ) const override
 		{
 			// checking if world context agent has property telling which door entity is the target
-			auto targetDoorEntityPpt = agent.worldContextAgent()->property( "TargetDoorEntity" );
+			auto targetDoorEntityPpt = params.agent.worldContextAgent()->property( "TargetDoorEntity" );
 			if( !targetDoorEntityPpt )
 			{
 				return false;
 			}
 
 			// checking if there is an actual door entity in the world
-			auto doorEntity = simulation.world()->entity( *targetDoorEntityPpt->getGuid() );
+			auto doorEntity = params.simulation.world()->entity( *targetDoorEntityPpt->getGuid() );
 			if( !doorEntity )
 			{
 				return false;
@@ -153,21 +78,21 @@ int openDoor( ExampleParameters& params )
 		}
 
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
-		bool simulate( gie::Simulation& simulation, gie::SimAgent& agent, const gie::Goal& goal ) const override
+		bool simulate( gie::SimulateSimulationParams params ) const override
 		{
 			// setting base cost as starting point
 			constexpr float baseCost = 10.f;
-			simulation.cost = baseCost;
+			params.simulation.cost = baseCost;
 
 			// checking if world context agent has property telling which door entity is the target
-			auto targetDoorEntityPpt = agent.worldContextAgent()->property( "TargetDoorEntity" );
+			auto targetDoorEntityPpt = params.agent.worldContextAgent()->property( "TargetDoorEntity" );
 			if( !targetDoorEntityPpt )
 			{
 				return false;
 			}
 
 			// checking if there is an actual door entity in the world
-			auto doorEntity = simulation.world()->entity( *targetDoorEntityPpt->getGuid() );
+			auto doorEntity = params.simulation.world()->entity( *targetDoorEntityPpt->getGuid() );
 			if( !doorEntity )
 			{
 				return false;
@@ -180,17 +105,17 @@ int openDoor( ExampleParameters& params )
 				return false;
 			}
 
-			simulation.context().property( openedPpt->guid() )->value = true;
+			params.simulation.context().property( openedPpt->guid() )->value = true;
 			
 			// adding distance cost in case there are location properties
 			auto doorLocationPpt = doorEntity->property( "Location" );
-			auto agentLocationPpt = agent.worldContextAgent()->property( "Location" );
+			auto agentLocationPpt = params.agent.worldContextAgent()->property( "Location" );
 			if( doorLocationPpt && agentLocationPpt )
 			{
 				const glm::vec3 doorLocation = std::get< glm::vec3 >( doorLocationPpt->value );
 				const glm::vec3 agentLocation = std::get< glm::vec3 >( agentLocationPpt->value );
 				const float dist = glm::distance( doorLocation, agentLocation );
-				simulation.cost += dist;
+				params.simulation.cost += dist;
 
 				// creating move action as door is far from agent
 				if( auto moveAction = std::make_shared< MoveAction >() )
@@ -198,7 +123,7 @@ int openDoor( ExampleParameters& params )
 					// passing target location as argument for action
 					moveAction->arguments().add( { gie::stringHasher( "TargetLocation" ), doorLocationPpt->guid() } );
 					// queueing move action
-					simulation.actions.emplace_back( moveAction );
+					params.simulation.actions.emplace_back( moveAction );
 				}
 			}
 
@@ -208,7 +133,7 @@ int openDoor( ExampleParameters& params )
 				// passing door entity as argument for action
 				openDoorAction->arguments().add( { gie::stringHasher( "DoorEntity" ), doorEntity->guid() } );
 				// queueing open door action
-				simulation.actions.emplace_back( openDoorAction );
+				params.simulation.actions.emplace_back( openDoorAction );
 				return true;
 			}
 
@@ -218,7 +143,7 @@ int openDoor( ExampleParameters& params )
 	};
 
 	// setting up planner passing goal and agent to reach the goal
-	planner.setup( goal, *agentEntity );
+	planner.simulate( goal, *agentEntity );
 
 	// defining available action and its simulator for planner
 	DEFINE_ACTION_SET_ENTRY( OpenDoor )
@@ -230,7 +155,7 @@ int openDoor( ExampleParameters& params )
 	planner.plan();
 
 	// printing planned actions
-	printPlannedActions( planner.planActions(), stringRegister );
+	printPlannedActions( planner.planActions() );
 
 	return 0;
 }

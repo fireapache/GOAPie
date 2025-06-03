@@ -15,6 +15,11 @@ namespace gie
 	public:
 		StringHash add( const std::string_view value )
 		{
+			if( value.empty() )
+			{
+				return InvalidStringHash;
+			}
+
 			StringHash key = static_cast< StringHash >( std::hash< std::string_view >{}( value ) );
 
 			// checking if it is already registered

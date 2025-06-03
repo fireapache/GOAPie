@@ -20,6 +20,7 @@ extern int visualization( ExampleParameters& params );
 void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& params );
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params );
 void drawWorldViewWindow();
+
 // used to print actions from simulation leaf nodes
 extern void printSimulatedActions( const gie::Planner& planner );
 

@@ -349,6 +349,7 @@ project "Tests"
 
 	filter "configurations:Debug"
 		symbols "On"
+		defines { "GIE_DEBUG" }
 		runtime "Debug"
 
 	filter "configurations:Release"

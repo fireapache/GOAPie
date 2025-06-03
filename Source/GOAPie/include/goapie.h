@@ -143,6 +143,10 @@ namespace gie
 				}
 				std::string operator()( float v ) const
 				{
+					if( v == std::numeric_limits< float >::max() )
+					{
+						return "MAX";
+					}
 					return std::to_string( v );
 				}
 				std::string operator()( const FloatVector& v ) const
@@ -150,7 +154,9 @@ namespace gie
 					std::string result = "[";
 					for( size_t i = 0; i < v.size(); ++i )
 					{
-						result += std::to_string( v[ i ] );
+						const float value = v[ i ];
+						const bool isMax = value == std::numeric_limits< float >::max();
+						result += isMax ? "MAX" : std::to_string( value );
 						if( i < v.size() - 1 )
 							result += ", ";
 					}
@@ -175,14 +181,17 @@ namespace gie
 				}
 				std::string operator()( const Guid& v ) const
 				{
-					return std::to_string( v );
+					auto strView = stringRegister().get( v );
+					return strView.empty() ? std::to_string( v ) : std::string{ strView };
 				}
 				std::string operator()( const GuidVector& v ) const
 				{
 					std::string result = "[";
 					for( size_t i = 0; i < v.size(); ++i )
 					{
-						result += std::to_string( v[ i ] );
+						Guid guid = v[ i ];
+						auto strView = stringRegister().get( guid );
+						result += strView.empty() ? std::to_string( guid ) : strView;
 						if( i < v.size() - 1 )
 							result += ", ";
 					}
@@ -224,10 +233,12 @@ namespace gie
 		Guid _guid{ NullGuid };
 		std::unordered_map< StringHash, Guid > _propertyGuids;
 		TagSet _tags;
+		StringHash _nameHash{ InvalidStringHash };
 		
 	public:
 		Entity() = delete;
-		Entity( class World* world ) noexcept : _world( world ), _guid( randGuid() ) { }
+		Entity( class World* world, std::string_view name = "" ) noexcept
+			: _world( world ), _guid( randGuid() ), _nameHash( stringHasher( name ) ) { }
 		Entity( const Entity& ) noexcept = default;
 		Entity( Entity&& ) noexcept = default;
 		~Entity() = default;
@@ -236,6 +247,8 @@ namespace gie
 		TagSet& tags() { return _tags; }
 		const TagSet& tags() const { return _tags; }
 		bool hasTag( Tag tag ) const { return _tags.find( tag ) != _tags.end(); }
+		const auto& properties() const { return _propertyGuids; }
+		auto nameHash() const { return _nameHash; }
 
 		// Register a property in data entity and world using its literal name.
 		// @param name: Property contextual name (e.g. "AmmoCount")
@@ -316,10 +329,10 @@ namespace gie
 	{
 	public:
 		// @return Pointer to a new agent entity.
-		virtual class Agent* createAgent() = 0;
+		virtual class Agent* createAgent( std::string_view name ) = 0;
 		virtual void removeAgent( const Guid guid ) = 0;
 		// @return Pointer to a new data entity.
-		virtual class Entity* createEntity() = 0;
+		virtual class Entity* createEntity( std::string_view name = "" ) = 0;
 		virtual void removeEntity( const Guid guid ) = 0;
 		// @return Pointer to a new (orphan) property.
 		// NOTE: it is not assigned to an entity!
@@ -525,8 +538,8 @@ namespace gie
 		void setParent( const Blackboard* parent ) { _parent = parent; }
 
 		// IDataEntityManager interface
-		class Agent* createAgent()							override;
-		Entity* createEntity()								override;
+		class Agent* createAgent( std::string_view name )	override;
+		Entity* createEntity( std::string_view name = "" )	override;
 		Property* property( const Guid guid )				override;
 		const Property* property( const Guid guid )	const	override;
 		Entity* entity( const Guid guid )					override;
@@ -565,9 +578,9 @@ namespace gie
 		}  
 	};
 
-	inline Entity* Blackboard::createEntity()
+	inline Entity* Blackboard::createEntity( std::string_view name )
 	{
-		Entity entity{ _world };
+		Entity entity{ _world, name };
 		auto result = _entities.emplace( entity.guid(), std::move( entity ) );
 		if( result.second )
 		{
@@ -691,18 +704,18 @@ namespace gie
 		const auto& properties() const { return _context.properties(); };
 
 		// IDataEntityManager interface
-		class Agent* createAgent()							override { return _context.createAgent(); };
-		void removeAgent( const Guid guid )					override { _context.removeAgent( guid ); };
-		Entity* createEntity()								override { return _context.createEntity(); };
-		void removeEntity( const Guid guid )				override { _context.removeEntity( guid ); };
-		void removeProperty( const Guid guid )				override { _context.removeProperty( guid ); };
-		void eraseAll()										override { _context.eraseAll(); };
-		Property* property( const Guid guid )				override { return  _context.property( guid ); }
-		const Property* property( const Guid guid ) const	override { return  _context.property( guid ); }
-		Entity* entity( const Guid guid )					override { return  _context.entity( guid ); }
-		const Entity* entity( const Guid guid ) const		override { return  _context.entity( guid ); }
-		class Agent* agent( const Guid guid )				override { return _context.agent( guid ); }
-		const class Agent* agent( const Guid guid ) const	override { return _context.agent( guid ); }
+		class Agent* createAgent( std::string_view name = "" )	override { return _context.createAgent( name ); };
+		void removeAgent( const Guid guid )						override { _context.removeAgent( guid ); };
+		Entity* createEntity( std::string_view name = "" )		override { return _context.createEntity( name ); };
+		void removeEntity( const Guid guid )					override { _context.removeEntity( guid ); };
+		void removeProperty( const Guid guid )					override { _context.removeProperty( guid ); };
+		void eraseAll()											override { _context.eraseAll(); };
+		Property* property( const Guid guid )					override { return  _context.property( guid ); }
+		const Property* property( const Guid guid ) const		override { return  _context.property( guid ); }
+		Entity* entity( const Guid guid )						override { return  _context.entity( guid ); }
+		const Entity* entity( const Guid guid ) const			override { return  _context.entity( guid ); }
+		class Agent* agent( const Guid guid )					override { return _context.agent( guid ); }
+		const class Agent* agent( const Guid guid ) const		override { return _context.agent( guid ); }
 
 		Property* createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false ) override
 		{
@@ -805,7 +818,8 @@ namespace gie
 
 	public:
 		Agent() = delete;
-		Agent( World* world ) : Entity::Entity( world ), _opinions( world, &world->context() ) { };
+		Agent( World* world, std::string_view name = "" )
+			: Entity::Entity( world, name ), _opinions( world, &world->context() ) { };
 		Agent( const Agent& agent ) = default;
 		Agent( Agent&& agent ) = default;
 		~Agent() = default;
@@ -840,9 +854,9 @@ namespace gie
 		return static_cast< const Agent* >( dataEntity );
 	}
 
-	inline Agent* Blackboard::createAgent()
+	inline Agent* Blackboard::createAgent( std::string_view name )
 	{
-		Agent agent{ _world };
+		Agent agent{ _world, name };
 		auto result = _entities.emplace( agent.guid(), std::move( agent ) );
 		if( result.second )
 		{
@@ -876,159 +890,37 @@ namespace gie
 
 	};
 
-	// Class representing a simulation of a performable action.
-	// It stores all information necessary for planner's A* algorithm.
-	// It also stores a list of actions to be performed by the agent,
-	// in case the simulation is chosed as a valid goal path.
-	class Simulation
+#if defined( GIE_DEBUG )
+	class DebugMessages
 	{
-		Guid _guid{ NullGuid };
-		Blackboard _context;
-		World* _world{ nullptr };
-		SimAgent _simAgent;
-
-		void _syncWorldTagSet( Tag entityTag )
-		{
-			auto& simulationTagRegister = context().entityTagRegister();
-			auto simulationTagSet = simulationTagRegister._tagSet( entityTag );
-			auto& worldTagRegister = world()->context().entityTagRegister();
-
-			if( auto worldTagSet = worldTagRegister.tagSet( entityTag ) )
-			{
-				// world context has tag set, copying it over to simulation context
-				simulationTagSet = simulationTagRegister._ensureTagSet( entityTag );
-				simulationTagRegister._copyTagSet( worldTagRegister, entityTag );
-			}
-			else
-			{
-				// create tag set in simulation context if none exist in world context
-				simulationTagSet = simulationTagRegister._ensureTagSet( entityTag );
-			}
-		}
+		std::vector< std::string > _messages;
 
 	public:
-		Simulation() = delete;
-		Simulation( World* world, const SimAgent& simAgent )
-			: _world( world ),
-			_guid( randGuid() ),
-			_context( world ),
-			_simAgent( simAgent ) { }
-
-		Simulation( Guid guid, World* world, const SimAgent& simAgent )
-			: _world( world ),
-			_guid( guid ),
-			_context( world, &world->context() ),
-			_simAgent( simAgent ) { }
-
-		Simulation( Guid guid, World* world, const Blackboard& parentContext, const SimAgent& simAgent )
-			: _world( world ),
-			_guid( guid ),
-			_context( parentContext ),
-			_simAgent( simAgent ) { }
-
-		Simulation( Simulation&& ) = default;
-		~Simulation() = default;
-
-		Guid guid() const { return _guid; }
-		const Blackboard& context() const { return _context; }
-		Blackboard& context() { return _context; }
-		World* world() { return _world; }
-		const World* world() const { return _world; }
-		SimAgent& agent() { return _simAgent; }
-		const SimAgent& agent() const { return _simAgent; }
-
-		float cost{ MaxCost };
-		Heuristic::Result heuristic{ InvalidHeuristic };
-		size_t depth{ 0 };
-
-		// comparison operator for std sorting
-		bool operator<( const Simulation& other ) const
+		DebugMessages() = default;
+		DebugMessages( const DebugMessages& ) = default;
+		DebugMessages( DebugMessages&& ) = default;
+		~DebugMessages() = default;
+		void add( std::string_view message )
 		{
-			return heuristic.value < other.heuristic.value;
+			_messages.emplace_back( message );
 		}
-
-		// for std sorting
-		static bool smallerThan( const Simulation* lhs, const Simulation* rhs )
+		const std::vector< std::string >* messages() const
 		{
-			return *lhs < *rhs;
+			return &_messages;
 		}
-
-		// Tag entity in simulation context.
-		void tag( Entity* entity, std::vector< Tag >& tags )
-		{
-			if( !entity )
-			{
-				return;
-			}
-
-			for( auto entityTag : tags )
-			{
-				auto& simulationTagRegister = context().entityTagRegister();
-				auto simulationTagSet = simulationTagRegister._tagSet( entityTag );
-
-				// no tag set in simulation context yet, need to check world context
-				if( !simulationTagSet )
-				{
-					_syncWorldTagSet( entityTag );
-				}
-
-				// tagging entity in simulation context
-				simulationTagRegister.tag( entity, { entityTag } );
-			}
-		}
-
-		// Untag entity in simulation context.
-		void untag( Entity* entity, std::vector< Tag >& tags )
-		{
-			if( !entity )
-			{
-				return;
-			}
-
-			for( auto entityTag : tags )
-			{
-				auto& simulationTagRegister = context().entityTagRegister();
-				auto simulationTagSet = simulationTagRegister._tagSet( entityTag );
-
-				// no tag set in simulation context yet, need to check world context
-				if( !simulationTagSet )
-				{
-					_syncWorldTagSet( entityTag );
-				}
-
-				// tagging entity in simulation context
-				simulationTagRegister.untag( entity, { entityTag } );
-			}
-		}
-
-		// Return set of entities with tag
-		const std::set< Guid >* tagSet( std::string_view tagName ) const
-		{
-			return tagSet( stringHasher( tagName ) );
-		}
-
-		// Return set of entities with tag
-		const std::set< Guid >* tagSet( Tag tag ) const
-		{
-			auto& simulationTagRegister = context().entityTagRegister();
-			const auto simulationTagSet = simulationTagRegister.tagSet( tag );
-
-			// no tag set in simulation context yet, need to check world context
-			if( !simulationTagSet )
-			{
-				return world()->context().entityTagRegister().tagSet( tag );
-			}
-
-			return simulationTagSet;
-		}
-
-		// Incoming simulation connections.
-		std::vector< Guid > incoming;
-		// Outgoing simulation connections.
-		std::vector< Guid > outgoing;
-		// Actions to be performed by agent.
-		std::vector< std::shared_ptr< class Action > > actions;
 	};
+#else
+	class DebugMessages
+	{
+		public:
+		DebugMessages() = default;
+		DebugMessages( const DebugMessages& ) = default;
+		DebugMessages( DebugMessages&& ) = default;
+		~DebugMessages() = default;
+		void add( std::string_view ) { }
+		const std::vector< std::string >* messages() const { return nullptr; }
+	};
+#endif
 
 	typedef Property::Variant ArgumentType;
 	typedef std::pair< StringHash, ArgumentType > NamedArgument;
@@ -1101,9 +993,32 @@ namespace gie
 
 		~NamedArguments() = default;
 
-		void add( const NamedArgument newArgument )
+		bool empty() const
 		{
-			_arguments.emplace( newArgument );
+			return _arguments.empty();
+		}
+
+		auto& storage()
+		{
+			return _arguments;
+		}
+
+		const auto& storage() const
+		{
+			return _arguments;
+		}
+
+		void add( const NamedArgument& newArgument )
+		{
+			auto itr = _arguments.find( newArgument.first );
+			if( itr != _arguments.end() )
+			{
+				itr->second = newArgument.second; // Assign if found
+			}
+			else
+			{
+				_arguments.emplace( newArgument ); // Insert if not found
+			}
 			updateType();
 		}
 
@@ -1122,27 +1037,142 @@ namespace gie
 			updateType();
 		}
 
-		ArgumentType get( std::string_view name ) const
+		void add( std::string_view name, ArgumentType value )
+		{
+			add( NamedArgument{ stringHasher( name ), value } );
+		}
+
+		const ArgumentType* get( std::string_view name ) const
 		{
 			return get( stringHasher( name.data() ) );
 		}
 
-		ArgumentType get( const char* name ) const
+		const ArgumentType* get( const char* name ) const
 		{
 			return get( stringHasher( name ) );
 		}
 
-		ArgumentType get( const StringHash hash ) const
+		const ArgumentType* get( const StringHash hash ) const
 		{
 			for( const auto& argument : _arguments )
 			{
 				if( argument.first == hash )
 				{
-					return argument.second;
+					return &argument.second;
 				}
 			}
-			return ArgumentType();
+			return nullptr;
 		}
+
+		ArgumentType* get( std::string_view name )
+		{
+			return get( stringHasher( name.data() ) );
+		}
+
+		ArgumentType* get( const char* name )
+		{
+			return get( stringHasher( name ) );
+		}
+
+		ArgumentType* get( const StringHash hash )
+		{
+			for( auto& argument : _arguments )
+			{
+				if( argument.first == hash )
+				{
+					return &argument.second;
+				}
+			}
+			return nullptr;
+		}
+	};
+
+	// Class representing a simulation of a performable action.
+	// It stores all information necessary for planner's A* algorithm.
+	// It also stores a list of actions to be performed by the agent,
+	// in case the simulation is chosed as a valid goal path.
+	class Simulation
+	{
+		friend class Planner;
+
+		Guid _guid{ NullGuid };
+		Blackboard _context;
+		World* _world{ nullptr };
+		SimAgent _simAgent;
+		NamedArguments _arguments;
+		DebugMessages _debugMessages;
+
+	public:
+		Simulation() = delete;
+		Simulation( Guid guid, World* world, const Blackboard* parentContext, const SimAgent& simAgent )
+			: _world( world ),
+			_guid( guid ),
+			_context( world, parentContext ),
+			_simAgent( simAgent ) { }
+
+		Simulation( Simulation&& ) = default;
+		~Simulation() = default;
+
+		Guid guid() const { return _guid; }
+
+		const Blackboard& context() const { return _context; }
+		Blackboard& context() { return _context; }
+
+		World* world() { return _world; }
+		const World* world() const { return _world; }
+
+		SimAgent& agent() { return _simAgent; }
+		const SimAgent& agent() const { return _simAgent; }
+
+		DebugMessages& debugMessages() { return _debugMessages; }
+		const DebugMessages& debugMessages() const { return _debugMessages; }
+
+		NamedArguments& arguments() { return _arguments; }
+		const NamedArguments& arguments() const { return _arguments; }
+
+		float cost{ MaxCost };
+		Heuristic::Result heuristic{ InvalidHeuristic };
+		size_t depth{ 0 };
+
+		// comparison operator for std sorting
+		bool operator<( const Simulation& other ) const
+		{
+			return heuristic.value < other.heuristic.value;
+		}
+
+		// for std sorting
+		static bool smallerThan( const Simulation* lhs, const Simulation* rhs )
+		{
+			return *lhs < *rhs;
+		}
+
+		// Return set of entities with tag
+		const std::set< Guid >* tagSet( std::string_view tagName ) const
+		{
+			return tagSet( stringHasher( tagName ) );
+		}
+
+		// Return set of entities with tag
+		const std::set< Guid >* tagSet( Tag tag ) const
+		{
+			auto& simulationTagRegister = context().entityTagRegister();
+			const auto simulationTagSet = simulationTagRegister.tagSet( tag );
+
+			// no tag set in simulation context yet, need to check world context
+			if( !simulationTagSet )
+			{
+				return world()->context().entityTagRegister().tagSet( tag );
+			}
+
+			return simulationTagSet;
+		}
+
+		// Incoming simulation connections.
+		std::vector< Guid > incoming;
+		// Outgoing simulation connections.
+		std::vector< Guid > outgoing;
+		// Actions to be performed by agent.
+		std::vector< std::shared_ptr< class Action > > actions;
 	};
 
 	// Class representing an action to be performed by an agent.
@@ -1159,7 +1189,7 @@ namespace gie
 		Action( NamedArguments&& arguments ) : _arguments( std::move( arguments ) ) {  };
 		~Action() = default;
 
-		virtual std::string_view name() const { return ""; }
+		virtual std::string_view name() const { return stringRegister().get( hash() ); }
 		virtual StringHash hash() const { return UndefinedName; }
 
 		NamedArguments& arguments() { return _arguments; }
@@ -1173,16 +1203,86 @@ namespace gie
 			Done
 		};
 
-		// @Return True when outcome was set property, False otherwise.
-		virtual bool outcome( Agent& agent ) { return false; };
-
 		// Cycle of execution of action.
 		// @Return Current state of execution.
 		virtual State tick( Agent& agent ) { return State::Done; };
 	};
 
-	// Simulates an outcome of an action. It alters a simulation object
-	// containing current world definition.
+	struct EvaluateSimulationParams
+	{
+	private:
+		// Debug messages for simulation.
+		DebugMessages* debugMessages;
+		// Debug messages for simulation.
+		NamedArguments& namedArguments;
+
+	public:
+		// Agent which is performing action.
+		const SimAgent& agent;
+		// Simulation context.
+		const Simulation& simulation;
+		// Goal which is being achieved.
+		const class Goal& goal;
+
+		EvaluateSimulationParams(
+			Simulation& simulation,
+			const SimAgent& agent,
+			const Goal& goal )
+			: simulation( simulation )
+			, agent( agent )
+			, goal( goal )
+			, debugMessages( &simulation.debugMessages() )
+			, namedArguments( simulation.arguments() )
+		{
+		}
+
+		void addDebugMessage( std::string_view message )
+		{
+			if( debugMessages )
+			{
+				debugMessages->add( message );
+			}
+		}
+
+		NamedArguments& arguments()
+		{
+			return namedArguments;
+		}
+	};
+
+	struct SimulateSimulationParams
+	{
+
+	public:
+		// Agent which is performing action.
+		SimAgent& agent;
+		// Simulation context.
+		Simulation& simulation;
+		// Goal which is being achieved.
+		const Goal& goal;
+		SimulateSimulationParams(
+			Simulation& simulation,
+			SimAgent& agent,
+			const Goal& goal )
+			: simulation( simulation )
+			, agent( agent )
+			, goal( goal )
+		{
+		}
+
+		void addDebugMessage( std::string_view message )
+		{
+			simulation.debugMessages().add( message );
+		}
+
+		NamedArguments& arguments()
+		{
+			return simulation.arguments();
+		}
+	};
+
+	struct CalculateHeuristicParams : public SimulateSimulationParams {};
+
 	class ActionSimulator
 	{
 		NamedArguments _arguments{ };
@@ -1200,20 +1300,20 @@ namespace gie
 
 		~ActionSimulator() = default;
 
-		virtual std::string_view name() const { return ""; }
+		std::string_view name() const { return stringRegister().get( hash() ); }
 		virtual StringHash hash() const { return UndefinedName; }
 
 		NamedArguments& arguments() { return _arguments; }
 		const NamedArguments& arguments() const { return _arguments; }
 
-		// @Return True in case simulation context meets prerequisites, False otherwise.
-		virtual bool prerequisites( const Simulation& simulation, const SimAgent& agent, const class Goal& goal ) const { return false; }
+		// @Return True in case context meets prerequisites, False otherwise.
+		virtual bool evaluate( EvaluateSimulationParams params ) const { return false; }
 
-		// @Return True if simulation done successfuly, False otherwise.
-		virtual bool simulate( Simulation& simulation, SimAgent& agent, const class Goal& goal ) const { return false; }
+		// @Return True if simulation setup was done successfuly, False otherwise.
+		virtual bool simulate( SimulateSimulationParams params ) const { return false; }
 
 		// Calculates heuristc value for simulation.
-		virtual void calculateHeuristic( Simulation& simulation, const SimAgent& agent, const class Goal& goal ) const {}
+		virtual void calculateHeuristic( CalculateHeuristicParams params ) const {}
 
 	};
 
@@ -1260,6 +1360,14 @@ namespace gie
 		virtual StringHash hash() const { return InvalidStringHash; }
 		virtual std::shared_ptr< ActionSimulator > simulator( const NamedArguments& arguments ) const { return nullptr; };
 		virtual std::shared_ptr< Action > action( const NamedArguments& arguments ) const { return nullptr; };
+	};
+
+	// Macro for action class generation.
+#define DEFINE_DUMMY_ACTION_CLASS( ActionName ) \
+	class ActionName##Action : public gie::Action \
+	{ \
+		using gie::Action::Action; \
+		gie::StringHash hash() const override{ return gie::stringHasher( #ActionName ); } \
 	};
 
 	// Macro for action set entry class generation.
@@ -1319,7 +1427,7 @@ namespace gie
 		bool isReady() const { return ready; }
 		const Simulation* rootSimulation() const { return _rootSimulation; }
 
-		void setup( Goal& goal, Agent& agent )
+		void simulate( Goal& goal, Agent& agent )
 		{
 			_goal = &goal;
 			_agent = &agent;
@@ -1338,7 +1446,7 @@ namespace gie
 			_rootSimulation = nullptr;
 			Guid newRandGuid{ randGuid() };
 			Simulation* newSimulation{ nullptr };
-			Simulation sim( newRandGuid, world(), SimAgent( agent ) );
+			Simulation sim( newRandGuid, world(), &world()->context(), SimAgent( agent ) );
 			auto empl = _simulations.emplace( newRandGuid, std::move( sim ) );
 			if( empl.second )
 			{
@@ -1362,7 +1470,7 @@ namespace gie
 
 			if( currentSimulation )
 			{
-				Simulation sim( newRandGuid, world(), currentSimulation->context(), currentSimulation->agent() );
+				Simulation sim( newRandGuid, world(), currentSimulation->context().parent(), currentSimulation->agent() );
 				auto empl = _simulations.emplace( newRandGuid, std::move( sim ) );
 				if( empl.second )
 				{
@@ -1531,12 +1639,12 @@ namespace gie
 				continue;
 			}
 
-			if( printSteps ) _logContent.append( "Checking prerequisites.\n" );
+			if( printSteps ) _logContent.append( "Checking evaluate.\n" );
 
 			// checking if current simulation context meets action's conditions
-			if( !actionSimulator->prerequisites( *baseSimulation, baseSimulation->agent(), *goal() ) )
+			if( !actionSimulator->evaluate( { *baseSimulation, baseSimulation->agent(), *goal() } ) )
 			{
-				if( printSteps ) _logContent.append( "Failed on prerequisites, skipping action.\n" );
+				if( printSteps ) _logContent.append( "Failed on evaluate, skipping action.\n" );
 				continue;
 			}
 
@@ -1548,7 +1656,7 @@ namespace gie
 			if( printSteps ) _logContent.append( "Simulating action.\n" );
 
 			// running action simulation on new node
-			bool simulationSuccess = actionSimulator->simulate( *newSimulation, newSimulation->agent(), *goal() );
+			bool simulationSuccess = actionSimulator->simulate( { *newSimulation, newSimulation->agent(), *goal() } );
 
 			// removing new node in case simulation has failed
 			if( !simulationSuccess )

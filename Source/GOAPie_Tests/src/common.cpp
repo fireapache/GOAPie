@@ -49,14 +49,13 @@ void printSimulatedActions( const gie::Planner& planner )
 }
 
 void printPlannedActions(
-	const std::vector< std::shared_ptr< gie::Action > >& plannedActions,
-	gie::StringRegister& stringRegister )
+	const std::vector< std::shared_ptr< gie::Action > >& plannedActions )
 {
 	for( auto action : plannedActions )
 	{
 		if( action )
 		{
-			auto registeredString = stringRegister.get( action->hash() );
+			auto registeredString = gie::stringRegister().get( action->hash() );
 			if( !registeredString.empty() )
 			{
 				std::cout << registeredString << std::endl;

@@ -208,40 +208,112 @@ void drawWorldViewWindow()
 	ImGui::End();
 }
 
-void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )  
+void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, const bool padding = false )
+{
+	auto nameHash = entity.nameHash();
+	const bool isValidName = nameHash != gie::InvalidStringHash;
+	const std::string_view entityName = isValidName ? gie::stringRegister().get( nameHash ) : "Unnamed Entity";
+
+	if( padding )
+	{
+		ImGui::SetCursorPosX( ( ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize( entityName.data() ).x ) * 0.225f );
+	}
+
+	if( isValidName )
+	{
+		ImGui::Text( "%s", entityName.data() );
+	}
+	else
+	{
+		ImGui::Text( "%llu", static_cast< unsigned long long >( entityGuid ) );
+	}
+}
+
+void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )
 {  
-if( !simulation )  
-	return;  
+   if( !simulation )  
+       return;  
 
-if( ImGui::Begin( "Blackboard Properties" ) )  
-{  
-	const gie::Blackboard* currentContext = &simulation->context();  
-	int level = 0;  
+   const gie::Blackboard* currentContext = &simulation->context();
+   std::set< gie::Guid > entityGuids;
+   const auto& stringregister = gie::stringRegister();
 
-	auto& stringregister = gie::stringRegister();  
+   while( currentContext )
+   {
+	   for( const auto& [ entityGuid, entity ] : currentContext->entities() )
+	   {
+		   entityGuids.insert( entityGuid );
+	   }
 
-	while( currentContext )  
-	{  
-		ImGui::Text( "Blackboard Level: %d", level );  
-		ImGui::Separator();  
+	   currentContext = currentContext->parent();
+   }
 
-		ImGui::Columns( 2, nullptr, false ); // Create two columns  
-		for( const auto& [ propertyGuid, property ] : currentContext->properties() )  
-		{  
-			auto propertyName = stringregister.get( property.hash() );  
-			ImGui::Text( "%s", propertyName.data() );  
-			ImGui::NextColumn();  
-			ImGui::Text( "%s", property.toString().c_str() );  
-			ImGui::NextColumn();  
-		}  
-		ImGui::Columns( 1 ); // Reset to single column  
+   static bool multiLevel = false;
 
-		currentContext = currentContext->parent();  
-		level++;  
-		ImGui::Separator();  
-	}  
-}  
-ImGui::End();  
+   if( ImGui::Begin( "Blackboard Properties" ) )  
+   {  
+       currentContext = &simulation->context();
+	   ImGui::Checkbox( "Multi-Level", &multiLevel );
+
+	   if( multiLevel )
+	   {
+		   int level = 0;
+
+		   while( currentContext )
+		   {
+			   ImGui::Text( "Blackboard Level: %d", level );
+			   ImGui::Separator();
+
+			   for( const auto& [ entityGuid, entity ] : currentContext->entities() )
+			   {
+				   drawEntityNameText( entity, entityGuid, true );
+				   ImGui::Separator();
+
+				   ImGui::Columns( 2, nullptr, false ); // Create two columns
+				   for( const auto& [ propertyNameHash, propertyGuid ] : entity.properties() )
+				   {
+					   auto propertyName = stringregister.get( propertyNameHash );
+					   auto property = currentContext->property( propertyGuid );
+					   ImGui::Text( "%s", propertyName.data() );
+					   ImGui::NextColumn();
+					   ImGui::Text( "%s", property->toString().c_str() );
+					   ImGui::NextColumn();
+				   }
+				   ImGui::Columns( 1 ); // Reset to single column
+				   ImGui::Separator();
+			   }
+
+			   currentContext = currentContext->parent();
+			   level++;
+			   ImGui::Separator();
+		   }
+	   }
+	   else
+	   {
+		   for( auto entityGuid : entityGuids )
+		   {
+			   auto entity = currentContext->entity( entityGuid );
+			   
+			   drawEntityNameText( *entity, entityGuid, true );
+			   ImGui::Separator();
+
+			   ImGui::Columns( 2, nullptr, false ); // Create two columns
+			   for( const auto& [ propertyNameHash, propertyGuid ] : entity->properties() )
+			   {
+				   auto propertyName = stringregister.get( propertyNameHash );
+				   auto property = currentContext->property( propertyGuid );
+				   ImGui::Text( "%s", propertyName.data() );
+				   ImGui::NextColumn();
+				   ImGui::Text( "%s", property->toString().c_str() );
+				   ImGui::NextColumn();
+			   }
+			   ImGui::Columns( 1 ); // Reset to single column
+			   ImGui::Separator();
+		   }
+	   }
+	   
+   }  
+   ImGui::End();  
 }
 
 void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& params )
@@ -328,10 +400,73 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 	ImGui::End();
 }
 
+void drawDebugMessagesWindow( ExampleParameters& params )
+{
+	const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
+
+	if( !selectedSimulation )
+	{
+		return;
+	}
+
+	const auto& debugMessages = selectedSimulation->debugMessages();
+
+	if( ImGui::Begin( "Debug Messages" ) )
+	{
+		if( !debugMessages.messages() || debugMessages.messages()->empty() )
+		{
+			ImGui::Text( "No debug messages available." );
+		}
+		else
+		{
+			for( const auto& message : *debugMessages.messages() )
+			{
+				ImGui::Text( "* %s", message.c_str() );
+			}
+		}
+	}
+	ImGui::End();
+}  
+
+void drawSimulationArgumentsWindow( ExampleParameters& params )
+{  
+	const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
+
+	if( !selectedSimulation )
+		return;
+
+	const auto& arguments = selectedSimulation->arguments();
+
+	if( ImGui::Begin( "Simulation Arguments" ) )
+	{
+		if( arguments.empty() )
+		{
+			ImGui::Text( "No arguments available." );
+		}
+		else
+		{
+			for( const auto& [ key, value ] : arguments.storage() )
+			{
+				// using property to access toString function for variant.
+				// This is a workaround since NamedArguments does not have a toString method.
+				// TODO: This should be replaced with a more robust solution in the future.
+				gie::Property ppt( 0, 0 );
+				ppt.value = value;
+				ImGui::Text( "Key: %s", gie::stringRegister().get( key ).data() );
+				ImGui::Text( "Value: %s", ppt.toString().c_str() );
+				ImGui::Separator();
+			}
+		}
+	}
+	ImGui::End();
+}  
+
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
 {
 	drawGoapieVisualizationWindow( useHeuristics, params );
 	drawWorldViewWindow();
+	drawDebugMessagesWindow( params );
+	drawSimulationArgumentsWindow( params );
 }
 
 void drawLinks(
