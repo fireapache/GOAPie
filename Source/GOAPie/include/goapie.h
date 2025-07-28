@@ -249,6 +249,7 @@ namespace gie
 		bool hasTag( Tag tag ) const { return _tags.find( tag ) != _tags.end(); }
 		const auto& properties() const { return _propertyGuids; }
 		auto nameHash() const { return _nameHash; }
+		void setContext( Blackboard* context ) { _context = context; }
 
 		// Register a property in data entity and world using its literal name.
 		// @param name: Property contextual name (e.g. "AmmoCount")
@@ -667,6 +668,10 @@ namespace gie
 			if( parentEntity )
 			{
 				auto copiedEntity = _entities.emplace( guid, *parentEntity );
+				if( copiedEntity.second )
+				{
+					copiedEntity.first->second.setContext( this ); // Set the context to this Blackboard
+				}
 				return copiedEntity.second ? &copiedEntity.first->second : nullptr;
 			}
 		}
@@ -734,7 +739,7 @@ namespace gie
 
 	inline Property* Entity::property( StringHash hash )
 	{
-		if( !_world )
+		if( !_context )
 		{
 			return nullptr;
 		}
@@ -749,18 +754,14 @@ namespace gie
 		}
 
 		// getting actual property
-		const auto propertyItr = _world->properties().find( propertyGuid->second );
-		if( propertyItr == _world->properties().end() )
-		{
-			return nullptr;
-		}
+		const auto propertyPtr = _context->property( propertyGuid->second );
 
-		return &( propertyItr->second );
+		return propertyPtr;
 	}
 
 	inline const Property* Entity::property( StringHash hash ) const
 	{
-		if( !_world )
+		if( !_context )
 		{
 			return nullptr;
 		}
@@ -775,18 +776,14 @@ namespace gie
 		}
 
 		// getting actual property
-		const auto propertyItr = _world->properties().find( propertyGuid->second );
-		if( propertyItr == _world->properties().end() )
-		{
-			return nullptr;
-		}
+		const auto propertyPtr = _context->property( propertyGuid->second );
 
-		return &( propertyItr->second );
+		return propertyPtr;
 	}
 
 	inline Property* Entity::createProperty( StringHash nameHash )
 	{
-		if( !_world )
+		if( !_context )
 		{
 			return nullptr;
 		}
@@ -799,22 +796,22 @@ namespace gie
 		
 		// registering new property
 		Guid newRandGuid{ randGuid() };
-		auto emplaceResult = _world->properties().emplace( newRandGuid, std::move( Property{ newRandGuid, _guid, nameHash } ) );
+		auto emplaceResult = _context->createProperty( newRandGuid, nameHash, _guid );
 
-		if( !emplaceResult.second )
+		if( !emplaceResult )
 		{
 			return nullptr;
 		}
 
 		// mapping property hash to property guid
-		auto registeredPropertyGuid = _propertyGuids.emplace( nameHash, emplaceResult.first->first );
+		auto registeredPropertyGuid = _propertyGuids.emplace( nameHash, newRandGuid );
 		if( registeredPropertyGuid.second )
 		{
-			return &( emplaceResult.first->second );
+			return emplaceResult;
 		}
 
 		// erasing property in case its guid could not be registered in data entity
-		_world->properties().erase( emplaceResult.first->first );
+		_context->properties().erase( newRandGuid );
 
 		return nullptr;
 	}
@@ -1480,7 +1477,7 @@ namespace gie
 
 			if( currentSimulation )
 			{
-				Simulation sim( newRandGuid, world(), currentSimulation->context().parent(), currentSimulation->agent() );
+				Simulation sim( newRandGuid, world(), &currentSimulation->context(), currentSimulation->agent() );
 				auto empl = _simulations.emplace( newRandGuid, std::move( sim ) );
 				if( empl.second )
 				{
