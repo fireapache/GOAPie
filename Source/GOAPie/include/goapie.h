@@ -234,11 +234,11 @@ namespace gie
 		std::unordered_map< StringHash, Guid > _propertyGuids;
 		TagSet _tags;
 		StringHash _nameHash{ InvalidStringHash };
+		class Blackboard* _context = nullptr;
 		
 	public:
 		Entity() = delete;
-		Entity( class World* world, std::string_view name = "" ) noexcept
-			: _world( world ), _guid( randGuid() ), _nameHash( stringHasher( name ) ) { }
+		Entity( class World* world, std::string_view name = "", Blackboard* context = nullptr ) noexcept;
 		Entity( const Entity& ) noexcept = default;
 		Entity( Entity&& ) noexcept = default;
 		~Entity() = default;
@@ -332,7 +332,7 @@ namespace gie
 		virtual class Agent* createAgent( std::string_view name ) = 0;
 		virtual void removeAgent( const Guid guid ) = 0;
 		// @return Pointer to a new data entity.
-		virtual class Entity* createEntity( std::string_view name = "" ) = 0;
+		virtual class Entity* createEntity( std::string_view name = "", Blackboard* context = nullptr ) = 0;
 		virtual void removeEntity( const Guid guid ) = 0;
 		// @return Pointer to a new (orphan) property.
 		// NOTE: it is not assigned to an entity!
@@ -539,7 +539,7 @@ namespace gie
 
 		// IDataEntityManager interface
 		class Agent* createAgent( std::string_view name )	override;
-		Entity* createEntity( std::string_view name = "" )	override;
+		Entity* createEntity( std::string_view name = "", Blackboard* context = nullptr ) override;
 		Property* property( const Guid guid )				override;
 		const Property* property( const Guid guid )	const	override;
 		Entity* entity( const Guid guid )					override;
@@ -578,9 +578,9 @@ namespace gie
 		}  
 	};
 
-	inline Entity* Blackboard::createEntity( std::string_view name )
+	inline Entity* Blackboard::createEntity( std::string_view name, Blackboard* context )
 	{
-		Entity entity{ _world, name };
+		Entity entity{ _world, name, context };
 		auto result = _entities.emplace( entity.guid(), std::move( entity ) );
 		if( result.second )
 		{
@@ -663,7 +663,7 @@ namespace gie
 		// the entity over from parent if it exists
 		if( parent() )
 		{
-			auto parentEntity = parent()->entity( guid );
+			const auto parentEntity = parent()->entity( guid );
 			if( parentEntity )
 			{
 				auto copiedEntity = _entities.emplace( guid, *parentEntity );
@@ -706,7 +706,7 @@ namespace gie
 		// IDataEntityManager interface
 		class Agent* createAgent( std::string_view name = "" )	override { return _context.createAgent( name ); };
 		void removeAgent( const Guid guid )						override { _context.removeAgent( guid ); };
-		Entity* createEntity( std::string_view name = "" )		override { return _context.createEntity( name ); };
+		Entity* createEntity( std::string_view name = "", Blackboard* context = nullptr )		override { return _context.createEntity( name, context ); };
 		void removeEntity( const Guid guid )					override { _context.removeEntity( guid ); };
 		void removeProperty( const Guid guid )					override { _context.removeProperty( guid ); };
 		void eraseAll()											override { _context.eraseAll(); };
@@ -723,6 +723,14 @@ namespace gie
 		};
 
 	};
+
+	inline Entity::Entity( World* world, std::string_view name, Blackboard* context ) noexcept
+		: _world( world )
+		, _guid( randGuid() )
+		, _nameHash( stringHasher( name ) )
+		, _context( context ? context : ( world ? &world->context() : nullptr ) )
+	{
+	}
 
 	inline Property* Entity::property( StringHash hash )
 	{
@@ -1393,7 +1401,9 @@ namespace gie
 	// figuring out most effective action path towards goal.
 	class Planner
 	{
-		std::vector< std::shared_ptr< ActionSetEntry > > _actionSet;
+		using ActionSetType = std::vector< std::shared_ptr< ActionSetEntry > >;
+
+		ActionSetType _actionSet;
 		std::unordered_map< Guid, Simulation > _simulations;
 		std::vector< std::shared_ptr< Action > > _planActions;
 		Simulation* _rootSimulation{ nullptr };
@@ -1402,7 +1412,6 @@ namespace gie
 		bool _useHeuristics{ false };
 		std::string _logContent{ "" };
 		size_t _depthLimit{ 10 };
-		bool ready{ true };
 
 		// simulation which reached goal
 		Guid _goalSimulationGuid{ NullGuid };
@@ -1424,8 +1433,9 @@ namespace gie
 		Goal* goal() const { return _goal; }
 		Agent* agent() const { return _agent; }
 		auto& actionSet() { return _actionSet; }
-		bool isReady() const { return ready; }
+		bool isReady() const { return planStage == PlanStage::Idle || planStage == PlanStage::Done; }
 		const Simulation* rootSimulation() const { return _rootSimulation; }
+		const std::string& logContent() const { return _logContent; }
 
 		void simulate( Goal& goal, Agent& agent )
 		{
@@ -1512,21 +1522,107 @@ namespace gie
 
 		const auto& simulations() const { return _simulations; }
 
-		void plan( bool useHeuristic = false )
-		{
-			ready = false;
-			_useHeuristics = useHeuristic;
-			simulate();
-			backtrack();
-			ready = true;
-		}
+		void plan( bool useHeuristic = false );
 
+		enum class PlanStage : uint8_t
+		{
+			Idle,
+			Simulating,
+			Backtracking,
+			Done
+		};
+
+		enum class SimulateStage : uint8_t
+		{
+			Idle,
+			Initializing,
+			ExpandingNode,
+			Done
+		};
+
+		enum class ExpandNodeStage : uint8_t
+		{
+			Idle,
+			Initializing,
+			Expanding,
+			Done
+		};
+
+	private:
+		PlanStage planStage{ PlanStage::Idle };
+		SimulateStage simulateStage{ SimulateStage::Idle };
+		ExpandNodeStage expandNodeStage{ ExpandNodeStage::Idle };
+		bool step{ true };
+		bool logSteps{ true };
+		std::vector< Simulation* >::iterator openedNodesItr{};
+		std::vector< Simulation* > openedNodes{};
+		std::vector< Simulation* > newNodes{};
+		Simulation* baseSimulation{ nullptr };
+		ActionSetType::iterator actionSetItr{};
+		std::shared_ptr< ActionSetEntry > actionSetEntry{ nullptr };
+		std::shared_ptr< ActionSimulator > actionSimulator{ nullptr };
+		std::pair< Guid, Simulation* > newSimulationPair{ NullGuid, nullptr };
+
+	public:
+		bool& logStepsMutator() { return logSteps; }
+		bool& stepMutator() { return step; }
 	};
 
-	constexpr bool printSteps = false;
+#define SET_PLAN_STAGE( from, to ) \
+	if( planStage == Planner::PlanStage::from ) \
+	{ \
+		planStage = Planner::PlanStage::to; \
+	}
+
+#define SET_SIMULATE_STAGE( from, to ) \
+	if( simulateStage == Planner::SimulateStage::from ) \
+	{ \
+		simulateStage = Planner::SimulateStage::to; \
+	}
+
+#define SET_EXPANDNODE_STAGE( from, to ) \
+	if( expandNodeStage == Planner::ExpandNodeStage::from ) \
+	{ \
+		expandNodeStage = Planner::ExpandNodeStage::to; \
+	}
+
+	inline void Planner::plan( bool useHeuristic )
+	{
+		SET_PLAN_STAGE( Done, Idle );
+
+		if( planStage == PlanStage::Idle )
+		{
+			_useHeuristics = useHeuristic;
+			planStage = PlanStage::Simulating;
+		}
+
+		if( planStage == PlanStage::Simulating )
+		{
+			simulate();
+
+			if( simulateStage == SimulateStage::Done )
+			{
+				planStage = PlanStage::Backtracking;
+			}
+		}
+
+		if( planStage == PlanStage::Backtracking )
+		{
+			backtrack();
+			planStage = PlanStage::Done;
+		}
+	}
 
 	inline void Planner::simulate()
 	{
+		SET_SIMULATE_STAGE( Done, Idle );
+		SET_SIMULATE_STAGE( Idle, Initializing );
+
+		if( step && simulateStage == SimulateStage::ExpandingNode )
+		{
+			goto expandNodeLoop;
+		}
+
 		// validating world, agent and goal
 		if( !agent() || !world() || !goal() )
 		{
@@ -1540,35 +1636,38 @@ namespace gie
 
 		// logging
 		_logContent = "";
-		if( printSteps ) _logContent.append( "Planner::simulate() started!\n" );
-		if( printSteps ) _logContent.append( "Creating root simulation\n" );
+		if( logSteps ) _logContent.append( "Planner::simulate() started!\n" );
+		if( logSteps ) _logContent.append( "Creating root simulation\n" );
 
 		// creating root simulation node
-		auto [ rootSimulationGuid, rootSimulation ] = createRootSimulation( agent() );
-		if( !rootSimulation )
+		createRootSimulation( agent() );
+
+		if( !_rootSimulation )
 		{
 			return;
 		}
 
 		// starting search by expanding root node
-		std::vector< Simulation* > openedNodes{ rootSimulation };
+		openedNodes = { _rootSimulation };
 
-		if( printSteps ) _logContent.append( "Starting !openedNodes.empty() while loop.\n" );
+		if( logSteps ) _logContent.append( "Starting !openedNodes.empty() while loop.\n" );
+
+		SET_SIMULATE_STAGE( Initializing, ExpandingNode );
 
 		while( !openedNodes.empty() )
 		{
 			// simulation nodes created during this loop, to be added to opened nodes
-			std::vector< Simulation* > newNodes{ };
+			newNodes.clear();
 
 			if( _useHeuristics )
 			{
-				if( printSteps ) _logContent.append( "Expanding high priority node.\n" );
+				if( logSteps ) _logContent.append( "Expanding high priority node.\n" );
 
 				auto highPriorityOpenedNode = *openedNodes.end();
 				openedNodes.pop_back();
 				expandNode( highPriorityOpenedNode, newNodes );
 
-				if( printSteps ) _logContent.append( "Adding " ).append( std::to_string( newNodes.size() ) ).append( " new nodes (sorted).\n" );
+				if( logSteps ) _logContent.append( "Adding " ).append( std::to_string( newNodes.size() ) ).append( " new nodes (sorted).\n" );
 
 				for( auto newNode : newNodes )
 				{
@@ -1578,16 +1677,24 @@ namespace gie
 			}
 			else
 			{
-				if( printSteps ) _logContent.append( "Expanding all opened nodes.\n" );
+				if( logSteps ) _logContent.append( "Expanding all opened nodes.\n" );
 
+				openedNodesItr = openedNodes.begin();
+expandNodeLoop:
 				// go through all opened nodes
-				for( auto openedNodesItr : openedNodes )
+				while( openedNodesItr != openedNodes.end() )
 				{
-					expandNode( openedNodesItr, newNodes );
+					expandNode( *openedNodesItr, newNodes );
+
+					if( step && expandNodeStage != ExpandNodeStage::Done )
+					{
+						return;
+					}
+
 					// checking if last node satified goal
 					if( !newNodes.empty() && goal()->reached( *newNodes.back() ) )
 					{
-						if( printSteps ) _logContent.append( "Goal reached, stopping simulations!\n" );
+						if( logSteps ) _logContent.append( "Goal reached, stopping simulations!\n" );
 						// marking simulation which reached the goal for backtracking
 						_goalSimulationGuid = ( *newNodes.end() )->guid();
 						// no need to keep expanding nodes
@@ -1595,98 +1702,131 @@ namespace gie
 						openedNodes.clear();
 						break;
 					}
+					openedNodesItr++;
+					if( step ) return;
 				}
 
 				// setting next iteration
 				openedNodes = newNodes;
 			}
-
-			
 		}
 
-		std::cout << _logContent << std::endl;
-		
+		if( logSteps ) _logContent.append( "Simulation finished, no more opened nodes.\n" );
+
+		SET_SIMULATE_STAGE( ExpandingNode, Done );
 	}
 
 	inline void Planner::expandNode( Simulation* openedNode, std::vector< Simulation* >& newNodes )
 	{
-		if( printSteps ) _logContent.append( "Getting base simulation.\n" );
+		SET_EXPANDNODE_STAGE( Done, Idle );
+		SET_EXPANDNODE_STAGE( Idle, Initializing );
+
+		if( step && expandNodeStage == ExpandNodeStage::Expanding )
+		{
+			goto expandNodeLoop;
+		}
+
+		if( logSteps ) _logContent.append( "* Getting base simulation.\n" );
 		// getting simulation from opened node
-		auto baseSimulation = openedNode;
+		baseSimulation = openedNode;
 		if( !baseSimulation )
 		{
+			if( logSteps ) _logContent.append( "* No base simulation found!\n" );
+			expandNodeStage = ExpandNodeStage::Done;
 			return;
 		}
 
 		// cannot expand this node if it has reached simulation depth limit
 		if( baseSimulation->depth >= _depthLimit )
 		{
-			if( printSteps ) _logContent.append( "Reached max depth, skipping opened node.\n" );
+			if( logSteps ) _logContent.append( "* Reached max depth, skipping opened node.\n" );
+			expandNodeStage = ExpandNodeStage::Done;
 			return;
 		}
 
-		if( printSteps ) _logContent.append( "Expanding opened node with available actions.\n" );
+		if( logSteps ) _logContent.append( "* Expanding opened node with available actions.\n" );
+
+		actionSetItr = _actionSet.begin();
+
+		SET_EXPANDNODE_STAGE( Initializing, Expanding );
+		if( step ) return;
+
+expandNodeLoop:
 
 		// expanding simulation over all available actions
-		for( auto actionSetEntry : _actionSet )
+		while( actionSetItr != _actionSet.end() )
 		{
-			if( printSteps ) _logContent.append( "\nExpanding for Action: " ).append( actionSetEntry->name() ).append( "\n" );
+			actionSetEntry = *actionSetItr;
+
+			if( logSteps ) _logContent.append( "\n* Expanding for Action: " ).append( actionSetEntry->name() ).append( "\n" );
 
 			// getting simulator for action
-			auto actionSimulator = actionSetEntry->simulator( {} );
+			actionSimulator = actionSetEntry->simulator( {} );
 			if( !actionSimulator )
 			{
+				if( logSteps ) _logContent.append( "* Error on instantiating action simulator!\n" );
+				actionSetItr++;
+				if( step ) return;
 				continue;
 			}
 
-			if( printSteps ) _logContent.append( "Checking evaluate.\n" );
+			if( logSteps ) _logContent.append( "* Checking evaluate.\n" );
 
 			// checking if current simulation context meets action's conditions
 			if( !actionSimulator->evaluate( { *baseSimulation, baseSimulation->agent(), *goal() } ) )
 			{
-				if( printSteps ) _logContent.append( "Failed on evaluate, skipping action.\n" );
+				if( logSteps ) _logContent.append( "* Failed on evaluate, skipping action.\n" );
+				actionSetItr++;
+				if( step ) return;
 				continue;
 			}
 
-			if( printSteps ) _logContent.append( "Creating simulation node for action.\n" );
+			if( logSteps ) _logContent.append( "* Creating simulation node for action.\n" );
 
 			// creating new simulation node for action simulation
-			auto [ newSimulationGuid, newSimulation ] = createSimulation( openedNode->guid() );
+			newSimulationPair = createSimulation( openedNode->guid() );
 
-			if( printSteps ) _logContent.append( "Simulating action.\n" );
+			if( logSteps ) _logContent.append( "* Simulating action.\n" );
 
 			// running action simulation on new node
-			bool simulationSuccess = actionSimulator->simulate( { *newSimulation, newSimulation->agent(), *goal() } );
+			bool simulationSuccess = actionSimulator->simulate( { *newSimulationPair.second, newSimulationPair.second->agent(), *goal() } );
 
 			// removing new node in case simulation has failed
 			if( !simulationSuccess )
 			{
-				if( printSteps ) _logContent.append( "Simulation failed, deleting current simulation node.\n" );
-				deleteSimulation( newSimulationGuid );
+				if( logSteps ) _logContent.append( "* Simulation failed, deleting current simulation node.\n" );
+				deleteSimulation( newSimulationPair.first );
+				actionSetItr++;
+				if( step ) return;
 				continue;
 			}
 
-			if( printSteps ) _logContent.append( "Simulation successful.\n" );
+			if( logSteps ) _logContent.append( "* Simulation successful.\n" );
 
 			// cannot expand this node if it has reached simulation depth limit
-			if( newSimulation->depth >= _depthLimit )
+			if( newSimulationPair.second->depth >= _depthLimit )
 			{
-				if( printSteps ) _logContent.append( "Reached max depth, not further expanding current node.\n" );
+				if( logSteps ) _logContent.append( "* Reached max depth, not further expanding current node.\n" );
 			}
 			else
 			{
-				if( printSteps ) _logContent.append( "Marking node for further expansion.\n" );
+				if( logSteps ) _logContent.append( "* Marking node for further expansion.\n" );
 				// keeping track of expanded nodes
-				newNodes.push_back( newSimulation );
+				newNodes.push_back( newSimulationPair.second );
 			}
 
 			// stopping simulation loop if goal has been reached here
-			if( goal()->reached( *newSimulation ) )
+			if( goal()->reached( *newSimulationPair.second ) )
 			{
-				if( printSteps ) _logContent.append( "Goal reached, stopped expanding node!\n" );
+				if( logSteps ) _logContent.append( "* Goal reached, stopped expanding node!\n" );
+				expandNodeStage = ExpandNodeStage::Done;
 				break;
 			}
+
+			actionSetItr++;
 		}
+
+		SET_EXPANDNODE_STAGE( Expanding, Done );
 	}
 
 	inline void Planner::backtrack()

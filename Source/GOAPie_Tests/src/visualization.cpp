@@ -230,90 +230,88 @@ void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, 
 }
 
 void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )
-{  
-   if( !simulation )  
-       return;  
+{
+	if( !simulation ) return;
 
-   const gie::Blackboard* currentContext = &simulation->context();
-   std::set< gie::Guid > entityGuids;
-   const auto& stringregister = gie::stringRegister();
+	const gie::Blackboard* currentContext = &simulation->context();
+	std::set< gie::Guid > entityGuids;
+	const auto& stringregister = gie::stringRegister();
 
-   while( currentContext )
-   {
-	   for( const auto& [ entityGuid, entity ] : currentContext->entities() )
-	   {
-		   entityGuids.insert( entityGuid );
-	   }
+	while( currentContext )
+	{
+		for( const auto& [ entityGuid, entity ] : currentContext->entities() )
+		{
+			entityGuids.insert( entityGuid );
+		}
 
-	   currentContext = currentContext->parent();
-   }
+		currentContext = currentContext->parent();
+	}
 
-   static bool multiLevel = false;
+	static bool multiLevel = false;
 
-   if( ImGui::Begin( "Blackboard Properties" ) )  
-   {  
-       currentContext = &simulation->context();
-	   ImGui::Checkbox( "Multi-Level", &multiLevel );
+	if( ImGui::Begin( "Blackboard Properties" ) )
+	{
+		currentContext = &simulation->context();
+		ImGui::Checkbox( "Multi-Level", &multiLevel );
 
-	   if( multiLevel )
-	   {
-		   int level = 0;
+		if( multiLevel )
+		{
+			int level = 0;
 
-		   while( currentContext )
-		   {
-			   ImGui::Text( "Blackboard Level: %d", level );
-			   ImGui::Separator();
+			while( currentContext )
+			{
+				ImGui::Text( "Blackboard Level: %d", level );
+				ImGui::Separator();
 
-			   for( const auto& [ entityGuid, entity ] : currentContext->entities() )
-			   {
-				   drawEntityNameText( entity, entityGuid, true );
-				   ImGui::Separator();
+				for( const auto& [ entityGuid, entity ] : currentContext->entities() )
+				{
+					drawEntityNameText( entity, entityGuid, true );
+					ImGui::Separator();
 
-				   ImGui::Columns( 2, nullptr, false ); // Create two columns
-				   for( const auto& [ propertyNameHash, propertyGuid ] : entity.properties() )
-				   {
-					   auto propertyName = stringregister.get( propertyNameHash );
-					   auto property = currentContext->property( propertyGuid );
-					   ImGui::Text( "%s", propertyName.data() );
-					   ImGui::NextColumn();
-					   ImGui::Text( "%s", property->toString().c_str() );
-					   ImGui::NextColumn();
-				   }
-				   ImGui::Columns( 1 ); // Reset to single column
-				   ImGui::Separator();
-			   }
+					ImGui::Columns( 2, nullptr, false ); // Create two columns
+					for( const auto& [ propertyNameHash, propertyGuid ] : entity.properties() )
+					{
+						auto propertyName = stringregister.get( propertyNameHash );
+						auto property = currentContext->property( propertyGuid );
+						ImGui::Text( "%s", propertyName.data() );
+						ImGui::NextColumn();
+						ImGui::Text( "%s", property->toString().c_str() );
+						ImGui::NextColumn();
+					}
+					ImGui::Columns( 1 ); // Reset to single column
+					ImGui::Separator();
+				}
 
-			   currentContext = currentContext->parent();
-			   level++;
-			   ImGui::Separator();
-		   }
-	   }
-	   else
-	   {
-		   for( auto entityGuid : entityGuids )
-		   {
-			   auto entity = currentContext->entity( entityGuid );
-			   
-			   drawEntityNameText( *entity, entityGuid, true );
-			   ImGui::Separator();
+				currentContext = currentContext->parent();
+				level++;
+				ImGui::Separator();
+			}
+		}
+		else
+		{
+			for( auto entityGuid : entityGuids )
+			{
+				auto entity = currentContext->entity( entityGuid );
 
-			   ImGui::Columns( 2, nullptr, false ); // Create two columns
-			   for( const auto& [ propertyNameHash, propertyGuid ] : entity->properties() )
-			   {
-				   auto propertyName = stringregister.get( propertyNameHash );
-				   auto property = currentContext->property( propertyGuid );
-				   ImGui::Text( "%s", propertyName.data() );
-				   ImGui::NextColumn();
-				   ImGui::Text( "%s", property->toString().c_str() );
-				   ImGui::NextColumn();
-			   }
-			   ImGui::Columns( 1 ); // Reset to single column
-			   ImGui::Separator();
-		   }
-	   }
-	   
-   }  
-   ImGui::End();  
+				drawEntityNameText( *entity, entityGuid, true );
+				ImGui::Separator();
+
+				ImGui::Columns( 2, nullptr, false ); // Create two columns
+				for( const auto& [ propertyNameHash, propertyGuid ] : entity->properties() )
+				{
+					auto propertyName = stringregister.get( propertyNameHash );
+					auto property = currentContext->property( propertyGuid );
+					ImGui::Text( "%s", propertyName.data() );
+					ImGui::NextColumn();
+					ImGui::Text( "%s", property->toString().c_str() );
+					ImGui::NextColumn();
+				}
+				ImGui::Columns( 1 ); // Reset to single column
+				ImGui::Separator();
+			}
+		}
+	}
+	ImGui::End();
 }
 
 void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& params )
@@ -324,6 +322,8 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 	if( ImGui::Begin( "GOAPie Visualization" ) )
 	{
 		ImGui::Checkbox( "Use Heuristics", &useHeuristics );
+		ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
+		ImGui::Checkbox( "Step Plan", &planner.stepMutator() );
 
 		if( planner.isReady() )
 		{
@@ -339,6 +339,11 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 			ImGui::PopStyleVar();
 			ImGui::SameLine();
 			ImGui::Text( "Planner is busy!" );
+
+			if( planner.stepMutator() && ImGui::Button( "Step" ) )
+			{
+				planner.plan( useHeuristics );
+			}
 		}
 
 		auto waypointGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
@@ -461,12 +466,37 @@ void drawSimulationArgumentsWindow( ExampleParameters& params )
 	ImGui::End();
 }  
 
+void drawPlannerLogWindow( ExampleParameters& params )
+{
+	const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
+
+	if( !selectedSimulation ) return;
+
+	gie::Planner& planner = params.planner;
+
+	if( ImGui::Begin( "Planner Log" ) )
+	{
+		const std::string& logContent = planner.logContent();
+
+		if( logContent.empty() )
+		{
+			ImGui::Text( "No log content available." );
+		}
+		else
+		{
+			ImGui::TextUnformatted( logContent.c_str() );
+		}
+	}
+	ImGui::End();
+}
+
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
 {
 	drawGoapieVisualizationWindow( useHeuristics, params );
 	drawWorldViewWindow();
 	drawDebugMessagesWindow( params );
 	drawSimulationArgumentsWindow( params );
+	drawPlannerLogWindow( params );
 }
 
 void drawLinks(
