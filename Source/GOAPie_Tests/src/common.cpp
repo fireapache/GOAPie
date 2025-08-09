@@ -1,4 +1,5 @@
 #include <goapie.h>
+#include <iostream>
 
 void printSimulatedActions( const gie::Planner& planner )
 {
