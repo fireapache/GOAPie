@@ -1,4 +1,3 @@
-
 #include <functional>
 #include <array>
 
@@ -288,6 +287,109 @@ int treesOnHill( ExampleParameters& params )
 
 	DEFINE_DUMMY_ACTION_CLASS( NewThingToBuy )
 	DEFINE_DUMMY_ACTION_CLASS( BuyThing )
+	DEFINE_DUMMY_ACTION_CLASS( BuildHouse )
+
+	// minimum logs (cut down trees) required to build a house
+	constexpr int32_t minLogsForHouse = 5;
+
+	class BuildHouseSimulator : public gie::ActionSimulator
+	{
+	public:
+		using gie::ActionSimulator::ActionSimulator;
+		gie::StringHash hash() const override
+		{
+			return gie::stringRegister().add( "BuildHouse" );
+		}
+
+		bool evaluate( gie::EvaluateSimulationParams params ) const override
+		{
+			auto& context = params.simulation.context();
+			auto agentEntity = context.entity( params.agent.guid() );
+			auto woodHousePpt = agentEntity->property( "WoodHouse" );
+
+			params.addDebugMessage( "BuildHouseSimulator::evaluate" );
+
+			// if agent already has a wood house, no need to build another one
+			if( *woodHousePpt->getBool() )
+			{
+				params.addDebugMessage( "Agent already has a wood house, returning FALSE" );
+				return false;
+			}
+
+			// getting set of trees that have been cut down (logs available)
+			const auto treeDownTagSet = context.entityTagRegister().tagSet( "TreeDown" );
+
+			// count available logs
+			const int32_t availableLogs = static_cast<int32_t>( treeDownTagSet ? treeDownTagSet->size() : 0 );
+
+			params.addDebugMessage( "Available logs: " + std::to_string( availableLogs ) );
+			params.addDebugMessage( "Required logs: " + std::to_string( minLogsForHouse ) );
+
+			// check if we have enough logs to build a house
+			if( availableLogs >= minLogsForHouse )
+			{
+				params.addDebugMessage( "Enough logs available to build house, returning TRUE" );
+				return true;
+			}
+
+			params.addDebugMessage( "Not enough logs to build house, returning FALSE" );
+			return false;
+		}
+
+		bool simulate( gie::SimulateSimulationParams params ) const override
+		{
+			auto& context = params.simulation.context();
+			auto agentEntity = context.entity( params.agent.guid() );
+			auto woodHousePpt = agentEntity->property( "WoodHouse" );
+
+			params.addDebugMessage( "BuildHouseSimulator::simulate" );
+
+			// getting set of trees that have been cut down
+			const auto treeDownTagSet = params.simulation.tagSet( "TreeDown" );
+
+			// count available logs
+			const int32_t availableLogs = static_cast<int32_t>( treeDownTagSet ? treeDownTagSet->size() : 0 );
+
+			if( availableLogs >= minLogsForHouse )
+			{
+				// build the house!
+				woodHousePpt->value = true;
+
+				// consume the required logs by removing TreeDown tags from trees
+				// and adding TreeUsed tags to mark them as consumed
+				auto& entityTagRegister = context.entityTagRegister();
+				int32_t logsConsumed = 0;
+
+				for( auto treeGuid : *treeDownTagSet )
+				{
+					if( logsConsumed >= minLogsForHouse )
+					{
+						break;
+					}
+
+					auto treeEntity = context.entity( treeGuid );
+					if( treeEntity )
+					{
+						params.addDebugMessage( "Consuming log from tree" );
+						entityTagRegister.untag( treeEntity, { gie::stringHasher( "TreeDown" ) } );
+						entityTagRegister.tag( treeEntity, { gie::stringHasher( "TreeUsed" ) } );
+						logsConsumed++;
+					}
+				}
+
+				// creating build house action
+				if( auto buildHouseAction = std::make_shared< BuildHouseAction >() )
+				{
+					params.simulation.actions.emplace_back( buildHouseAction );
+					params.addDebugMessage( "BuildHouseAction added, house built successfully! Returning TRUE" );
+					return true;
+				}
+			}
+
+			params.addDebugMessage( "BuildHouseAction not added, returning FALSE" );
+			return false;
+		}
+	};
 
 	class BuyThingSimulator : public gie::ActionSimulator
 	{
@@ -374,7 +476,7 @@ int treesOnHill( ExampleParameters& params )
 				// creating buy axe action
 				if( auto buyThingAction = std::make_shared< BuyThingAction >( arguments() ) )
 				{
-					params.simulation.actions.emplace_back( buyThingAction );
+				params.simulation.actions.emplace_back( buyThingAction );
 					params.addDebugMessage( "BuyThingAction added, returning TRUE" );
 					return true;
 				}
@@ -530,11 +632,19 @@ int treesOnHill( ExampleParameters& params )
 	DEFINE_ACTION_SET_ENTRY( CutDownTree )
 	DEFINE_ACTION_SET_ENTRY( BuyThing )
 	DEFINE_ACTION_SET_ENTRY( Work )
+	DEFINE_ACTION_SET_ENTRY( BuildHouse )
 
 	// setting available actions
 	planner.addActionSetEntry< CutDownTreeActionSetEntry >( gie::stringHasher( "CutDownTree" ) );
 	planner.addActionSetEntry< BuyThingActionSetEntry >( gie::stringHasher( "BuyThing" ) );
 	planner.addActionSetEntry< WorkActionSetEntry >( gie::stringHasher( "Work" ) );
+	planner.addActionSetEntry< BuildHouseActionSetEntry >( gie::stringHasher( "BuildHouse" ) );
+
+	// finally planner doing its thing
+	planner.plan();
+
+	// printing actions from simulation leaf nodes
+	printSimulatedActions( planner );
 
 	return 0;
 }
@@ -577,6 +687,32 @@ void ImGuiFunc( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::
 	ImGui::Text( "Agent Location: (%.2f, %.2f, %.2f)", agentLocation.x, agentLocation.y, agentLocation.z );
 	ImGui::Text( "Agent Money: %.2f", *agentEntity->property( "Money" )->getFloat() );
 	ImGui::Text( "Axe Integrity: %.2f", *agentEntity->property( "AxeIntegrity" )->getFloat() );
+	ImGui::Text( "Has Wood House: %s", *agentEntity->property( "WoodHouse" )->getBool() ? "YES" : "NO" );
+	
+	// counting trees by their states
+	int treeUpCount = 0;
+	int treeDownCount = 0;
+	int treeUsedCount = 0;
+	
+	auto treeUpTagSet = context->entityTagRegister().tagSet( "TreeUp" );
+	if( treeUpTagSet )
+	{
+		treeUpCount = static_cast<int>( treeUpTagSet->size() );
+	}
+	
+	auto treeDownTagSet = context->entityTagRegister().tagSet( "TreeDown" );
+	if( treeDownTagSet )
+	{
+		treeDownCount = static_cast<int>( treeDownTagSet->size() );
+	}
+	
+	auto treeUsedTagSet = context->entityTagRegister().tagSet( "TreeUsed" );
+	if( treeUsedTagSet )
+	{
+		treeUsedCount = static_cast<int>( treeUsedTagSet->size() );
+	}
+	
+	ImGui::Text( "Trees Up: %d, Trees Down (logs): %d, Trees Used: %d", treeUpCount, treeDownCount, treeUsedCount );
 	ImGui::Text( "Things to buy: " );
 
 	auto thingsToBuyPpt = agentEntity->property( "ThingsToBuy" );
