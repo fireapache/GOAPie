@@ -268,6 +268,8 @@ int treesOnHill( ExampleParameters& params )
 			{
 				waypointGuids.assign( waypointTagSet->begin(), waypointTagSet->end() );
 			}
+			gie::PathfindingResult pathResult;
+
 			for( auto treeGuid : *treeUpTagSet )
 			{
 				if( auto treeEntity = context.entity( treeGuid ) )
@@ -278,10 +280,10 @@ int treesOnHill( ExampleParameters& params )
 						glm::vec3 treeLoc = *locPpt->getVec3();
 						if( !waypointGuids.empty() )
 						{
-							auto path = gie::getPath( *params.simulation.world(), waypointGuids, agentLocation, treeLoc );
-							if( path.length < bestLength )
+							pathResult = gie::getPath( *params.simulation.world(), waypointGuids, agentLocation, treeLoc );
+							if( pathResult.length < bestLength )
 							{
-								bestLength = path.length;
+								bestLength = pathResult.length;
 								chosenTreeGuid = treeGuid;
 							}
 						}
@@ -293,6 +295,20 @@ int treesOnHill( ExampleParameters& params )
 			if( chosenTreeGuid == gie::NullGuid )
 			{
 				chosenTreeGuid = *treeUpTagSet->cbegin();
+			}
+
+			// store path used to reach the chosen tree so visualization can render it
+			if( !waypointGuids.empty() )
+			{
+				if( auto chosenTree = context.entity( chosenTreeGuid ) )
+				{
+					if( auto locPpt = chosenTree->property( "Location" ) )
+					{
+						glm::vec3 treeLoc = *locPpt->getVec3();
+						params.simulation.arguments().add( "PathToTarget", pathResult.path );
+						params.simulation.arguments().add( "PathTarget", chosenTreeGuid );
+					}
+				}
 			}
 
 			// consuming chosen tree

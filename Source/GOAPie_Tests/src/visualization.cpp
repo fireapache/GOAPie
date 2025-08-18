@@ -21,17 +21,17 @@ const GLuint WIDTH = 1280;
 const GLint HEIGHT = 920;
 
 // global defined indices for OpenGL
-GLuint VAO;		   // vertex array object
-GLuint VBO;		   // vertex buffer object
-GLuint FBO;		   // frame buffer object
-GLuint RBO;		   // rendering buffer object
+GLuint VAO;          // vertex array object
+GLuint VBO;          // vertex buffer object
+GLuint FBO;          // frame buffer object
+GLuint RBO;          // rendering buffer object
 GLuint texture_id; // the texture id we'll need later to create a texture 
 
 struct DrawingLimits
 {
-	glm::vec3 minBounds{ std::numeric_limits< float >::max() };
-	glm::vec3 maxBounds{ std::numeric_limits< float >::lowest() };
-	const float margin = 0.1f; // 10% margin
+    glm::vec3 minBounds{ std::numeric_limits< float >::max() };
+    glm::vec3 maxBounds{ std::numeric_limits< float >::lowest() };
+    const float margin = 0.1f; // 10% margin
 };
 
 // Add this at the top of your file or in a suitable scope
@@ -48,674 +48,676 @@ void bind_framebuffer();
 void unbind_framebuffer();
 void rescale_framebuffer( float width, float height );
 void ShowExampleAppDockSpace( bool* p_open );
+void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& planner );
 
 int visualization( ExampleParameters& params )
 {
-	gie::World& world = params.world;
-	gie::Planner& planner = params.planner;
-	gie::Goal& goal = params.goal;
+    gie::World& world = params.world;
+    gie::Planner& planner = params.planner;
+    gie::Goal& goal = params.goal;
 
-	// Initialize GLFW
-	glfwInit();
-	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 3 );
-	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );
-	glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE );
+    // Initialize GLFW
+    glfwInit();
+    glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 3 );
+    glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );
+    glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE );
 
-	// Create a window
-	GLFWwindow* window = glfwCreateWindow( WIDTH, HEIGHT, "OpenGL Window", NULL, NULL );
-	if( !window )
-	{
-		std::cout << "Failed to create GLFW window\n";
-		glfwTerminate();
-		return -1;
-	}
+    // Create a window
+    GLFWwindow* window = glfwCreateWindow( WIDTH, HEIGHT, "OpenGL Window", NULL, NULL );
+    if( !window )
+    {
+        std::cout << "Failed to create GLFW window\n";
+        glfwTerminate();
+        return -1;
+    }
 
-	// Center the window on the primary monitor
-	GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
-	if( primaryMonitor )
-	{
-		const GLFWvidmode* mode = glfwGetVideoMode( primaryMonitor );
-		if( mode )
-		{
-			int xpos = ( mode->width - WIDTH ) / 2;
-			int ypos = ( mode->height - HEIGHT ) / 2;
-			glfwSetWindowPos( window, xpos, ypos );
-		}
-	}
+    // Center the window on the primary monitor
+    GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+    if( primaryMonitor )
+    {
+        const GLFWvidmode* mode = glfwGetVideoMode( primaryMonitor );
+        if( mode )
+        {
+            int xpos = ( mode->width - WIDTH ) / 2;
+            int ypos = ( mode->height - HEIGHT ) / 2;
+            glfwSetWindowPos( window, xpos, ypos );
+        }
+    }
 
-	glfwMakeContextCurrent( window );
+    glfwMakeContextCurrent( window );
 
-	// Load OpenGL functions using GLAD
-	if( !gladLoadGLLoader( ( GLADloadproc )glfwGetProcAddress ) )
-	{
-		std::cout << "Failed to initialize GLAD\n";
-		return -1;
-	}
+    // Load OpenGL functions using GLAD
+    if( !gladLoadGLLoader( ( GLADloadproc )glfwGetProcAddress ) )
+    {
+        std::cout << "Failed to initialize GLAD\n";
+        return -1;
+    }
 
-	// Set viewport and register resize callback
-	glViewport( 0, 0, WIDTH, HEIGHT );
-	glfwSetFramebufferSizeCallback( window, framebuffer_size_callback );
+    // Set viewport and register resize callback
+    glViewport( 0, 0, WIDTH, HEIGHT );
+    glfwSetFramebufferSizeCallback( window, framebuffer_size_callback );
 
-	create_framebuffer();
+    create_framebuffer();
 
-	// Initialize ImGui
-	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
-	ImGuiIO& io = ImGui::GetIO();
-	io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Enable multi-viewport support
-	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;	// Enable docking support
-	ImGui::StyleColorsDark();
-	ImGui_ImplGlfw_InitForOpenGL( window, true );
-	ImGui_ImplOpenGL3_Init( "#version 130" );
+    // Initialize ImGui
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Enable multi-viewport support
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;    // Enable docking support
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL( window, true );
+    ImGui_ImplOpenGL3_Init( "#version 130" );
 
-	// Bounds of elements to be drawn
-	DrawingLimits drawingLimits;
-	bool useHeuristics = false;
+    // Bounds of elements to be drawn
+    DrawingLimits drawingLimits;
+    bool useHeuristics = false;
 
-	// Main loop
-	while( !glfwWindowShouldClose( window ) )
-	{
-		processInput( window );
+    // Main loop
+    while( !glfwWindowShouldClose( window ) )
+    {
+        processInput( window );
 
-		// Start ImGui frame
-		ImGui_ImplOpenGL3_NewFrame();
-		ImGui_ImplGlfw_NewFrame();
-		ImGui::NewFrame();
+        // Start ImGui frame
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
 
-		ShowExampleAppDockSpace( nullptr ); // Create a dockspace for the ImGui windows
+        ShowExampleAppDockSpace( nullptr ); // Create a dockspace for the ImGui windows
 
-		// Render ImGui UI
-		drawImGuiWindows( useHeuristics, params );
+        // Render ImGui UI
+        drawImGuiWindows( useHeuristics, params );
 
-		ImGui::Render();
+        ImGui::Render();
 
-		// Render ImGui draw data
-		ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
+        // Render ImGui draw data
+        ImGui_ImplOpenGL3_RenderDrawData( ImGui::GetDrawData() );
 
-		// Update and Render additional Platform Windows
-		if( io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable )
-		{
-			GLFWwindow* currentGlfwContext = glfwGetCurrentContext();
-			ImGui::UpdatePlatformWindows();
-			ImGui::RenderPlatformWindowsDefault();
-			glfwMakeContextCurrent( currentGlfwContext );
-		}
+        // Update and Render additional Platform Windows
+        if( io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable )
+        {
+            GLFWwindow* currentGlfwContext = glfwGetCurrentContext();
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+            glfwMakeContextCurrent( currentGlfwContext );
+        }
 
-		// now we can bind our framebuffer
-		bind_framebuffer();
+        // now we can bind our framebuffer
+        bind_framebuffer();
 
-		// Render OpenGL content
-		glClearColor( 0.2f, 0.3f, 0.3f, 1.0f );
-		glClear( GL_COLOR_BUFFER_BIT );
+        // Render OpenGL content
+        glClearColor( 0.2f, 0.3f, 0.3f, 1.0f );
+        glClear( GL_COLOR_BUFFER_BIT );
 
-		// rendering elements
-		drawWaypointsAndLinks( world, planner, drawingLimits );
-		drawTrees( world, planner, drawingLimits );
+        // rendering elements
+        drawWaypointsAndLinks( world, planner, drawingLimits );
+        drawTrees( world, planner, drawingLimits );
+        drawSelectedSimulationPath( world, planner );
 
-		// and unbind it again
-		unbind_framebuffer();
+        // and unbind it again
+        unbind_framebuffer();
 
-		glfwSwapBuffers( window );
-		glfwPollEvents();
-	}
+        glfwSwapBuffers( window );
+        glfwPollEvents();
+    }
 
-	// Cleanup ImGui
-	ImGui_ImplOpenGL3_Shutdown();
-	ImGui_ImplGlfw_Shutdown();
-	ImGui::DestroyContext();
+    // Cleanup ImGui
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
 
-	// Clean up
-	glfwTerminate();
-	return 0;
+    // Clean up
+    glfwTerminate();
+    return 0;
 }
 
 // Process input (close window on ESC)
 void processInput( GLFWwindow* window )
 {
-	if( glfwGetKey( window, GLFW_KEY_ESCAPE ) == GLFW_PRESS )
-		glfwSetWindowShouldClose( window, true );
+    if( glfwGetKey( window, GLFW_KEY_ESCAPE ) == GLFW_PRESS )
+        glfwSetWindowShouldClose( window, true );
 }
 
 // Callback for resizing the window
 void framebuffer_size_callback( GLFWwindow* window, int width, int height )
 {
-	glViewport( 0, 0, width, height );
+    glViewport( 0, 0, width, height );
 }
 
 void drawWorldViewWindow()
 {
-	if( ImGui::Begin( "World View" ) )
-	{
-		// we access the ImGui window size
-		const float windowWidth = ImGui::GetContentRegionAvail().x;
-		const float windowHeight = ImGui::GetContentRegionAvail().y;
+    if( ImGui::Begin( "World View" ) )
+    {
+        // we access the ImGui window size
+        const float windowWidth = ImGui::GetContentRegionAvail().x;
+        const float windowHeight = ImGui::GetContentRegionAvail().y;
 
-		// we rescale the framebuffer to the actual window size here and reset the glViewport
-		rescale_framebuffer( static_cast< GLsizei >( windowWidth ), static_cast< GLsizei >( windowHeight ) );
-		glViewport( 0, 0, static_cast< GLsizei >( windowWidth ), static_cast< GLsizei >( windowHeight ) );
+        // we rescale the framebuffer to the actual window size here and reset the glViewport
+        rescale_framebuffer( static_cast< GLsizei >( windowWidth ), static_cast< GLsizei >( windowHeight ) );
+        glViewport( 0, 0, static_cast< GLsizei >( windowWidth ), static_cast< GLsizei >( windowHeight ) );
 
-		// we get the screen position of the window
-		ImVec2 pos = ImGui::GetCursorScreenPos();
+        // we get the screen position of the window
+        ImVec2 pos = ImGui::GetCursorScreenPos();
 
-		// and here we can add our created texture as image to ImGui
-		ImGui::GetWindowDrawList()->AddImage(
-			texture_id,
-			ImVec2( pos.x, pos.y ),
-			ImVec2( pos.x + windowWidth, pos.y + windowHeight ),
-			ImVec2( 0, 1 ),
-			ImVec2( 1, 0 ) );
-	}
-	ImGui::End();
+        // and here we can add our created texture as image to ImGui
+        ImGui::GetWindowDrawList()->AddImage(
+            texture_id,
+            ImVec2( pos.x, pos.y ),
+            ImVec2( pos.x + windowWidth, pos.y + windowHeight ),
+            ImVec2( 0, 1 ),
+            ImVec2( 1, 0 ) );
+    }
+    ImGui::End();
 }
 
 void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, const bool padding = false )
 {
-	auto nameHash = entity.nameHash();
-	const bool isValidName = nameHash != gie::InvalidStringHash;
-	const std::string_view entityName = isValidName ? gie::stringRegister().get( nameHash ) : "Unnamed Entity";
+    auto nameHash = entity.nameHash();
+    const bool isValidName = nameHash != gie::InvalidStringHash;
+    const std::string_view entityName = isValidName ? gie::stringRegister().get( nameHash ) : "Unnamed Entity";
 
-	if( padding )
-	{
-		ImGui::SetCursorPosX( ( ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize( entityName.data() ).x ) * 0.225f );
-	}
+    if( padding )
+    {
+        ImGui::SetCursorPosX( ( ImGui::GetContentRegionAvail().x - ImGui::CalcTextSize( entityName.data() ).x ) * 0.225f );
+    }
 
-	if( isValidName )
-	{
-		ImGui::Text( "%s", entityName.data() );
-	}
-	else
-	{
-		ImGui::Text( "%llu", static_cast< unsigned long long >( entityGuid ) );
-	}
+    if( isValidName )
+    {
+        ImGui::Text( "%s", entityName.data() );
+    }
+    else
+    {
+        ImGui::Text( "%llu", static_cast< unsigned long long >( entityGuid ) );
+    }
 }
 
 void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )
 {
-	if( !simulation ) return;
+    if( !simulation ) return;
 
-	const gie::Blackboard* currentContext = &simulation->context();
-	std::set< gie::Guid > entityGuids;
-	const auto& stringregister = gie::stringRegister();
+    const gie::Blackboard* currentContext = &simulation->context();
+    std::set< gie::Guid > entityGuids;
+    const auto& stringregister = gie::stringRegister();
 
-	while( currentContext )
-	{
-		for( const auto& [ entityGuid, entity ] : currentContext->entities() )
-		{
-			entityGuids.insert( entityGuid );
-		}
+    while( currentContext )
+    {
+        for( const auto& [ entityGuid, entity ] : currentContext->entities() )
+        {
+            entityGuids.insert( entityGuid );
+        }
 
-		currentContext = currentContext->parent();
-	}
+        currentContext = currentContext->parent();
+    }
 
-	static bool multiLevel = false;
+    static bool multiLevel = false;
 
-	if( ImGui::Begin( "Blackboard Properties" ) )
-	{
-		currentContext = &simulation->context();
-		ImGui::Checkbox( "Multi-Level", &multiLevel );
+    if( ImGui::Begin( "Blackboard Properties" ) )
+    {
+        currentContext = &simulation->context();
+        ImGui::Checkbox( "Multi-Level", &multiLevel );
 
-		if( multiLevel )
-		{
-			int level = 0;
+        if( multiLevel )
+        {
+            int level = 0;
 
-			while( currentContext )
-			{
-				ImGui::Text( "Blackboard Level: %d", level );
-				ImGui::Separator();
+            while( currentContext )
+            {
+                ImGui::Text( "Blackboard Level: %d", level );
+                ImGui::Separator();
 
-				for( const auto& [ entityGuid, entity ] : currentContext->entities() )
-				{
-					drawEntityNameText( entity, entityGuid, true );
-					ImGui::Separator();
+                for( const auto& [ entityGuid, entity ] : currentContext->entities() )
+                {
+                    drawEntityNameText( entity, entityGuid, true );
+                    ImGui::Separator();
 
-					ImGui::Columns( 2, nullptr, false ); // Create two columns
-					for( const auto& [ propertyNameHash, propertyGuid ] : entity.properties() )
-					{
-						auto propertyName = stringregister.get( propertyNameHash );
-						auto property = currentContext->property( propertyGuid );
-						ImGui::Text( "%s", propertyName.data() );
-						ImGui::NextColumn();
-						ImGui::Text( "%s", property->toString().c_str() );
-						ImGui::NextColumn();
-					}
-					ImGui::Columns( 1 ); // Reset to single column
-					ImGui::Separator();
-				}
+                    ImGui::Columns( 2, nullptr, false ); // Create two columns
+                    for( const auto& [ propertyNameHash, propertyGuid ] : entity.properties() )
+                    {
+                        auto propertyName = stringregister.get( propertyNameHash );
+                        auto property = currentContext->property( propertyGuid );
+                        ImGui::Text( "%s", propertyName.data() );
+                        ImGui::NextColumn();
+                        ImGui::Text( "%s", property->toString().c_str() );
+                        ImGui::NextColumn();
+                    }
+                    ImGui::Columns( 1 ); // Reset to single column
+                    ImGui::Separator();
+                }
 
-				currentContext = currentContext->parent();
-				level++;
-				ImGui::Separator();
-			}
-		}
-		else
-		{
-			for( auto entityGuid : entityGuids )
-			{
-				auto entity = currentContext->entity( entityGuid );
+                currentContext = currentContext->parent();
+                level++;
+                ImGui::Separator();
+            }
+        }
+        else
+        {
+            for( auto entityGuid : entityGuids )
+            {
+                auto entity = currentContext->entity( entityGuid );
 
-				drawEntityNameText( *entity, entityGuid, true );
-				ImGui::Separator();
+                drawEntityNameText( *entity, entityGuid, true );
+                ImGui::Separator();
 
-				ImGui::Columns( 2, nullptr, false ); // Create two columns
-				for( const auto& [ propertyNameHash, propertyGuid ] : entity->properties() )
-				{
-					auto propertyName = stringregister.get( propertyNameHash );
-					auto property = currentContext->property( propertyGuid );
-					ImGui::Text( "%s", propertyName.data() );
-					ImGui::NextColumn();
-					ImGui::Text( "%s", property->toString().c_str() );
-					ImGui::NextColumn();
-				}
-				ImGui::Columns( 1 ); // Reset to single column
-				ImGui::Separator();
-			}
-		}
-	}
-	ImGui::End();
+                ImGui::Columns( 2, nullptr, false ); // Create two columns
+                for( const auto& [ propertyNameHash, propertyGuid ] : entity->properties() )
+                {
+                    auto propertyName = stringregister.get( propertyNameHash );
+                    auto property = currentContext->property( propertyGuid );
+                    ImGui::Text( "%s", propertyName.data() );
+                    ImGui::NextColumn();
+                    ImGui::Text( "%s", property->toString().c_str() );
+                    ImGui::NextColumn();
+                }
+                ImGui::Columns( 1 ); // Reset to single column
+                ImGui::Separator();
+            }
+        }
+    }
+    ImGui::End();
 }
 
 void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& params )
 {
-	gie::World& world = params.world;
-	gie::Planner& planner = params.planner;
+    gie::World& world = params.world;
+    gie::Planner& planner = params.planner;
 
-	if( ImGui::Begin( "GOAPie Visualization" ) )
-	{
-		ImGui::Checkbox( "Use Heuristics", &useHeuristics );
-		ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
-		ImGui::Checkbox( "Step Plan", &planner.stepMutator() );
+    if( ImGui::Begin( "GOAPie Visualization" ) )
+    {
+        ImGui::Checkbox( "Use Heuristics", &useHeuristics );
+        ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
+        ImGui::Checkbox( "Step Plan", &planner.stepMutator() );
 
-		if( planner.isReady() )
-		{
-			if( ImGui::Button( "Plan!" ) )
-			{
-				planner.plan( useHeuristics );
-			}
-		}
-		else
-		{
-			ImGui::PushStyleVar( ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f );
-			ImGui::Button( "Plan!" );
-			ImGui::PopStyleVar();
-			ImGui::SameLine();
-			ImGui::Text( "Planner is busy!" );
+        if( planner.isReady() )
+        {
+            if( ImGui::Button( "Plan!" ) )
+            {
+                planner.plan( useHeuristics );
+            }
+        }
+        else
+        {
+            ImGui::PushStyleVar( ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f );
+            ImGui::Button( "Plan!" );
+            ImGui::PopStyleVar();
+            ImGui::SameLine();
+            ImGui::Text( "Planner is busy!" );
 
-			if( planner.stepMutator() && ImGui::Button( "Step" ) )
-			{
-				planner.plan( useHeuristics );
-			}
-		}
+            if( planner.stepMutator() && ImGui::Button( "Step" ) )
+            {
+                planner.plan( useHeuristics );
+            }
+        }
 
-		auto waypointGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-		if( waypointGuids )
-		{
-			ImGui::Text( "Waypoint Count: %d", static_cast< int >( waypointGuids->size() ) );
-		}
+        auto waypointGuids = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+        if( waypointGuids )
+        {
+            ImGui::Text( "Waypoint Count: %d", static_cast< int >( waypointGuids->size() ) );
+        }
 
-		// TreeView for simulation nodes
-		if( ImGui::CollapsingHeader( "Simulation Nodes" ) )
-		{
-			auto selectedSim = planner.simulation( selectedSimulationGuid );
-			ImGui::Separator();
-			ImGui::Text( "Selected Node Info:" );
-			if( selectedSim )
-			{
-				ImGui::Text( "Guid: %llu", selectedSim ? static_cast< unsigned long long >( selectedSim->guid() ) : 0 );
-			}
-			else
-			{
-				ImGui::TextUnformatted( "Guid: ?" );
-			}
-			ImGui::Text( "Actions: %zu", selectedSim ? selectedSim->actions.size() : 0 );
-			const bool isMaxCost = selectedSim ? selectedSim->cost == gie::MaxCost : true;
-			if( isMaxCost )
-			{
-				ImGui::TextUnformatted( "Cost: MAX" );
-			}
-			else if( selectedSim )
-			{
-				ImGui::Text( "Cost: %.2f", selectedSim ? selectedSim->cost : 0 );
-			}
-			else
-			{
-				ImGui::TextUnformatted( "Cost: ?" );
-			}
+        // TreeView for simulation nodes
+        if( ImGui::CollapsingHeader( "Simulation Nodes" ) )
+        {
+            auto selectedSim = planner.simulation( selectedSimulationGuid );
+            ImGui::Separator();
+            ImGui::Text( "Selected Node Info:" );
+            if( selectedSim )
+            {
+                ImGui::Text( "Guid: %llu", selectedSim ? static_cast< unsigned long long >( selectedSim->guid() ) : 0 );
+            }
+            else
+            {
+                ImGui::TextUnformatted( "Guid: ?" );
+            }
+            ImGui::Text( "Actions: %zu", selectedSim ? selectedSim->actions.size() : 0 );
+            const bool isMaxCost = selectedSim ? selectedSim->cost == gie::MaxCost : true;
+            if( isMaxCost )
+            {
+                ImGui::TextUnformatted( "Cost: MAX" );
+            }
+            else if( selectedSim )
+            {
+                ImGui::Text( "Cost: %.2f", selectedSim ? selectedSim->cost : 0 );
+            }
+            else
+            {
+                ImGui::TextUnformatted( "Cost: ?" );
+            }
 
-			ImGui::Separator();
+            ImGui::Separator();
 
-			if( params.imGuiDrawFunc )
-			{
-				params.imGuiDrawFunc( world, planner, params.goal, selectedSimulationGuid );
-				ImGui::Separator();
-			}
+            if( params.imGuiDrawFunc )
+            {
+                params.imGuiDrawFunc( world, planner, params.goal, selectedSimulationGuid );
+                ImGui::Separator();
+            }
 
-			auto rootNode = planner.rootSimulation();
-			if( rootNode )
-			{
-				drawSimulationTreeView( planner, rootNode );
-			}
-			else
-			{
-				ImGui::Text( "No simulation nodes available." );
-			}
+            auto rootNode = planner.rootSimulation();
+            if( rootNode )
+            {
+                drawSimulationTreeView( planner, rootNode );
+            }
+            else
+            {
+                ImGui::Text( "No simulation nodes available." );
+            }
 
-			drawBlackboardPropertiesWindow( selectedSim );
-		}
-	}
-	ImGui::End();
+            drawBlackboardPropertiesWindow( selectedSim );
+        }
+    }
+    ImGui::End();
 }
 
 void drawDebugMessagesWindow( ExampleParameters& params )
 {
-	const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
+    const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
 
-	if( !selectedSimulation )
-	{
-		return;
-	}
+    if( !selectedSimulation )
+    {
+        return;
+    }
 
-	const auto& debugMessages = selectedSimulation->debugMessages();
+    const auto& debugMessages = selectedSimulation->debugMessages();
 
-	if( ImGui::Begin( "Debug Messages" ) )
-	{
-		if( !debugMessages.messages() || debugMessages.messages()->empty() )
-		{
-			ImGui::Text( "No debug messages available." );
-		}
-		else
-		{
-			for( const auto& message : *debugMessages.messages() )
-			{
-				ImGui::Text( "* %s", message.c_str() );
-			}
-		}
-	}
-	ImGui::End();
+    if( ImGui::Begin( "Debug Messages" ) )
+    {
+        if( !debugMessages.messages() || debugMessages.messages()->empty() )
+        {
+            ImGui::Text( "No debug messages available." );
+        }
+        else
+        {
+            for( const auto& message : *debugMessages.messages() )
+            {
+                ImGui::Text( "* %s", message.c_str() );
+            }
+        }
+    }
+    ImGui::End();
 }  
 
 void drawSimulationArgumentsWindow( ExampleParameters& params )
 {  
-	const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
+    const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
 
-	if( !selectedSimulation )
-		return;
+    if( !selectedSimulation )
+        return;
 
-	const auto& arguments = selectedSimulation->arguments();
+    const auto& arguments = selectedSimulation->arguments();
 
-	if( ImGui::Begin( "Simulation Arguments" ) )
-	{
-		if( arguments.empty() )
-		{
-			ImGui::Text( "No arguments available." );
-		}
-		else
-		{
-			for( const auto& [ key, value ] : arguments.storage() )
-			{
-				// using property to access toString function for variant.
-				// This is a workaround since NamedArguments does not have a toString method.
-				// TODO: This should be replaced with a more robust solution in the future.
-				gie::Property ppt( 0, 0 );
-				ppt.value = value;
-				ImGui::Text( "Key: %s", gie::stringRegister().get( key ).data() );
-				ImGui::Text( "Value: %s", ppt.toString().c_str() );
-				ImGui::Separator();
-			}
-		}
-	}
-	ImGui::End();
+    if( ImGui::Begin( "Simulation Arguments" ) )
+    {
+        if( arguments.empty() )
+        {
+            ImGui::Text( "No arguments available." );
+        }
+        else
+        {
+            for( const auto& [ key, value ] : arguments.storage() )
+            {
+                // using property to access toString function for variant.
+                // This is a workaround since NamedArguments does not have a toString method.
+                // TODO: This should be replaced with a more robust solution in the future.
+                gie::Property ppt( 0, 0 );
+                ppt.value = value;
+                ImGui::Text( "Key: %s", gie::stringRegister().get( key ).data() );
+                ImGui::Text( "Value: %s", ppt.toString().c_str() );
+                ImGui::Separator();
+            }
+        }
+    }
+    ImGui::End();
 }  
 
 void drawPlannerLogWindow( ExampleParameters& params )
 {
-	const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
+    const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
 
-	if( !selectedSimulation ) return;
+    if( !selectedSimulation ) return;
 
-	gie::Planner& planner = params.planner;
+    gie::Planner& planner = params.planner;
 
-	if( ImGui::Begin( "Planner Log" ) )
-	{
-		const std::string& logContent = planner.logContent();
+    if( ImGui::Begin( "Planner Log" ) )
+    {
+        const std::string& logContent = planner.logContent();
 
-		if( logContent.empty() )
-		{
-			ImGui::Text( "No log content available." );
-		}
-		else
-		{
-			ImGui::TextUnformatted( logContent.c_str() );
-		}
-	}
-	ImGui::End();
+        if( logContent.empty() )
+        {
+            ImGui::Text( "No log content available." );
+        }
+        else
+        {
+            ImGui::TextUnformatted( logContent.c_str() );
+        }
+    }
+    ImGui::End();
 }
 
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
 {
-	drawGoapieVisualizationWindow( useHeuristics, params );
-	drawWorldViewWindow();
-	drawDebugMessagesWindow( params );
-	drawSimulationArgumentsWindow( params );
-	drawPlannerLogWindow( params );
+    drawGoapieVisualizationWindow( useHeuristics, params );
+    drawWorldViewWindow();
+    drawDebugMessagesWindow( params );
+    drawSimulationArgumentsWindow( params );
+    drawPlannerLogWindow( params );
 }
 
 void drawLinks(
-	const gie::Entity* waypointEntity,
-	const gie::World& world,
-	const glm::vec3& offset,
-	const glm::vec3& scale,
-	const glm::vec3& scaledLocation )
+    const gie::Entity* waypointEntity,
+    const gie::World& world,
+    const glm::vec3& offset,
+    const glm::vec3& scale,
+    const glm::vec3& scaledLocation )
 {
-	// Draw links if they exist
-	if( auto linksPpt = waypointEntity->property( "Links" ) )
-	{
-		auto linkedGuids = linksPpt->getGuidArray();
-		if( linkedGuids )
-		{
-			glColor3f( 0.5f, 0.5f, 0.5f ); // Set color to gray for links
-			for( const auto& linkedGuid : *linkedGuids )
-			{
-				auto linkedEntity = world.entity( linkedGuid );
-				if( auto linkedLocationPpt = linkedEntity->property( "Location" ) )
-				{
-					glm::vec3 linkedLocation = *linkedLocationPpt->getVec3();
-					glm::vec3 scaledLinkedLocation = ( linkedLocation + offset ) * scale;
+    // Draw links if they exist
+    if( auto linksPpt = waypointEntity->property( "Links" ) )
+    {
+        auto linkedGuids = linksPpt->getGuidArray();
+        if( linkedGuids )
+        {
+            glColor3f( 0.5f, 0.5f, 0.5f ); // Set color to gray for links
+            for( const auto& linkedGuid : *linkedGuids )
+            {
+                auto linkedEntity = world.entity( linkedGuid );
+                if( auto linkedLocationPpt = linkedEntity->property( "Location" ) )
+                {
+                    glm::vec3 linkedLocation = *linkedLocationPpt->getVec3();
+                    glm::vec3 scaledLinkedLocation = ( linkedLocation + offset ) * scale;
 
-					// Draw a line between the waypoint and the linked waypoint
-					glBegin( GL_LINES );
-					glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
-					glVertex3f( scaledLinkedLocation.x, scaledLinkedLocation.y, scaledLinkedLocation.z );
-					glEnd();
-				}
-			}
-		}
-	}
+                    // Draw a line between the waypoint and the linked waypoint
+                    glBegin( GL_LINES );
+                    glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
+                    glVertex3f( scaledLinkedLocation.x, scaledLinkedLocation.y, scaledLinkedLocation.z );
+                    glEnd();
+                }
+            }
+        }
+    }
 }
 
 void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits )
 {
-	const gie::TagSet* waypointGuids = nullptr;
-	const gie::Blackboard* context = &world.context();
+    const gie::TagSet* waypointGuids = nullptr;
+    const gie::Blackboard* context = &world.context();
 
-	// in case we have a valid simulation selected, we use the simulation context
-	const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
-	if( selectedSimulation )
-	{
-		context = &selectedSimulation->context();
-	}
+    // in case we have a valid simulation selected, we use the simulation context
+    const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
+    if( selectedSimulation )
+    {
+        context = &selectedSimulation->context();
+    }
 
-	waypointGuids = context->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-	if( !waypointGuids || waypointGuids->empty() )
-	{
-		return; // No waypoints to draw
-	}
+    waypointGuids = context->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+    if( !waypointGuids || waypointGuids->empty() )
+    {
+        return; // No waypoints to draw
+    }
 
-	for( gie::Guid waypointGuid : *waypointGuids )
-	{
-		auto waypointEntity = world.entity( waypointGuid );
-		if( auto locationPpt = waypointEntity->property( "Location" ) )
-		{
-			glm::vec3 location = *locationPpt->getVec3();
-			drawingLimits.minBounds = glm::min( drawingLimits.minBounds, location );
-			drawingLimits.maxBounds = glm::max( drawingLimits.maxBounds, location );
-		}
-	}
+    for( gie::Guid waypointGuid : *waypointGuids )
+    {
+        auto waypointEntity = world.entity( waypointGuid );
+        if( auto locationPpt = waypointEntity->property( "Location" ) )
+        {
+            glm::vec3 location = *locationPpt->getVec3();
+            drawingLimits.minBounds = glm::min( drawingLimits.minBounds, location );
+            drawingLimits.maxBounds = glm::max( drawingLimits.maxBounds, location );
+        }
+    }
 
-	// Setting up drawing offset
-	glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
-	glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
-	glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
-	glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
-	glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
+    // Setting up drawing offset
+    glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
+    glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
+    glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
+    glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
+    glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
 
-	// Set up OpenGL for rendering
-	glPointSize( 10.0f );		   // Set point size for waypoints
-	glColor3f( 1.0f, 1.0f, 1.0f ); // Set color to white for waypoints
+    // Set up OpenGL for rendering
+    glPointSize( 10.0f );        // Set point size for waypoints
+    glColor3f( 1.0f, 1.0f, 1.0f ); // Set color to white for waypoints
 
-	// Iterate through waypoints and draw them as points and links
-	for( gie::Guid waypointGuid : *waypointGuids )
-	{
-		auto waypointEntity = world.entity( waypointGuid );
-		if( auto locationPpt = waypointEntity->property( "Location" ) )
-		{
-			glm::vec3 location = *locationPpt->getVec3();
-			glm::vec3 scaledLocation = ( location + offset ) * scale;
+    // Iterate through waypoints and draw them as points and links
+    for( gie::Guid waypointGuid : *waypointGuids )
+    {
+        auto waypointEntity = world.entity( waypointGuid );
+        if( auto locationPpt = waypointEntity->property( "Location" ) )
+        {
+            glm::vec3 location = *locationPpt->getVec3();
+            glm::vec3 scaledLocation = ( location + offset ) * scale;
 
-			// Draw the waypoint as a point
-			glBegin( GL_POINTS );
-			glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
-			glEnd();
+            // Draw the waypoint as a point
+            glBegin( GL_POINTS );
+            glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
+            glEnd();
 
-			drawLinks( waypointEntity, world, offset, scale, scaledLocation );
-		}
-	}
+            drawLinks( waypointEntity, world, offset, scale, scaledLocation );
+        }
+    }
 }
 
 void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits )
 {
-	const gie::TagSet* treeGuids = nullptr;
-	const gie::Blackboard* context = &world.context();
+    const gie::TagSet* treeGuids = nullptr;
+    const gie::Blackboard* context = &world.context();
 
-	// in case we have a valid simulation selected, we use the simulation context
-	const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
-	if( selectedSimulation )
-	{
-		context = &selectedSimulation->context();
-	}
+    // in case we have a valid simulation selected, we use the simulation context
+    const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
+    if( selectedSimulation )
+    {
+        context = &selectedSimulation->context();
+    }
 
-	treeGuids = context->entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
-	if( !treeGuids || treeGuids->empty() )
-	{
-		return; // No trees to draw
-	}
+    treeGuids = context->entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
+    if( !treeGuids || treeGuids->empty() )
+    {
+        return; // No trees to draw
+    }
 
-	for( gie::Guid treeGuid : *treeGuids )
-	{
-		auto waypointEntity = context->entity( treeGuid );
-		if( auto locationPpt = waypointEntity->property( "Location" ) )
-		{
-			glm::vec3 location = *locationPpt->getVec3();
-			drawingLimits.minBounds = glm::min( drawingLimits.minBounds, location );
-			drawingLimits.maxBounds = glm::max( drawingLimits.maxBounds, location );
-		}
-	}
+    for( gie::Guid treeGuid : *treeGuids )
+    {
+        auto waypointEntity = context->entity( treeGuid );
+        if( auto locationPpt = waypointEntity->property( "Location" ) )
+        {
+            glm::vec3 location = *locationPpt->getVec3();
+            drawingLimits.minBounds = glm::min( drawingLimits.minBounds, location );
+            drawingLimits.maxBounds = glm::max( drawingLimits.maxBounds, location );
+        }
+    }
 
-	// Setting up drawing offset
-	glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
-	glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
-	glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
-	glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
-	glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
+    // Setting up drawing offset
+    glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
+    glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
+    glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
+    glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
+    glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
 
-	auto treeUpTag = gie::stringHasher( "TreeUp" );
-	auto treeDownTag = gie::stringHasher( "TreeDown" );
+    auto treeUpTag = gie::stringHasher( "TreeUp" );
+    auto treeDownTag = gie::stringHasher( "TreeDown" );
 
-	glPointSize( 10.0f ); // Set point size
+    glPointSize( 10.0f ); // Set point size
 
-	// Iterate through trees and draw them as points
-	for( gie::Guid treeGuid : *treeGuids )
-	{
-		auto treeEntity = context->entity( treeGuid );
-		if( auto locationPpt = treeEntity->property( "Location" ) )
-		{
-			glm::vec3 location = *locationPpt->getVec3();
-			glm::vec3 scaledLocation = ( location + offset ) * scale;
+    // Iterate through trees and draw them as points
+    for( gie::Guid treeGuid : *treeGuids )
+    {
+        auto treeEntity = context->entity( treeGuid );
+        if( auto locationPpt = treeEntity->property( "Location" ) )
+        {
+            glm::vec3 location = *locationPpt->getVec3();
+            glm::vec3 scaledLocation = ( location + offset ) * scale;
 
-			if( treeEntity->hasTag( treeUpTag ) )
-			{
-				glColor3f( 0.0f, 1.0f, 0.0f ); // Set color to green for trees that are up
-			}
-			else
-			{
-				glColor3f( 1.0f, 0.0f, 0.0f ); // Set color to red for trees that are down
-			}
+            if( treeEntity->hasTag( treeUpTag ) )
+            {
+                glColor3f( 0.0f, 1.0f, 0.0f ); // Set color to green for trees that are up
+            }
+            else
+            {
+                glColor3f( 1.0f, 0.0f, 0.0f ); // Set color to red for trees that are down
+            }
 
-			// Draw the waypoint as a point
-			glBegin( GL_POINTS );
-			glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
-			glEnd();
-		}
-	}
+            // Draw the waypoint as a point
+            glBegin( GL_POINTS );
+            glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
+            glEnd();
+        }
+    }
 }
 
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation )
 {
-	if( !simulation )
-		return;
+    if( !simulation )
+        return;
 
-	// Reduce horizontal padding for tree nodes
-	ImVec2 oldPadding = ImGui::GetStyle().FramePadding;
-	ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 1.0f, oldPadding.y ) ); // 2.0f is a small horizontal padding
+    // Reduce horizontal padding for tree nodes
+    ImVec2 oldPadding = ImGui::GetStyle().FramePadding;
+    ImGui::PushStyleVar( ImGuiStyleVar_FramePadding, ImVec2( 1.0f, oldPadding.y ) ); // 2.0f is a small horizontal padding
 
-	// Reduce indentation for child nodes
-	float oldIndent = ImGui::GetStyle().IndentSpacing;
-	ImGui::PushStyleVar( ImGuiStyleVar_IndentSpacing, 6.0f ); // child right padding
+    // Reduce indentation for child nodes
+    float oldIndent = ImGui::GetStyle().IndentSpacing;
+    ImGui::PushStyleVar( ImGuiStyleVar_IndentSpacing, 6.0f ); // child right padding
 
-	std::string actionsText{ "" };
-	for( auto action : simulation->actions )
-	{
-		if( action )
-		{
-			actionsText.append( action->name() );
-			if( action != simulation->actions.back() )
-			{
-				actionsText.append( ", " );
-			}
-		}
-	}
+    std::string actionsText{ "" };
+    for( auto action : simulation->actions )
+    {
+        if( action )
+        {
+            actionsText.append( action->name() );
+            if( action != simulation->actions.back() )
+            {
+                actionsText.append( ", " );
+            }
+        }
+    }
 
-	if( actionsText.empty() )
-	{
-		actionsText = "Root";
-	}
+    if( actionsText.empty() )
+    {
+        actionsText = "Root";
+    }
 
-	// Add unique ID to label
-	std::string label = actionsText + "##" + std::to_string( simulation->guid() );
+    // Add unique ID to label
+    std::string label = actionsText + "##" + std::to_string( simulation->guid() );
 
-	ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_DrawLinesToNodes | ImGuiTreeNodeFlags_SpanAvailWidth;
-	if( selectedSimulationGuid == simulation->guid() )
-		nodeFlags |= ImGuiTreeNodeFlags_Selected;
+    ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_DrawLinesToNodes | ImGuiTreeNodeFlags_SpanAvailWidth;
+    if( selectedSimulationGuid == simulation->guid() )
+        nodeFlags |= ImGuiTreeNodeFlags_Selected;
 
-	bool nodeOpen = ImGui::TreeNodeEx( label.c_str(), nodeFlags );
-	if( ImGui::IsItemClicked() )
-	{
-		selectedSimulationGuid = simulation->guid();
-	}
+    bool nodeOpen = ImGui::TreeNodeEx( label.c_str(), nodeFlags );
+    if( ImGui::IsItemClicked() )
+    {
+        selectedSimulationGuid = simulation->guid();
+    }
 
-	if( nodeOpen )
-	{
-		for( auto childSimulationGuid : simulation->outgoing )
-		{
-			auto childSimulation = planner.simulation( childSimulationGuid );
-			if( childSimulation )
-			{
-				drawSimulationTreeView( planner, childSimulation );
-			}
-		}
-		ImGui::TreePop();
-	}
+    if( nodeOpen )
+    {
+        for( auto childSimulationGuid : simulation->outgoing )
+        {
+            auto childSimulation = planner.simulation( childSimulationGuid );
+            if( childSimulation )
+            {
+                drawSimulationTreeView( planner, childSimulation );
+            }
+        }
+        ImGui::TreePop();
+    }
 
-	ImGui::PopStyleVar( 2 ); // Restore previous padding
+    ImGui::PopStyleVar( 2 ); // Restore previous padding
 }
 
 // here we create our framebuffer and our renderbuffer
@@ -723,53 +725,53 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
 // on the official opengl homepage, see the link above
 void create_framebuffer()
 {
-	glGenFramebuffers( 1, &FBO );
-	glBindFramebuffer( GL_FRAMEBUFFER, FBO );
+    glGenFramebuffers( 1, &FBO );
+    glBindFramebuffer( GL_FRAMEBUFFER, FBO );
 
-	glGenTextures( 1, &texture_id );
-	glBindTexture( GL_TEXTURE_2D, texture_id );
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_id, 0 );
+    glGenTextures( 1, &texture_id );
+    glBindTexture( GL_TEXTURE_2D, texture_id );
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, WIDTH, HEIGHT, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+    glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_id, 0 );
 
-	glGenRenderbuffers( 1, &RBO );
-	glBindRenderbuffer( GL_RENDERBUFFER, RBO );
-	glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, WIDTH, HEIGHT );
-	glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, RBO );
+    glGenRenderbuffers( 1, &RBO );
+    glBindRenderbuffer( GL_RENDERBUFFER, RBO );
+    glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, WIDTH, HEIGHT );
+    glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, RBO );
 
-	if( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE )
-		std::cout << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!\n";
+    if( glCheckFramebufferStatus( GL_FRAMEBUFFER ) != GL_FRAMEBUFFER_COMPLETE )
+        std::cout << "ERROR::FRAMEBUFFER:: Framebuffer is not complete!\n";
 
-	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
-	glBindTexture( GL_TEXTURE_2D, 0 );
-	glBindRenderbuffer( GL_RENDERBUFFER, 0 );
+    glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+    glBindTexture( GL_TEXTURE_2D, 0 );
+    glBindRenderbuffer( GL_RENDERBUFFER, 0 );
 }
 
 // here we bind our framebuffer
 void bind_framebuffer()
 {
-	glBindFramebuffer( GL_FRAMEBUFFER, FBO );
+    glBindFramebuffer( GL_FRAMEBUFFER, FBO );
 }
 
 // here we unbind our framebuffer
 void unbind_framebuffer()
 {
-	glBindFramebuffer( GL_FRAMEBUFFER, 0 );
+    glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 }
 
 // and we rescale the buffer, so we're able to resize the window
 void rescale_framebuffer( float width, float height )
 {
-	glBindTexture( GL_TEXTURE_2D, texture_id );
-	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, static_cast< GLsizei >( width ), static_cast< GLsizei >( height ), 0, GL_RGB, GL_UNSIGNED_BYTE, NULL );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
-	glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
-	glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_id, 0 );
+    glBindTexture( GL_TEXTURE_2D, texture_id );
+    glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, static_cast< GLsizei >( width ), static_cast< GLsizei >( height ), 0, GL_RGB, GL_UNSIGNED_BYTE, NULL );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+    glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+    glFramebufferTexture2D( GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture_id, 0 );
 
-	glBindRenderbuffer( GL_RENDERBUFFER, RBO );
-	glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, static_cast< GLsizei >( width ), static_cast< GLsizei >( height ) );
-	glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, RBO );
+    glBindRenderbuffer( GL_RENDERBUFFER, RBO );
+    glRenderbufferStorage( GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, static_cast< GLsizei >( width ), static_cast< GLsizei >( height ) );
+    glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, RBO );
 }
 
 void ShowExampleAppDockSpace(bool* p_open)
@@ -866,4 +868,122 @@ void ShowExampleAppDockSpace(bool* p_open)
     }
 
     ImGui::End();
+}
+
+void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& planner )
+{
+    const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
+    if( !selectedSimulation ) return;
+
+    const auto* pathArg = selectedSimulation->arguments().get( "PathToTarget" );
+    if( !pathArg ) return;
+
+    const auto& pathGuids = std::get< std::vector< gie::Guid > >( *pathArg );
+    if( pathGuids.size() <= 1 ) return;
+
+    // recompute drawing transform to match drawWaypointsAndLinks/drawTrees
+    const gie::Blackboard* contextBB = &world.context();
+    contextBB = &selectedSimulation->context();
+
+    // compute bounds again (same as tree/waypoint drawing)
+    glm::vec3 minBounds( std::numeric_limits< float >::max() );
+    glm::vec3 maxBounds( std::numeric_limits< float >::lowest() );
+    auto waypointGuids = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+    if( waypointGuids )
+    {
+        for( auto guid : *waypointGuids )
+        {
+            auto e = world.entity( guid );
+            if( auto loc = e->property( "Location" ) )
+            {
+                glm::vec3 p = *loc->getVec3();
+                minBounds = glm::min( minBounds, p );
+                maxBounds = glm::max( maxBounds, p );
+            }
+        }
+    }
+    auto treeGuids = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
+    if( treeGuids )
+    {
+        for( auto guid : *treeGuids )
+        {
+            auto e = contextBB->entity( guid );
+            if( auto loc = e->property( "Location" ) )
+            {
+                glm::vec3 p = *loc->getVec3();
+                minBounds = glm::min( minBounds, p );
+                maxBounds = glm::max( maxBounds, p );
+            }
+        }
+    }
+
+    glm::vec3 range = maxBounds - minBounds;
+    glm::vec3 minB = minBounds - range * 0.1f;
+    glm::vec3 maxB = maxBounds + range * 0.1f;
+    glm::vec3 offset = -( minB + maxB ) * 0.5f;
+    glm::vec3 scale = 2.0f / ( maxB - minB );
+
+    // draw magenta path with thicker lines
+    glLineWidth( 3.0f );
+    glColor3f( 1.0f, 0.0f, 1.0f );
+    glBegin( GL_LINE_STRIP );
+    for( auto guid : pathGuids )
+    {
+        auto e = world.entity( guid );
+        if( auto loc = e->property( "Location" ) )
+        {
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            glVertex3f( p.x, p.y, p.z );
+        }
+    }
+    glEnd();
+
+    // draw segment from agent to first waypoint in the path (if available)
+    if( !pathGuids.empty() )
+    {
+        auto agentEntity = world.agent( planner.agent()->guid() );
+        if( agentEntity )
+        {
+            auto agentLocPpt = agentEntity->property( "Location" );
+            if( agentLocPpt )
+            {
+                auto firstWp = world.entity( pathGuids.front() );
+                if( auto wpLoc = firstWp->property( "Location" ) )
+                {
+                    glm::vec3 a = ( *agentLocPpt->getVec3() + offset ) * scale;
+                    glm::vec3 b = ( *wpLoc->getVec3() + offset ) * scale;
+                    glBegin( GL_LINES );
+                    glVertex3f( a.x, a.y, a.z );
+                    glVertex3f( b.x, b.y, b.z );
+                    glEnd();
+                }
+            }
+        }
+    }
+
+    // draw segment from last waypoint to tree target if available
+    const auto* targetArg = selectedSimulation->arguments().get( "PathTarget" );
+    if( targetArg && !pathGuids.empty() )
+    {
+        gie::Guid targetGuid = std::get< gie::Guid >( *targetArg );
+        auto lastWp = world.entity( pathGuids.back() );
+        auto targetEntity = contextBB->entity( targetGuid );
+        if( lastWp && targetEntity )
+        {
+            auto lastLoc = lastWp->property( "Location" );
+            auto targetLoc = targetEntity->property( "Location" );
+            if( lastLoc && targetLoc )
+            {
+                glm::vec3 a = ( *lastLoc->getVec3() + offset ) * scale;
+                glm::vec3 b = ( *targetLoc->getVec3() + offset ) * scale;
+                glBegin( GL_LINES );
+                glVertex3f( a.x, a.y, a.z );
+                glVertex3f( b.x, b.y, b.z );
+                glEnd();
+            }
+        }
+    }
+
+    // reset line width
+    glLineWidth( 1.0f );
 }
