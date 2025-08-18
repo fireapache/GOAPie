@@ -284,29 +284,43 @@ namespace gie
 			// simulation nodes created during this loop, to be added to opened nodes
 			newNodes.clear();
 
+			if( logSteps ) _logContent.append( "Expanding opened nodes.\n" );
+			if( _useHeuristics && logSteps ) _logContent.append( "Using heuristics.\n" );
+
+expandNodeLoop:
+
+			openedNodesItr = openedNodes.begin();
+
 			if( _useHeuristics )
 			{
-				if( logSteps ) _logContent.append( "Expanding high priority node.\n" );
+				expandNode( *openedNodesItr, newNodes );
 
-				auto highPriorityOpenedNode = *openedNodes.end();
-				openedNodes.pop_back();
-				expandNode( highPriorityOpenedNode, newNodes );
+				// removing just expanded node from opened nodes
+				if( openedNodesItr != openedNodes.end() )
+				{
+					openedNodes.erase( openedNodesItr );
+				}
 
-				if( logSteps ) _logContent.append( "Adding " ).append( std::to_string( newNodes.size() ) ).append( " new nodes (sorted).\n" );
+				if( logSteps ) _logContent.append( "New nodes count: " ).append( std::to_string( newNodes.size() ) ).append( "\n" );
 
+				// adding new nodes to opened nodes
+				if( !newNodes.empty() )
+				{
+					openedNodes.reserve( openedNodes.size() + newNodes.size() );
+					openedNodes.insert( openedNodes.end(), newNodes.begin(), newNodes.end() );
+				}
+
+				if( logSteps ) _logContent.append( "Sorting nodes.\n" );
 				for( auto newNode : newNodes )
 				{
 					auto insertPos = std::upper_bound( openedNodes.begin(), openedNodes.end(), newNode, &Simulation::smallerThan );
 					openedNodes.insert( insertPos, newNode );
 				}
+				openedNodesItr = openedNodes.begin();
 			}
+			// go through all opened nodes
 			else
 			{
-				if( logSteps ) _logContent.append( "Expanding all opened nodes.\n" );
-
-				openedNodesItr = openedNodes.begin();
-expandNodeLoop:
-				// go through all opened nodes
 				while( openedNodesItr != openedNodes.end() )
 				{
 					expandNode( *openedNodesItr, newNodes );
@@ -319,7 +333,8 @@ expandNodeLoop:
 					// checking if last node satified goal
 					if( !newNodes.empty() && goal()->reached( *newNodes.back() ) )
 					{
-						if( logSteps ) _logContent.append( "Goal reached, stopping simulations!\n" );
+						if( logSteps )
+							_logContent.append( "Goal reached, stopping simulations!\n" );
 						// marking simulation which reached the goal for backtracking
 						_goalSimulationGuid = ( *newNodes.end() )->guid();
 						// no need to keep expanding nodes
@@ -327,13 +342,14 @@ expandNodeLoop:
 						openedNodes.clear();
 						break;
 					}
+
 					openedNodesItr++;
 					if( step ) return;
 				}
-
-				// setting next iteration
-				openedNodes = newNodes;
 			}
+
+			// setting next iteration
+			openedNodes = newNodes;
 		}
 
 		if( logSteps ) _logContent.append( "Simulation finished, no more opened nodes.\n" );

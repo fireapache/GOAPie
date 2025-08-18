@@ -640,12 +640,6 @@ int treesOnHill( ExampleParameters& params )
 	planner.addActionSetEntry< WorkActionSetEntry >( gie::stringHasher( "Work" ) );
 	planner.addActionSetEntry< BuildHouseActionSetEntry >( gie::stringHasher( "BuildHouse" ) );
 
-	// finally planner doing its thing
-	planner.plan();
-
-	// printing actions from simulation leaf nodes
-	printSimulatedActions( planner );
-
 	return 0;
 }
 

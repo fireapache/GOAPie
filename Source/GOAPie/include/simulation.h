@@ -98,7 +98,7 @@ namespace gie
 		// comparison operator for std sorting
 		bool operator<( const Simulation& other ) const
 		{
-			return heuristic.value < other.heuristic.value;
+			return ( cost + heuristic.value ) < ( other.cost + other.heuristic.value );
 		}
 
 		// for std sorting
