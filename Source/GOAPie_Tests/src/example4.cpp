@@ -257,9 +257,46 @@ int treesOnHill( ExampleParameters& params )
 			// getting set of trees still up
 			const auto treeUpTagSet		= params.simulation.tagSet( "TreeUp" );
 
-			// consuming first tree
-			auto treeEntityGuid			= *treeUpTagSet->cbegin();
-			auto treeEntity				= context.entity( treeEntityGuid );
+			// choose nearest tree by path length using waypoint graph
+			gie::Guid chosenTreeGuid = gie::NullGuid;
+			float bestLength = std::numeric_limits< float >::max();
+			glm::vec3 agentLocation = *agentEntity->property( "Location" )->getVec3();
+			// collect waypoints
+			auto waypointTagSet = params.simulation.tagSet( "Waypoint" );
+			std::vector< gie::Guid > waypointGuids;
+			if( waypointTagSet )
+			{
+				waypointGuids.assign( waypointTagSet->begin(), waypointTagSet->end() );
+			}
+			for( auto treeGuid : *treeUpTagSet )
+			{
+				if( auto treeEntity = context.entity( treeGuid ) )
+				{
+					auto locPpt = treeEntity->property( "Location" );
+					if( locPpt )
+					{
+						glm::vec3 treeLoc = *locPpt->getVec3();
+						if( !waypointGuids.empty() )
+						{
+							auto path = gie::getPath( *params.simulation.world(), waypointGuids, agentLocation, treeLoc );
+							if( path.length < bestLength )
+							{
+								bestLength = path.length;
+								chosenTreeGuid = treeGuid;
+							}
+						}
+					}
+				}
+			}
+
+			// fallback to first available if path or waypoints are missing
+			if( chosenTreeGuid == gie::NullGuid )
+			{
+				chosenTreeGuid = *treeUpTagSet->cbegin();
+			}
+
+			// consuming chosen tree
+			auto treeEntity				= context.entity( chosenTreeGuid );
 			auto& entityTagRegister		= context.entityTagRegister();
 
 			params.addDebugMessage( "CutDownTreeSimulator::simulate" );
@@ -273,7 +310,7 @@ int treesOnHill( ExampleParameters& params )
 			// creating cut down tree action
 			if( auto cutDownTreeAction = std::make_shared< CutDownTreeAction >() )
 			{
-				cutDownTreeAction->arguments().add( { gie::stringHasher( "TargetTree" ), treeEntityGuid } );
+				cutDownTreeAction->arguments().add( { gie::stringHasher( "TargetTree" ), chosenTreeGuid } );
 				params.simulation.actions.emplace_back( cutDownTreeAction );
 				params.addDebugMessage( "CutDownTreeAction added, returning TRUE" );
 				return true;
@@ -283,6 +320,46 @@ int treesOnHill( ExampleParameters& params )
 			return false;
 		}
 
+		void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
+		{
+			// default heuristic: path length from agent to nearest tree
+			auto& context = params.simulation.context();
+			auto agentEntity = context.entity( params.agent.guid() );
+			if( !agentEntity ) return;
+			glm::vec3 agentLocation = *agentEntity->property( "Location" )->getVec3();
+			const auto treeUpTagSet = params.simulation.tagSet( "TreeUp" );
+			if( !treeUpTagSet || treeUpTagSet->empty() )
+			{
+				params.simulation.heuristic.value = 0.f;
+				return;
+			}
+			// collect waypoints
+			auto waypointTagSet = params.simulation.tagSet( "Waypoint" );
+			if( !waypointTagSet || waypointTagSet->empty() )
+			{
+				params.simulation.heuristic.value = 0.f;
+				return;
+			}
+			std::vector< gie::Guid > waypointGuids{ waypointTagSet->begin(), waypointTagSet->end() };
+			float bestLength = std::numeric_limits< float >::max();
+			for( auto treeGuid : *treeUpTagSet )
+			{
+				if( auto treeEntity = context.entity( treeGuid ) )
+				{
+					if( auto locPpt = treeEntity->property( "Location" ) )
+					{
+						glm::vec3 treeLoc = *locPpt->getVec3();
+						auto path = gie::getPath( *params.simulation.world(), waypointGuids, agentLocation, treeLoc );
+						bestLength = std::min( bestLength, path.length );
+					}
+				}
+			}
+			if( bestLength == std::numeric_limits< float >::max() )
+			{
+				bestLength = 0.f;
+			}
+			params.simulation.heuristic.value = bestLength;
+		}
 	};
 
 	DEFINE_DUMMY_ACTION_CLASS( NewThingToBuy )

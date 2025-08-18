@@ -120,7 +120,10 @@ namespace gie
 		}
 	};
 
-	struct CalculateHeuristicParams : public SimulateSimulationParams {};
+	struct CalculateHeuristicParams : public SimulateSimulationParams
+	{
+		using SimulateSimulationParams::SimulateSimulationParams;
+	};
 
 	class ActionSimulator
 	{

@@ -5,6 +5,7 @@
 #include <memory>
 #include <algorithm>
 #include <string>
+#include <cmath>
 
 #include "action.h"
 #include "simulation.h"
@@ -443,6 +444,22 @@ expandNodeLoop:
 			}
 
 			if( logSteps ) _logContent.append( "* Simulation successful.\n" );
+
+			// When using heuristics, ask action simulator to calculate heuristic for the new node
+			if( _useHeuristics )
+			{
+				actionSimulator->calculateHeuristic( { *newSimulationPair.second, newSimulationPair.second->agent(), *goal() } );
+				// Default cost to 0 if not set by simulator to avoid MaxCost impacting ordering
+				if( newSimulationPair.second->cost == MaxCost )
+				{
+					newSimulationPair.second->cost = 0.f;
+				}
+				// Normalize invalid (NaN) heuristic values to zero
+				if( std::isnan( newSimulationPair.second->heuristic.value ) )
+				{
+					newSimulationPair.second->heuristic.value = 0.f;
+				}
+			}
 
 			// cannot expand this node if it has reached simulation depth limit
 			if( newSimulationPair.second->depth >= _depthLimit )
