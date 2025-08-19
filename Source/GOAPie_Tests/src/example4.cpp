@@ -109,6 +109,8 @@ int treesOnHill( ExampleParameters& params )
 		// wp0
 		waypointLinks[ 0 ]->push_back( wp1Guid );
 		waypointLinks[ 0 ]->push_back( wp7Guid );
+		waypointLinks[ 0 ]->push_back( wp8Guid );
+		waypointLinks[ 0 ]->push_back( wp9Guid );
 		// wp1 (not linked to wp13 initially)
 		if( linkLadder )
 		{

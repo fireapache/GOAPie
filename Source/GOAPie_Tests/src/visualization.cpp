@@ -13,6 +13,7 @@
 #include <goapie.h>
 
 #include <glm/glm.hpp>
+#include <cmath>
 
 #include "example.h"
 
@@ -36,6 +37,10 @@ struct DrawingLimits
 
 // Add this at the top of your file or in a suitable scope
 static gie::Guid selectedSimulationGuid = gie::NullGuid;
+// Global toggle to show waypoint GUID suffixes
+static bool g_ShowWaypointGuidSuffix = false;
+// Global toggle to show arrowheads on waypoint links
+static bool g_ShowWaypointArrows = false;
 
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
 void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
@@ -49,6 +54,7 @@ void unbind_framebuffer();
 void rescale_framebuffer( float width, float height );
 void ShowExampleAppDockSpace( bool* p_open );
 void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& planner );
+void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner );
 
 int visualization( ExampleParameters& params )
 {
@@ -184,7 +190,7 @@ void framebuffer_size_callback( GLFWwindow* window, int width, int height )
     glViewport( 0, 0, width, height );
 }
 
-void drawWorldViewWindow()
+void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
 {
     if( ImGui::Begin( "World View" ) )
     {
@@ -206,6 +212,99 @@ void drawWorldViewWindow()
             ImVec2( pos.x + windowWidth, pos.y + windowHeight ),
             ImVec2( 0, 1 ),
             ImVec2( 1, 0 ) );
+
+        // Optionally overlay last 4 digits of waypoint GUIDs
+        if( g_ShowWaypointGuidSuffix )
+        {
+            const gie::Blackboard* contextBB = &world.context();
+            if( const auto* sim = planner.simulation( selectedSimulationGuid ) )
+            {
+                contextBB = &sim->context();
+            }
+
+            // gather bounds from waypoints and trees to match transform
+            glm::vec3 minBounds( std::numeric_limits< float >::max() );
+            glm::vec3 maxBounds( std::numeric_limits< float >::lowest() );
+
+            auto waypointTag = gie::stringHasher( "Waypoint" );
+            auto treeTag = gie::stringHasher( "Tree" );
+            const auto* waypointSet = contextBB->entityTagRegister().tagSet( { waypointTag } );
+            const auto* treeSet = contextBB->entityTagRegister().tagSet( { treeTag } );
+
+            if( waypointSet )
+            {
+                for( auto guid : *waypointSet )
+                {
+                    if( const auto* e = world.entity( guid ) )
+                    {
+                        if( const auto* loc = e->property( "Location" ) )
+                        {
+                            glm::vec3 p = *loc->getVec3();
+                            minBounds = glm::min( minBounds, p );
+                            maxBounds = glm::max( maxBounds, p );
+                        }
+                    }
+                }
+            }
+
+            if( treeSet )
+            {
+                for( auto guid : *treeSet )
+                {
+                    if( const auto* e = contextBB->entity( guid ) )
+                    {
+                        if( const auto* loc = e->property( "Location" ) )
+                        {
+                            glm::vec3 p = *loc->getVec3();
+                            minBounds = glm::min( minBounds, p );
+                            maxBounds = glm::max( maxBounds, p );
+                        }
+                    }
+                }
+            }
+
+            if( waypointSet && !waypointSet->empty() )
+            {
+                glm::vec3 range = maxBounds - minBounds;
+                glm::vec3 minB = minBounds - range * 0.1f;
+                glm::vec3 maxB = maxBounds + range * 0.1f;
+                glm::vec3 offset = -( minB + maxB ) * 0.5f;
+                glm::vec3 scale = 2.0f / ( maxB - minB );
+
+                ImDrawList* dl = ImGui::GetWindowDrawList();
+
+                for( auto guid : *waypointSet )
+                {
+                    if( const auto* e = world.entity( guid ) )
+                    {
+                        if( const auto* loc = e->property( "Location" ) )
+                        {
+                            glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
+                            // Map NDC [-1,1] to image pixels [0,w]x[0,h] and account for flipped Y in image UVs
+                            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+                            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+
+                            // Position in screen space
+                            ImVec2 textPos{ pos.x + x_px, pos.y + y_px - 12.0f };
+
+                            // last 4 decimal digits
+                            unsigned long long id = static_cast< unsigned long long >( guid );
+                            unsigned int last4 = static_cast< unsigned int >( id % 10000ULL );
+                            char buf[8];
+                            snprintf( buf, sizeof( buf ), "%04u", last4 );
+
+                            // center align
+                            ImVec2 textSize = ImGui::CalcTextSize( buf );
+                            textPos.x -= textSize.x * 0.5f;
+
+                            // draw with slight shadow for readability
+                            dl->AddText( ImVec2( textPos.x + 1, textPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
+                            dl->AddText( textPos, IM_COL32( 255, 255, 0, 255 ), buf );
+                        }
+                    }
+                }
+            }
+        }
     }
     ImGui::End();
 }
@@ -326,6 +425,8 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
         ImGui::Checkbox( "Use Heuristics", &useHeuristics );
         ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
         ImGui::Checkbox( "Step Plan", &planner.stepMutator() );
+        ImGui::Checkbox( "Show Waypoint IDs (last 4)", &g_ShowWaypointGuidSuffix );
+        ImGui::Checkbox( "Show Waypoint Arrows", &g_ShowWaypointArrows );
 
         if( planner.isReady() )
         {
@@ -495,7 +596,7 @@ void drawPlannerLogWindow( ExampleParameters& params )
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
 {
     drawGoapieVisualizationWindow( useHeuristics, params );
-    drawWorldViewWindow();
+    drawWorldViewWindow( params.world, params.planner );
     drawDebugMessagesWindow( params );
     drawSimulationArgumentsWindow( params );
     drawPlannerLogWindow( params );
@@ -528,6 +629,36 @@ void drawLinks(
                     glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
                     glVertex3f( scaledLinkedLocation.x, scaledLinkedLocation.y, scaledLinkedLocation.z );
                     glEnd();
+
+                    if( g_ShowWaypointArrows )
+                    {
+                        // Draw an arrowhead pointing to the linked waypoint
+                        // Using a small triangle at the end of the line oriented along the link direction (2D on XY)
+                        glm::vec2 start2{ scaledLocation.x, scaledLocation.y };
+                        glm::vec2 end2{ scaledLinkedLocation.x, scaledLinkedLocation.y };
+                        glm::vec2 dir = end2 - start2;
+                        float len = glm::length( dir );
+                        if( len > 1e-6f )
+                        {
+                            dir /= len; // normalize
+                            glm::vec2 perp{ -dir.y, dir.x };
+
+                            // sizes in clip-space units (tweak as desired)
+                            const float arrowLength = 0.03f;
+                            const float arrowWidth = 0.02f;
+
+                            glm::vec2 base = end2 - dir * arrowLength; // base of the arrow near the tip
+                            glm::vec2 left = base + perp * ( arrowWidth * 0.5f );
+                            glm::vec2 right = base - perp * ( arrowWidth * 0.5f );
+
+                            float z = scaledLinkedLocation.z;
+                            glBegin( GL_TRIANGLES );
+                            glVertex3f( end2.x, end2.y, z );
+                            glVertex3f( left.x, left.y, z );
+                            glVertex3f( right.x, right.y, z );
+                            glEnd();
+                        }
+                    }
                 }
             }
         }
