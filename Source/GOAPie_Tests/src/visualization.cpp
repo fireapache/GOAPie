@@ -56,6 +56,7 @@ void rescale_framebuffer( float width, float height );
 void ShowExampleAppDockSpace( bool* p_open );
 void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& planner );
 void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner );
+void drawAgentCrosshair( const gie::World& world, const gie::Planner& planner );
 
 int visualization( ExampleParameters& params )
 {
@@ -160,6 +161,7 @@ int visualization( ExampleParameters& params )
         drawWaypointsAndLinks( world, planner, drawingLimits );
         drawTrees( world, planner, drawingLimits );
         drawSelectedSimulationPath( world, planner );
+        drawAgentCrosshair( world, planner );
 
         // and unbind it again
         unbind_framebuffer();
@@ -1095,10 +1097,53 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
     }
     glEnd();
 
+    auto drawArrowAtMid = []( const glm::vec3& a, const glm::vec3& b )
+    {
+        glm::vec2 a2{ a.x, a.y };
+        glm::vec2 b2{ b.x, b.y };
+        glm::vec2 dir = b2 - a2;
+        float len = glm::length( dir );
+        if( len <= 1e-6f ) return;
+        dir /= len;
+        glm::vec2 perp{ -dir.y, dir.x };
+
+        // Arrow centered near the middle of the segment
+        const float arrowLen = 0.03f;
+        const float arrowWidth = 0.025f;
+        glm::vec2 mid = ( a2 + b2 ) * 0.5f;
+        glm::vec2 tip = mid + dir * arrowLen * 0.5f;
+        glm::vec2 base = mid - dir * arrowLen * 0.5f;
+        glm::vec2 left = base + perp * ( arrowWidth * 0.5f );
+        glm::vec2 right = base - perp * ( arrowWidth * 0.5f );
+
+        float z = ( a.z + b.z ) * 0.5f;
+        glBegin( GL_TRIANGLES );
+        glVertex3f( tip.x, tip.y, z );
+        glVertex3f( left.x, left.y, z );
+        glVertex3f( right.x, right.y, z );
+        glEnd();
+    };
+
+    // draw arrows at mid of each path segment
+    glColor3f( 1.0f, 0.0f, 1.0f );
+    for( size_t i = 1; i < pathGuids.size(); ++i )
+    {
+        auto e0 = world.entity( pathGuids[ i - 1 ] );
+        auto e1 = world.entity( pathGuids[ i ] );
+        if( !e0 || !e1 ) continue;
+        auto l0 = e0->property( "Location" );
+        auto l1 = e1->property( "Location" );
+        if( !l0 || !l1 ) continue;
+        glm::vec3 a = ( *l0->getVec3() + offset ) * scale;
+        glm::vec3 b = ( *l1->getVec3() + offset ) * scale;
+        drawArrowAtMid( a, b );
+    }
+
     // draw segment from agent to first waypoint in the path (if available)
     if( !pathGuids.empty() )
     {
-        auto agentEntity = world.agent( planner.agent()->guid() );
+        // use simulation context agent location (not world context)
+        auto agentEntity = contextBB->entity( planner.agent()->guid() );
         if( agentEntity )
         {
             auto agentLocPpt = agentEntity->property( "Location" );
@@ -1113,6 +1158,9 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
                     glVertex3f( a.x, a.y, a.z );
                     glVertex3f( b.x, b.y, b.z );
                     glEnd();
+
+                    // arrow for this segment
+                    drawArrowAtMid( a, b );
                 }
             }
         }
@@ -1137,10 +1185,87 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
                 glVertex3f( a.x, a.y, a.z );
                 glVertex3f( b.x, b.y, b.z );
                 glEnd();
+
+                // arrow for this segment
+                drawArrowAtMid( a, b );
             }
         }
     }
 
     // reset line width
+    glLineWidth( 1.0f );
+}
+
+void drawAgentCrosshair( const gie::World& world, const gie::Planner& planner )
+{
+    const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
+    if( !selectedSimulation ) return;
+
+    const gie::Blackboard* contextBB = &selectedSimulation->context();
+
+    // compute bounds from waypoints and trees to match transform
+    glm::vec3 minBounds( std::numeric_limits< float >::max() );
+    glm::vec3 maxBounds( std::numeric_limits< float >::lowest() );
+
+    auto waypointSet = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+    if( waypointSet )
+    {
+        for( auto guid : *waypointSet )
+        {
+            if( auto e = world.entity( guid ) )
+            {
+                if( auto loc = e->property( "Location" ) )
+                {
+                    glm::vec3 p = *loc->getVec3();
+                    minBounds = glm::min( minBounds, p );
+                    maxBounds = glm::max( maxBounds, p );
+                }
+            }
+        }
+    }
+
+    auto treeSet = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
+    if( treeSet )
+    {
+        for( auto guid : *treeSet )
+        {
+            if( auto e = contextBB->entity( guid ) )
+            {
+                if( auto loc = e->property( "Location" ) )
+                {
+                    glm::vec3 p = *loc->getVec3();
+                    minBounds = glm::min( minBounds, p );
+                    maxBounds = glm::max( maxBounds, p );
+                }
+            }
+        }
+    }
+
+    glm::vec3 range = maxBounds - minBounds;
+    glm::vec3 minB = minBounds - range * 0.1f;
+    glm::vec3 maxB = maxBounds + range * 0.1f;
+    glm::vec3 offset = -( minB + maxB ) * 0.5f;
+    glm::vec3 scale = 2.0f / ( maxB - minB );
+
+    // get agent location from simulation context
+    auto agentEntity = contextBB->entity( planner.agent()->guid() );
+    if( !agentEntity ) return;
+    auto agentLocPpt = agentEntity->property( "Location" );
+    if( !agentLocPpt ) return;
+
+    glm::vec3 p = ( *agentLocPpt->getVec3() + offset ) * scale;
+
+    // draw orange crosshair
+    glColor3f( 1.0f, 0.5f, 0.0f );
+    const float half = 0.03f; // half-size in clip units
+    glLineWidth( 2.0f );
+    glBegin( GL_LINES );
+    // horizontal
+    glVertex3f( p.x - half, p.y, p.z );
+    glVertex3f( p.x + half, p.y, p.z );
+    // vertical
+    glVertex3f( p.x, p.y - half, p.z );
+    glVertex3f( p.x, p.y + half, p.z );
+    glEnd();
     glLineWidth( 1.0f );
 }
