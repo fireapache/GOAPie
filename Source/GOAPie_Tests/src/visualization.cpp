@@ -14,6 +14,7 @@
 
 #include <glm/glm.hpp>
 #include <cmath>
+#include <cctype>
 
 #include "example.h"
 
@@ -284,8 +285,8 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
                             float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
                             float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
 
-                            // Position in screen space
-                            ImVec2 textPos{ pos.x + x_px, pos.y + y_px - 12.0f };
+                            // Position in screen space (base position for suffix)
+                            ImVec2 suffixPos{ pos.x + x_px, pos.y + y_px - 12.0f };
 
                             // last 4 decimal digits
                             unsigned long long id = static_cast< unsigned long long >( guid );
@@ -293,13 +294,38 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
                             char buf[8];
                             snprintf( buf, sizeof( buf ), "%04u", last4 );
 
-                            // center align
-                            ImVec2 textSize = ImGui::CalcTextSize( buf );
-                            textPos.x -= textSize.x * 0.5f;
+                            // center align suffix
+                            ImVec2 suffixSize = ImGui::CalcTextSize( buf );
+                            suffixPos.x -= suffixSize.x * 0.5f;
 
-                            // draw with slight shadow for readability
-                            dl->AddText( ImVec2( textPos.x + 1, textPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
-                            dl->AddText( textPos, IM_COL32( 255, 255, 0, 255 ), buf );
+                            // draw suffix with slight shadow for readability
+                            dl->AddText( ImVec2( suffixPos.x + 1, suffixPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
+                            dl->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
+
+                            // Derive waypoint index from entity name, expected to be "waypoint<number>"
+                            std::string idxLabel = "wp?";
+                            auto nameHash = e->nameHash();
+                            if( nameHash != gie::InvalidStringHash )
+                            {
+                                std::string name( gie::stringRegister().get( nameHash ) );
+                                size_t j = name.size();
+                                while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
+                                {
+                                    --j;
+                                }
+                                if( j < name.size() )
+                                {
+                                    idxLabel = std::string( "wp" ) + name.substr( j );
+                                }
+                            }
+
+                            // Position index label above the suffix and center align
+                            ImVec2 idxSize = ImGui::CalcTextSize( idxLabel.c_str() );
+                            ImVec2 idxPos{ pos.x + x_px - idxSize.x * 0.5f, suffixPos.y - ( idxSize.y + 2.0f ) };
+
+                            // draw index label (white) with shadow
+                            dl->AddText( ImVec2( idxPos.x + 1, idxPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), idxLabel.c_str() );
+                            dl->AddText( idxPos, IM_COL32( 255, 255, 255, 255 ), idxLabel.c_str() );
                         }
                     }
                 }
@@ -309,7 +335,7 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
     ImGui::End();
 }
 
-void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, const bool padding = false )
+void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, const bool padding )
 {
     auto nameHash = entity.nameHash();
     const bool isValidName = nameHash != gie::InvalidStringHash;

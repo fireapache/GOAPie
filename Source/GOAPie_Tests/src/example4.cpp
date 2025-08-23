@@ -118,6 +118,7 @@ int treesOnHill( ExampleParameters& params )
 		}
 		waypointLinks[ 1 ]->push_back( wp2Guid );
 		waypointLinks[ 1 ]->push_back( wp0Guid );
+		waypointLinks[ 1 ]->push_back( wp8Guid );
 		// wp2
 		waypointLinks[ 2 ]->push_back( wp3Guid );
 		waypointLinks[ 2 ]->push_back( wp1Guid );
@@ -262,7 +263,7 @@ int treesOnHill( ExampleParameters& params )
 			// choose nearest tree by path length using waypoint graph
 			gie::Guid chosenTreeGuid = gie::NullGuid;
 			float bestLength = std::numeric_limits< float >::max();
-			glm::vec3 agentLocation = *agentEntity->property( "Location" )->getVec3();
+			glm::vec3* agentLocation = agentEntity->property( "Location" )->getVec3();
 			// collect waypoints
 			auto waypointTagSet = params.simulation.tagSet( "Waypoint" );
 			std::vector< gie::Guid > waypointGuids;
@@ -282,7 +283,7 @@ int treesOnHill( ExampleParameters& params )
 						glm::vec3 treeLoc = *locPpt->getVec3();
 						if( !waypointGuids.empty() )
 						{
-							pathResult = gie::getPath( *params.simulation.world(), waypointGuids, agentLocation, treeLoc );
+							pathResult = gie::getPath( *params.simulation.world(), waypointGuids, *agentLocation, treeLoc );
 							if( pathResult.length < bestLength )
 							{
 								bestLength = pathResult.length;
@@ -307,6 +308,7 @@ int treesOnHill( ExampleParameters& params )
 					if( auto locPpt = chosenTree->property( "Location" ) )
 					{
 						glm::vec3 treeLoc = *locPpt->getVec3();
+						*agentLocation = treeLoc;
 						params.simulation.arguments().add( "PathToTarget", pathResult.path );
 						params.simulation.arguments().add( "PathTarget", chosenTreeGuid );
 					}
