@@ -36,7 +36,25 @@ namespace gie
 		float length{ 0.f };
 	};
 
-	inline PathfindingResult getPath( World& world, const std::vector< Guid >& waypointGuids, glm::vec3 start, glm::vec3 end )
+	struct PathfindingState
+	{
+		std::vector< Guid > openedNodes;
+		std::vector< Guid > visitedNodes;
+		// every backtrack pair is (node, backtrack node)
+		std::vector< Guid > backtracks;
+	};
+
+	struct PathfindingSteps
+	{
+		std::vector< PathfindingState > states;
+	};
+
+	inline PathfindingResult getPath(
+		World& world,
+		const std::vector< Guid >& waypointGuids,
+		glm::vec3 start,
+		glm::vec3 end,
+		PathfindingSteps* steps = nullptr )
 	{
 		// validating inputs
 
@@ -79,9 +97,15 @@ namespace gie
 		visitedNodes.reserve( waypointGuids.size() );
 
 		Guid goalNode{ NullGuid };
+		PathfindingState state;
 
 		while( !openedNodes.empty() )
 		{
+			if( steps )
+			{
+				state.openedNodes = openedNodes;
+			}
+
 			// getting best node to expand
 			Guid bestNode = NullGuid;
 			float bestNodeAssumedCost = std::numeric_limits< float >::max();
@@ -98,8 +122,9 @@ namespace gie
 				}
 			}
 
-			// marking as visited so it's not checkd it again
+			// marking as visited so it's not checked it again
 			visitedNodes.push_back( bestNode );
+			state.visitedNodes = visitedNodes;
 
 			// checking if reached goal node
 			if( bestNode == endNode )
@@ -139,6 +164,11 @@ namespace gie
 					const float distanceToGoal = glm::distance( linkedNodeLocation, endNodeLocation );
 					linkedNodeEntity->property( "Heuristic" )->value = distanceToGoal;
 					linkedNodeEntity->property( "Backtrack" )->value = bestNode;
+					if( steps )
+					{
+						state.backtracks.push_back( linkedNodeEntity->guid() );
+						state.backtracks.push_back( bestNode );
+					}
 				}
 			}
 
@@ -147,6 +177,11 @@ namespace gie
 			if( openedNodesNewEnd != openedNodes.end() )
 			{
 				openedNodes.erase( openedNodesNewEnd, openedNodes.end() );
+			}
+
+			if( steps )
+			{
+				steps->states.push_back( state );
 			}
 		}
 
