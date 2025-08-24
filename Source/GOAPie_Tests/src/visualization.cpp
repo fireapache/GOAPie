@@ -3,6 +3,7 @@
 */
 
 // clang-format off
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -42,6 +43,10 @@ static gie::Guid selectedSimulationGuid = gie::NullGuid;
 static bool g_ShowWaypointGuidSuffix = false;
 // Global toggle to show arrowheads on waypoint links
 static bool g_ShowWaypointArrows = false;
+// Path-stepping visualization state
+static bool g_PathStepMode = false;              // render path steps instead of final path
+static int g_PathStepIndex = 0;                  // current step index
+static gie::Guid g_PathStepSimGuid = gie::NullGuid; // simulation guid bound to the current step session
 
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
 void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
@@ -520,6 +525,51 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
                 ImGui::Separator();
             }
 
+            // Path step UI (only if selected simulation has path step arguments)
+            if( selectedSim )
+            {
+                const auto* openedOffsetsArg = selectedSim->arguments().get( "PF_OpenedOffsets" );
+                const auto* visitedOffsetsArg = selectedSim->arguments().get( "PF_VisitedOffsets" );
+                const auto* backtrackOffsetsArg = selectedSim->arguments().get( "PF_BacktrackOffsets" );
+                if( openedOffsetsArg && visitedOffsetsArg && backtrackOffsetsArg )
+                {
+                    const auto& openedOffsets = std::get< gie::Property::IntegerVector >( *openedOffsetsArg );
+                    int statesCount = static_cast<int>( openedOffsets.size() > 0 ? openedOffsets.size() - 1 : 0 );
+
+                    ImGui::Text( "Path Steps: %d", statesCount );
+                    if( statesCount > 0 )
+                    {
+                        if( ImGui::Button( "Step Path" ) )
+                        {
+                            if( !g_PathStepMode || g_PathStepSimGuid != selectedSim->guid() )
+                            {
+                                // start stepping for this simulation
+                                g_PathStepMode = true;
+                                g_PathStepIndex = 0;
+                                g_PathStepSimGuid = selectedSim->guid();
+                            }
+                            else
+                            {
+                                // advance or reset
+                                if( g_PathStepIndex + 1 < statesCount )
+                                {
+                                    g_PathStepIndex++;
+                                }
+                                else
+                                {
+                                    // reached last state -> reset/turn off
+                                    g_PathStepMode = false;
+                                    g_PathStepIndex = 0;
+                                    g_PathStepSimGuid = gie::NullGuid;
+                                }
+                            }
+                        }
+                        ImGui::SameLine();
+                        ImGui::Text( "State: %d / %d", g_PathStepMode && g_PathStepSimGuid == selectedSim->guid() ? ( g_PathStepIndex + 1 ) : 0, statesCount );
+                    }
+                }
+            }
+
             auto rootNode = planner.rootSimulation();
             if( rootNode )
             {
@@ -861,6 +911,10 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
     if( ImGui::IsItemClicked() )
     {
         selectedSimulationGuid = simulation->guid();
+        // reset path step mode when selecting a different simulation
+        g_PathStepMode = false;
+        g_PathStepIndex = 0;
+        g_PathStepSimGuid = gie::NullGuid;
     }
 
     if( nodeOpen )
@@ -1034,23 +1088,15 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
     const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
     if( !selectedSimulation ) return;
 
-    const auto* pathArg = selectedSimulation->arguments().get( "PathToTarget" );
-    if( !pathArg ) return;
-
-    const auto& pathGuids = std::get< std::vector< gie::Guid > >( *pathArg );
-    if( pathGuids.size() <= 1 ) return;
-
-    // recompute drawing transform to match drawWaypointsAndLinks/drawTrees
-    const gie::Blackboard* contextBB = &world.context();
-    contextBB = &selectedSimulation->context();
+    const gie::Blackboard* contextBB = &selectedSimulation->context();
 
     // compute bounds again (same as tree/waypoint drawing)
     glm::vec3 minBounds( std::numeric_limits< float >::max() );
     glm::vec3 maxBounds( std::numeric_limits< float >::lowest() );
-    auto waypointGuids = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-    if( waypointGuids )
+    auto waypointGuidsTag = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+    if( waypointGuidsTag )
     {
-        for( auto guid : *waypointGuids )
+        for( auto guid : *waypointGuidsTag )
         {
             auto e = world.entity( guid );
             if( auto loc = e->property( "Location" ) )
@@ -1081,6 +1127,123 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
     glm::vec3 maxB = maxBounds + range * 0.1f;
     glm::vec3 offset = -( minB + maxB ) * 0.5f;
     glm::vec3 scale = 2.0f / ( maxB - minB );
+
+    // Path steps available?
+    const auto* openedArg = selectedSimulation->arguments().get( "PF_Opened" );
+    const auto* visitedArg = selectedSimulation->arguments().get( "PF_Visited" );
+    const auto* backsArg = selectedSimulation->arguments().get( "PF_Backtracks" );
+    const auto* openedOffsetsArg = selectedSimulation->arguments().get( "PF_OpenedOffsets" );
+    const auto* visitedOffsetsArg = selectedSimulation->arguments().get( "PF_VisitedOffsets" );
+    const auto* backOffsetsArg = selectedSimulation->arguments().get( "PF_BacktrackOffsets" );
+
+    bool hasStepData = openedArg && visitedArg && backsArg && openedOffsetsArg && visitedOffsetsArg && backOffsetsArg;
+
+    // if stepping is enabled and data exists and bound to this sim, render step state
+    if( hasStepData && g_PathStepMode && g_PathStepSimGuid == selectedSimulation->guid() )
+    {
+        const auto& openedAll = std::get< gie::Property::GuidVector >( *openedArg );
+        const auto& visitedAll = std::get< gie::Property::GuidVector >( *visitedArg );
+        const auto& backAll = std::get< gie::Property::GuidVector >( *backsArg );
+        const auto& openedOff = std::get< gie::Property::IntegerVector >( *openedOffsetsArg );
+        const auto& visitedOff = std::get< gie::Property::IntegerVector >( *visitedOffsetsArg );
+        const auto& backOff = std::get< gie::Property::IntegerVector >( *backOffsetsArg );
+        int statesCount = static_cast<int>( openedOff.size() > 0 ? openedOff.size() - 1 : 0 );
+        if( statesCount <= 0 ) return;
+        int s = std::min( std::max( g_PathStepIndex, 0 ), statesCount - 1 );
+
+        int o0 = openedOff[ s ];
+        int o1 = openedOff[ s + 1 ];
+        int v0 = visitedOff[ s ];
+        int v1 = visitedOff[ s + 1 ];
+        int b0 = backOff[ s ];
+        int b1 = backOff[ s + 1 ];
+
+        // draw opened nodes (yellow)
+        glPointSize( 9.0f );
+        glColor3f( 1.0f, 1.0f, 0.0f );
+        glBegin( GL_POINTS );
+        for( int i = o0; i < o1; ++i )
+        {
+            auto e = world.entity( openedAll[ i ] );
+            if( !e ) continue;
+            auto loc = e->property( "Location" );
+            if( !loc ) continue;
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            glVertex3f( p.x, p.y, p.z );
+        }
+        glEnd();
+
+        // draw visited nodes (cyan)
+        glPointSize( 11.0f );
+        glColor3f( 0.0f, 1.0f, 1.0f );
+        glBegin( GL_POINTS );
+        for( int i = v0; i < v1; ++i )
+        {
+            auto e = world.entity( visitedAll[ i ] );
+            if( !e ) continue;
+            auto loc = e->property( "Location" );
+            if( !loc ) continue;
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            glVertex3f( p.x, p.y, p.z );
+        }
+        glEnd();
+
+        auto drawArrow = []( const glm::vec3& a, const glm::vec3& b )
+        {
+            glm::vec2 a2{ a.x, a.y };
+            glm::vec2 b2{ b.x, b.y };
+            glm::vec2 dir = b2 - a2;
+            float len = glm::length( dir );
+            if( len <= 1e-6f ) return;
+            dir /= len;
+            glm::vec2 perp{ -dir.y, dir.x };
+
+            // Arrow centered near the middle of the segment
+            const float arrowLen = 0.03f;
+            const float arrowWidth = 0.02f;
+            glm::vec2 mid = ( a2 + b2 ) * 0.5f;
+            glm::vec2 tip = mid + dir * arrowLen * 0.5f;
+            glm::vec2 base = mid - dir * arrowLen * 0.5f;
+            glm::vec2 left = base + perp * ( arrowWidth * 0.5f );
+            glm::vec2 right = base - perp * ( arrowWidth * 0.5f );
+
+            float z = ( a.z + b.z ) * 0.5f;
+            glBegin( GL_TRIANGLES );
+            glVertex3f( tip.x, tip.y, z );
+            glVertex3f( left.x, left.y, z );
+            glVertex3f( right.x, right.y, z );
+            glEnd();
+        };
+
+        // draw backtrack arrows (white) for every pair (node, backtrack)
+        glColor3f( 1.0f, 1.0f, 1.0f );
+        for( int i = b0; i + 1 < b1; i += 2 )
+        {
+            auto node = world.entity( backAll[ i ] );
+            auto prev = world.entity( backAll[ i + 1 ] );
+            if( !node || !prev ) continue;
+            auto nLoc = node->property( "Location" );
+            auto pLoc = prev->property( "Location" );
+            if( !nLoc || !pLoc ) continue;
+            glm::vec3 a = ( *pLoc->getVec3() + offset ) * scale; // arrow from prev -> node
+            glm::vec3 b = ( *nLoc->getVec3() + offset ) * scale;
+            glBegin( GL_LINES );
+            glVertex3f( a.x, a.y, a.z );
+            glVertex3f( b.x, b.y, b.z );
+            glEnd();
+            drawArrow( a, b );
+        }
+
+        // done with step view
+        return;
+    }
+
+    // otherwise: draw final computed path if available
+    const auto* pathArg = selectedSimulation->arguments().get( "PathToTarget" );
+    if( !pathArg ) return;
+
+    const auto& pathGuids = std::get< std::vector< gie::Guid > >( *pathArg );
+    if( pathGuids.size() <= 1 ) return;
 
     // draw magenta path with thicker lines
     glLineWidth( 3.0f );
