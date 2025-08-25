@@ -1303,29 +1303,22 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
     }
 
     // draw segment from agent to first waypoint in the path (if available)
-    if( !pathGuids.empty() )
+	const auto agentStartLocationArgument = selectedSimulation->arguments().get( "AgentStartLocation" );
+	if( !pathGuids.empty() && agentStartLocationArgument )
     {
-        // use simulation context agent location (not world context)
-        auto agentEntity = contextBB->entity( planner.agent()->guid() );
-        if( agentEntity )
+		auto agentStartLocPpt = std::get< glm::vec3 >( *agentStartLocationArgument );
+        auto firstWp = world.entity( pathGuids.front() );
+        if( auto wpLoc = firstWp->property( "Location" ) )
         {
-            auto agentLocPpt = agentEntity->property( "Location" );
-            if( agentLocPpt )
-            {
-                auto firstWp = world.entity( pathGuids.front() );
-                if( auto wpLoc = firstWp->property( "Location" ) )
-                {
-                    glm::vec3 a = ( *agentLocPpt->getVec3() + offset ) * scale;
-                    glm::vec3 b = ( *wpLoc->getVec3() + offset ) * scale;
-                    glBegin( GL_LINES );
-                    glVertex3f( a.x, a.y, a.z );
-                    glVertex3f( b.x, b.y, b.z );
-                    glEnd();
+            glm::vec3 a = ( agentStartLocPpt + offset ) * scale;
+            glm::vec3 b = ( *wpLoc->getVec3() + offset ) * scale;
+            glBegin( GL_LINES );
+            glVertex3f( a.x, a.y, a.z );
+            glVertex3f( b.x, b.y, b.z );
+            glEnd();
 
-                    // arrow for this segment
-                    drawArrowAtMid( a, b );
-                }
-            }
+            // arrow for this segment
+            drawArrowAtMid( a, b );
         }
     }
 

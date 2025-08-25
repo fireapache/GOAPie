@@ -313,9 +313,10 @@ int treesOnHill( ExampleParameters& params )
 					if( auto locPpt = chosenTree->property( "Location" ) )
 					{
 						glm::vec3 treeLoc = *locPpt->getVec3();
-						*agentLocation = treeLoc;
 						params.simulation.arguments().add( "PathToTarget", pathResult.path );
 						params.simulation.arguments().add( "PathTarget", chosenTreeGuid );
+						params.simulation.arguments().add( "AgentStartLocation", *agentLocation );
+						*agentLocation = treeLoc;
 
 						// transfer optional pathfinding steps for visualization stepping
 						if( !bestSteps.states.empty() )
