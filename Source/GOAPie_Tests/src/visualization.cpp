@@ -16,6 +16,9 @@
 #include <glm/glm.hpp>
 #include <cmath>
 #include <cctype>
+#include <fstream>
+#include <sstream>
+#include <string>
 
 #include "example.h"
 
@@ -47,8 +50,55 @@ static bool g_ShowWaypointArrows = false;
 static bool g_PathStepMode = false;              // render path steps instead of final path
 static int g_PathStepIndex = 0;                  // current step index
 static gie::Guid g_PathStepSimGuid = gie::NullGuid; // simulation guid bound to the current step session
-// Tools -> Debug Path window visibility
+// Tools -> window visibility toggles (all false so dock space is empty at first launch)
 static bool g_ShowDebugPathWindow = false;
+static bool g_ShowGoapieVisualizationWindow = false;
+static bool g_ShowWorldViewWindow = false;
+static bool g_ShowDebugMessagesWindow = false;
+static bool g_ShowSimulationArgumentsWindow = false;
+static bool g_ShowPlannerLogWindow = false;
+static bool g_ShowBlackboardPropertiesWindow = false;
+
+// UI settings persistence
+static const char* kUiWindowsSettingsFile = "goapie_ui_windows.ini";
+static void LoadWindowVisibilitySettings()
+{
+    std::ifstream in( kUiWindowsSettingsFile );
+    if( !in.good() ) return; // first run or no file
+    std::string line;
+    auto parseBool = []( const std::string& s ) -> bool
+    {
+        return s == "1" || s == "true" || s == "True" || s == "TRUE" || s == "yes" || s == "on";
+    };
+    while( std::getline( in, line ) )
+    {
+        if( line.empty() || line[ 0 ] == '#' ) continue;
+        size_t eq = line.find( '=' );
+        if( eq == std::string::npos ) continue;
+        std::string key = line.substr( 0, eq );
+        std::string val = line.substr( eq + 1 );
+        if( key == "ShowDebugPathWindow" ) g_ShowDebugPathWindow = parseBool( val );
+        else if( key == "ShowGoapieVisualizationWindow" ) g_ShowGoapieVisualizationWindow = parseBool( val );
+        else if( key == "ShowWorldViewWindow" ) g_ShowWorldViewWindow = parseBool( val );
+        else if( key == "ShowDebugMessagesWindow" ) g_ShowDebugMessagesWindow = parseBool( val );
+        else if( key == "ShowSimulationArgumentsWindow" ) g_ShowSimulationArgumentsWindow = parseBool( val );
+        else if( key == "ShowPlannerLogWindow" ) g_ShowPlannerLogWindow = parseBool( val );
+        else if( key == "ShowBlackboardPropertiesWindow" ) g_ShowBlackboardPropertiesWindow = parseBool( val );
+    }
+}
+static void SaveWindowVisibilitySettings()
+{
+    std::ofstream out( kUiWindowsSettingsFile, std::ios::trunc );
+    if( !out.good() ) return;
+    out << "# GOAPie UI windows visibility\n";
+    out << "ShowDebugPathWindow=" << ( g_ShowDebugPathWindow ? 1 : 0 ) << '\n';
+    out << "ShowGoapieVisualizationWindow=" << ( g_ShowGoapieVisualizationWindow ? 1 : 0 ) << '\n';
+    out << "ShowWorldViewWindow=" << ( g_ShowWorldViewWindow ? 1 : 0 ) << '\n';
+    out << "ShowDebugMessagesWindow=" << ( g_ShowDebugMessagesWindow ? 1 : 0 ) << '\n';
+    out << "ShowSimulationArgumentsWindow=" << ( g_ShowSimulationArgumentsWindow ? 1 : 0 ) << '\n';
+    out << "ShowPlannerLogWindow=" << ( g_ShowPlannerLogWindow ? 1 : 0 ) << '\n';
+    out << "ShowBlackboardPropertiesWindow=" << ( g_ShowBlackboardPropertiesWindow ? 1 : 0 ) << '\n';
+}
 
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
 void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
@@ -65,6 +115,7 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
 void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner );
 void drawAgentCrosshair( const gie::World& world, const gie::Planner& planner );
 void drawDebugPathWindow( ExampleParameters& params );
+void drawBlackboardPropertiesWindow( const gie::Simulation* simulation );
 
 int visualization( ExampleParameters& params )
 {
@@ -125,6 +176,9 @@ int visualization( ExampleParameters& params )
     ImGui_ImplGlfw_InitForOpenGL( window, true );
     ImGui_ImplOpenGL3_Init( "#version 130" );
 
+    // Load persistent UI windows visibility
+    LoadWindowVisibilitySettings();
+
     // Bounds of elements to be drawn
     DrawingLimits drawingLimits;
     bool useHeuristics = false;
@@ -178,6 +232,9 @@ int visualization( ExampleParameters& params )
         glfwPollEvents();
     }
 
+    // Save UI windows visibility
+    SaveWindowVisibilitySettings();
+
     // Cleanup ImGui
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
@@ -203,7 +260,9 @@ void framebuffer_size_callback( GLFWwindow* window, int width, int height )
 
 void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
 {
-    if( ImGui::Begin( "World View" ) )
+    if( !g_ShowWorldViewWindow ) return;
+
+    if( ImGui::Begin( "World View", &g_ShowWorldViewWindow ) )
     {
         // we access the ImGui window size
         const float windowWidth = ImGui::GetContentRegionAvail().x;
@@ -368,6 +427,7 @@ void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, 
 
 void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )
 {
+    if( !g_ShowBlackboardPropertiesWindow ) return;
     if( !simulation ) return;
 
     const gie::Blackboard* currentContext = &simulation->context();
@@ -386,7 +446,7 @@ void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )
 
     static bool multiLevel = false;
 
-    if( ImGui::Begin( "Blackboard Properties" ) )
+    if( ImGui::Begin( "Blackboard Properties", &g_ShowBlackboardPropertiesWindow ) )
     {
         currentContext = &simulation->context();
         ImGui::Checkbox( "Multi-Level", &multiLevel );
@@ -453,10 +513,12 @@ void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )
 
 void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& params )
 {
+    if( !g_ShowGoapieVisualizationWindow ) return;
+
     gie::World& world = params.world;
     gie::Planner& planner = params.planner;
 
-    if( ImGui::Begin( "GOAPie Visualization" ) )
+    if( ImGui::Begin( "GOAPie Visualization", &g_ShowGoapieVisualizationWindow ) )
     {
         ImGui::Checkbox( "Use Heuristics", &useHeuristics );
         ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
@@ -538,6 +600,7 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
                 ImGui::Text( "No simulation nodes available." );
             }
 
+            // separate window, toggled via Tools menu
             drawBlackboardPropertiesWindow( selectedSim );
         }
     }
@@ -546,16 +609,23 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 
 void drawDebugMessagesWindow( ExampleParameters& params )
 {
+    if( !g_ShowDebugMessagesWindow ) return;
+
     const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
 
     if( !selectedSimulation )
     {
+        if( ImGui::Begin( "Debug Messages", &g_ShowDebugMessagesWindow ) )
+        {
+            ImGui::TextUnformatted( "No simulation selected." );
+        }
+        ImGui::End();
         return;
     }
 
     const auto& debugMessages = selectedSimulation->debugMessages();
 
-    if( ImGui::Begin( "Debug Messages" ) )
+    if( ImGui::Begin( "Debug Messages", &g_ShowDebugMessagesWindow ) )
     {
         if( !debugMessages.messages() || debugMessages.messages()->empty() )
         {
@@ -574,14 +644,23 @@ void drawDebugMessagesWindow( ExampleParameters& params )
 
 void drawSimulationArgumentsWindow( ExampleParameters& params )
 {  
+    if( !g_ShowSimulationArgumentsWindow ) return;
+
     const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
 
     if( !selectedSimulation )
+    {
+        if( ImGui::Begin( "Simulation Arguments", &g_ShowSimulationArgumentsWindow ) )
+        {
+            ImGui::TextUnformatted( "No simulation selected." );
+        }
+        ImGui::End();
         return;
+    }
 
     const auto& arguments = selectedSimulation->arguments();
 
-    if( ImGui::Begin( "Simulation Arguments" ) )
+    if( ImGui::Begin( "Simulation Arguments", &g_ShowSimulationArgumentsWindow ) )
     {
         if( arguments.empty() )
         {
@@ -607,13 +686,15 @@ void drawSimulationArgumentsWindow( ExampleParameters& params )
 
 void drawPlannerLogWindow( ExampleParameters& params )
 {
+    if( !g_ShowPlannerLogWindow ) return;
+
     const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
 
     if( !selectedSimulation ) return;
 
     gie::Planner& planner = params.planner;
 
-    if( ImGui::Begin( "Planner Log" ) )
+    if( ImGui::Begin( "Planner Log", &g_ShowPlannerLogWindow ) )
     {
         const std::string& logContent = planner.logContent();
 
@@ -1107,6 +1188,13 @@ void ShowExampleAppDockSpace(bool* p_open)
         // New Tools menu beside Options
         if (ImGui::BeginMenu("Tools"))
         {
+            ImGui::MenuItem("GOAPie Visualization", NULL, &g_ShowGoapieVisualizationWindow);
+            ImGui::MenuItem("World View", NULL, &g_ShowWorldViewWindow);
+            ImGui::MenuItem("Debug Messages", NULL, &g_ShowDebugMessagesWindow);
+            ImGui::MenuItem("Simulation Arguments", NULL, &g_ShowSimulationArgumentsWindow);
+            ImGui::MenuItem("Planner Log", NULL, &g_ShowPlannerLogWindow);
+            ImGui::MenuItem("Blackboard Properties", NULL, &g_ShowBlackboardPropertiesWindow);
+            ImGui::Separator();
             ImGui::MenuItem("Debug Path", NULL, &g_ShowDebugPathWindow);
             ImGui::EndMenu();
         }
