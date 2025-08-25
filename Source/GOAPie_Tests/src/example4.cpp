@@ -273,7 +273,7 @@ int treesOnHill( ExampleParameters& params )
 				waypointGuids.assign( waypointTagSet->begin(), waypointTagSet->end() );
 			}
 			gie::PathfindingResult pathResult;
-			gie::PathfindingSteps bestSteps; // capture steps for the chosen path
+			gie::PathfindingSteps pathSolverSteps; // capture steps for the chosen path
 
 			for( auto treeGuid : *treeUpTagSet )
 			{
@@ -292,7 +292,7 @@ int treesOnHill( ExampleParameters& params )
 								bestLength = candidate.length;
 								chosenTreeGuid = treeGuid;
 								pathResult = std::move( candidate );
-								bestSteps = std::move( steps );
+								pathSolverSteps = std::move( steps );
 							}
 						}
 					}
@@ -305,55 +305,20 @@ int treesOnHill( ExampleParameters& params )
 				chosenTreeGuid = *treeUpTagSet->cbegin();
 			}
 
-			// store path used to reach the chosen tree so visualization can render it
-			if( !waypointGuids.empty() )
+			// storing path to chosen tree for visualization
+			if( !pathResult.path.empty() )
 			{
-				if( auto chosenTree = context.entity( chosenTreeGuid ) )
-				{
-					if( auto locPpt = chosenTree->property( "Location" ) )
-					{
-						glm::vec3 treeLoc = *locPpt->getVec3();
-						params.simulation.arguments().add( "PathToTarget", pathResult.path );
-						params.simulation.arguments().add( "PathTarget", chosenTreeGuid );
-						params.simulation.arguments().add( "AgentStartLocation", *agentLocation );
-						*agentLocation = treeLoc;
+				gie::storeSimulatedPath( params, pathResult, chosenTreeGuid, agentLocation );
+			}
 
-						// transfer optional pathfinding steps for visualization stepping
-						if( !bestSteps.states.empty() )
-						{
-							gie::Property::GuidVector openedAll;
-							gie::Property::GuidVector visitedAll;
-							gie::Property::GuidVector backtracksAll;
-							gie::Property::IntegerVector openedOffsets;
-							gie::Property::IntegerVector visitedOffsets;
-							gie::Property::IntegerVector backtrackOffsets;
-
-							openedOffsets.reserve( static_cast<int>( bestSteps.states.size() ) + 1 );
-							visitedOffsets.reserve( static_cast<int>( bestSteps.states.size() ) + 1 );
-							backtrackOffsets.reserve( static_cast<int>( bestSteps.states.size() ) + 1 );
-							openedOffsets.push_back( 0 );
-							visitedOffsets.push_back( 0 );
-							backtrackOffsets.push_back( 0 );
-
-							for( const auto& st : bestSteps.states )
-							{
-								openedAll.insert( openedAll.end(), st.openedNodes.begin(), st.openedNodes.end() );
-								visitedAll.insert( visitedAll.end(), st.visitedNodes.begin(), st.visitedNodes.end() );
-								backtracksAll.insert( backtracksAll.end(), st.backtracks.begin(), st.backtracks.end() );
-								openedOffsets.push_back( static_cast<int>( openedAll.size() ) );
-								visitedOffsets.push_back( static_cast<int>( visitedAll.size() ) );
-								backtrackOffsets.push_back( static_cast<int>( backtracksAll.size() ) );
-							}
-
-							params.simulation.arguments().add( "PF_Opened", std::move( openedAll ) );
-							params.simulation.arguments().add( "PF_Visited", std::move( visitedAll ) );
-							params.simulation.arguments().add( "PF_Backtracks", std::move( backtracksAll ) );
-							params.simulation.arguments().add( "PF_OpenedOffsets", std::move( openedOffsets ) );
-							params.simulation.arguments().add( "PF_VisitedOffsets", std::move( visitedOffsets ) );
-							params.simulation.arguments().add( "PF_BacktrackOffsets", std::move( backtrackOffsets ) );
-						}
-					}
-				}
+			// store path solving steps used to reach chosen tree so visualization can render it
+			auto chosenTreeEntity = context.entity( chosenTreeGuid );
+			gie::Property* chosenTreeLocPpt = chosenTreeEntity ? chosenTreeEntity->property( "Location" ) : nullptr;
+			if( !pathSolverSteps.states.empty() && chosenTreeLocPpt )
+			{
+				glm::vec3 chosenTreeLoc = *chosenTreeLocPpt->getVec3();
+				gie::storeSimulatedPathFindingSteps( pathSolverSteps, params );
+				*agentLocation = chosenTreeLoc;
 			}
 
 			// consuming chosen tree

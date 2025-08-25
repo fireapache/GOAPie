@@ -47,6 +47,8 @@ static bool g_ShowWaypointArrows = false;
 static bool g_PathStepMode = false;              // render path steps instead of final path
 static int g_PathStepIndex = 0;                  // current step index
 static gie::Guid g_PathStepSimGuid = gie::NullGuid; // simulation guid bound to the current step session
+// Tools -> Debug Path window visibility
+static bool g_ShowDebugPathWindow = false;
 
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
 void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
@@ -62,6 +64,7 @@ void ShowExampleAppDockSpace( bool* p_open );
 void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& planner );
 void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner );
 void drawAgentCrosshair( const gie::World& world, const gie::Planner& planner );
+void drawDebugPathWindow( ExampleParameters& params );
 
 int visualization( ExampleParameters& params )
 {
@@ -525,51 +528,6 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
                 ImGui::Separator();
             }
 
-            // Path step UI (only if selected simulation has path step arguments)
-            if( selectedSim )
-            {
-                const auto* openedOffsetsArg = selectedSim->arguments().get( "PF_OpenedOffsets" );
-                const auto* visitedOffsetsArg = selectedSim->arguments().get( "PF_VisitedOffsets" );
-                const auto* backtrackOffsetsArg = selectedSim->arguments().get( "PF_BacktrackOffsets" );
-                if( openedOffsetsArg && visitedOffsetsArg && backtrackOffsetsArg )
-                {
-                    const auto& openedOffsets = std::get< gie::Property::IntegerVector >( *openedOffsetsArg );
-                    int statesCount = static_cast<int>( openedOffsets.size() > 0 ? openedOffsets.size() - 1 : 0 );
-
-                    ImGui::Text( "Path Steps: %d", statesCount );
-                    if( statesCount > 0 )
-                    {
-                        if( ImGui::Button( "Step Path" ) )
-                        {
-                            if( !g_PathStepMode || g_PathStepSimGuid != selectedSim->guid() )
-                            {
-                                // start stepping for this simulation
-                                g_PathStepMode = true;
-                                g_PathStepIndex = 0;
-                                g_PathStepSimGuid = selectedSim->guid();
-                            }
-                            else
-                            {
-                                // advance or reset
-                                if( g_PathStepIndex + 1 < statesCount )
-                                {
-                                    g_PathStepIndex++;
-                                }
-                                else
-                                {
-                                    // reached last state -> reset/turn off
-                                    g_PathStepMode = false;
-                                    g_PathStepIndex = 0;
-                                    g_PathStepSimGuid = gie::NullGuid;
-                                }
-                            }
-                        }
-                        ImGui::SameLine();
-                        ImGui::Text( "State: %d / %d", g_PathStepMode && g_PathStepSimGuid == selectedSim->guid() ? ( g_PathStepIndex + 1 ) : 0, statesCount );
-                    }
-                }
-            }
-
             auto rootNode = planner.rootSimulation();
             if( rootNode )
             {
@@ -671,6 +629,74 @@ void drawPlannerLogWindow( ExampleParameters& params )
     ImGui::End();
 }
 
+void drawDebugPathWindow( ExampleParameters& params )
+{
+    if( !g_ShowDebugPathWindow ) return;
+
+    gie::Planner& planner = params.planner;
+    const gie::Simulation* selectedSim = planner.simulation( selectedSimulationGuid );
+
+    if( ImGui::Begin( "Debug Path", &g_ShowDebugPathWindow ) )
+    {
+        if( !selectedSim )
+        {
+            ImGui::TextUnformatted( "No simulation selected. Select a node in 'Simulation Nodes'." );
+        }
+        else
+        {
+            const auto* openedOffsetsArg = selectedSim->arguments().get( "PF_OpenedOffsets" );
+            const auto* visitedOffsetsArg = selectedSim->arguments().get( "PF_VisitedOffsets" );
+            const auto* backtrackOffsetsArg = selectedSim->arguments().get( "PF_BacktrackOffsets" );
+            if( openedOffsetsArg && visitedOffsetsArg && backtrackOffsetsArg )
+            {
+                const auto& openedOffsets = std::get< gie::Property::IntegerVector >( *openedOffsetsArg );
+                int statesCount = static_cast<int>( openedOffsets.size() > 0 ? openedOffsets.size() - 1 : 0 );
+
+                ImGui::Text( "Path Steps: %d", statesCount );
+                if( statesCount > 0 )
+                {
+                    if( ImGui::Button( "Step Path" ) )
+                    {
+                        if( !g_PathStepMode || g_PathStepSimGuid != selectedSim->guid() )
+                        {
+                            // start stepping for this simulation
+                            g_PathStepMode = true;
+                            g_PathStepIndex = 0;
+                            g_PathStepSimGuid = selectedSim->guid();
+                        }
+                        else
+                        {
+                            // advance or reset
+                            if( g_PathStepIndex + 1 < statesCount )
+                            {
+                                g_PathStepIndex++;
+                            }
+                            else
+                            {
+                                // reached last state -> reset/turn off
+                                g_PathStepMode = false;
+                                g_PathStepIndex = 0;
+                                g_PathStepSimGuid = gie::NullGuid;
+                            }
+                        }
+                    }
+                    ImGui::SameLine();
+                    ImGui::Text( "State: %d / %d", g_PathStepMode && g_PathStepSimGuid == selectedSim->guid() ? ( g_PathStepIndex + 1 ) : 0, statesCount );
+                }
+                else
+                {
+                    ImGui::TextUnformatted( "No step states available." );
+                }
+            }
+            else
+            {
+                ImGui::TextUnformatted( "Selected simulation has no path step data." );
+            }
+        }
+    }
+    ImGui::End();
+}
+
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
 {
     drawGoapieVisualizationWindow( useHeuristics, params );
@@ -678,6 +704,7 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
     drawDebugMessagesWindow( params );
     drawSimulationArgumentsWindow( params );
     drawPlannerLogWindow( params );
+    drawDebugPathWindow( params );
 }
 
 void drawLinks(
@@ -1074,6 +1101,13 @@ void ShowExampleAppDockSpace(bool* p_open)
 
             if (ImGui::MenuItem("Close", NULL, false, p_open != NULL))
                 *p_open = false;
+            ImGui::EndMenu();
+        }
+
+        // New Tools menu beside Options
+        if (ImGui::BeginMenu("Tools"))
+        {
+            ImGui::MenuItem("Debug Path", NULL, &g_ShowDebugPathWindow);
             ImGui::EndMenu();
         }
 

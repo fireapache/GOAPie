@@ -204,6 +204,51 @@ namespace gie
 		return { path, length };
 	}
 
+	inline void storeSimulatedPath(
+		gie::SimulateSimulationParams& simulationParams,
+		gie::PathfindingResult& pathFindingResult,
+		gie::Guid& targetEntityGuid,
+		glm::vec3* agentStartLocation )
+	{
+		simulationParams.simulation.arguments().add( "PathToTarget", pathFindingResult.path );
+		simulationParams.simulation.arguments().add( "PathTarget", targetEntityGuid );
+		simulationParams.simulation.arguments().add( "AgentStartLocation", *agentStartLocation );
+	}
+
+	inline void storeSimulatedPathFindingSteps( gie::PathfindingSteps& pathSolverSteps, gie::SimulateSimulationParams& params )
+	{
+		gie::Property::GuidVector openedAll;
+		gie::Property::GuidVector visitedAll;
+		gie::Property::GuidVector backtracksAll;
+		gie::Property::IntegerVector openedOffsets;
+		gie::Property::IntegerVector visitedOffsets;
+		gie::Property::IntegerVector backtrackOffsets;
+
+		openedOffsets.reserve( static_cast< int >( pathSolverSteps.states.size() ) + 1 );
+		visitedOffsets.reserve( static_cast< int >( pathSolverSteps.states.size() ) + 1 );
+		backtrackOffsets.reserve( static_cast< int >( pathSolverSteps.states.size() ) + 1 );
+		openedOffsets.push_back( 0 );
+		visitedOffsets.push_back( 0 );
+		backtrackOffsets.push_back( 0 );
+
+		for( const auto& st : pathSolverSteps.states )
+		{
+			openedAll.insert( openedAll.end(), st.openedNodes.begin(), st.openedNodes.end() );
+			visitedAll.insert( visitedAll.end(), st.visitedNodes.begin(), st.visitedNodes.end() );
+			backtracksAll.insert( backtracksAll.end(), st.backtracks.begin(), st.backtracks.end() );
+			openedOffsets.push_back( static_cast< int >( openedAll.size() ) );
+			visitedOffsets.push_back( static_cast< int >( visitedAll.size() ) );
+			backtrackOffsets.push_back( static_cast< int >( backtracksAll.size() ) );
+		}
+
+		params.simulation.arguments().add( "PF_Opened", std::move( openedAll ) );
+		params.simulation.arguments().add( "PF_Visited", std::move( visitedAll ) );
+		params.simulation.arguments().add( "PF_Backtracks", std::move( backtracksAll ) );
+		params.simulation.arguments().add( "PF_OpenedOffsets", std::move( openedOffsets ) );
+		params.simulation.arguments().add( "PF_VisitedOffsets", std::move( visitedOffsets ) );
+		params.simulation.arguments().add( "PF_BacktrackOffsets", std::move( backtrackOffsets ) );
+	}
+
 	inline void printPath( const std::vector< Guid >& waypointGuids, const PathfindingResult& pathResult )
 	{
 		std::cout << "length: " << pathResult.length << " | ";
