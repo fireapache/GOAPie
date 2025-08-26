@@ -27,7 +27,7 @@ namespace gie
 		Simulation* _rootSimulation{ nullptr };
 		Goal* _goal{ nullptr };
 		Agent* _agent{ nullptr };
-		bool _useHeuristics{ false };
+		bool _useHeuristics{ true };
 		std::string _logContent{ "" };
 		size_t _depthLimit{ 10 };
 
