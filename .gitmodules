@@ -4,9 +4,6 @@
 [submodule "Source/GLFW"]
 	path = Source/GLFW
 	url = https://github.com/glfw/glfw.git
-[submodule "Source/IMGUI-NE"]
-	path = Source/IMGUI-NE
-	url = https://github.com/fireapache/imgui-node-editor.git
 [submodule "Source/GLM"]
 	path = Source/GLM
 	url = https://github.com/fireapache/glm.git
