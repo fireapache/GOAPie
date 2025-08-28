@@ -94,6 +94,8 @@ namespace gie
 		bool isReady() const { return planStage == PlanStage::Idle || planStage == PlanStage::Done; }
 		const Simulation* rootSimulation() const { return _rootSimulation; }
 		const std::string& logContent() const { return _logContent; }
+		size_t depthLimit() const { return _depthLimit; }
+		size_t& depthLimitMutator() { return _depthLimit; }
 
 		void simulate( Goal& goal, Agent& agent )
 		{
@@ -337,7 +339,7 @@ expandNodeLoop:
 						if( logSteps )
 							_logContent.append( "Goal reached, stopping simulations!\n" );
 						// marking simulation which reached the goal for backtracking
-						_goalSimulationGuid = ( *newNodes.end() )->guid();
+						_goalSimulationGuid = ( *( newNodes.end() - 1 ) )->guid();
 						// no need to keep expanding nodes
 						newNodes.clear();
 						openedNodes.clear();

@@ -58,6 +58,7 @@ static bool g_ShowDebugMessagesWindow = false;
 static bool g_ShowSimulationArgumentsWindow = false;
 static bool g_ShowPlannerLogWindow = false;
 static bool g_ShowBlackboardPropertiesWindow = false;
+static bool g_ShowMorePlannerOptions = false;
 
 // UI settings persistence
 static const char* kUiWindowsSettingsFile = "goapie_ui_windows.ini";
@@ -181,7 +182,7 @@ int visualization( ExampleParameters& params )
 
     // Bounds of elements to be drawn
     DrawingLimits drawingLimits;
-    bool useHeuristics = false;
+    bool useHeuristics = true;
 
     // Main loop
     while( !glfwWindowShouldClose( window ) )
@@ -517,15 +518,28 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 
     gie::World& world = params.world;
     gie::Planner& planner = params.planner;
+	static int simultationDepth = 10;
 
     if( ImGui::Begin( "GOAPie Visualization", &g_ShowGoapieVisualizationWindow ) )
     {
         ImGui::Checkbox( "Use Heuristics", &useHeuristics );
         ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
-        ImGui::Checkbox( "Step Plan", &planner.stepMutator() );
-        ImGui::Checkbox( "Show Waypoint IDs (last 4)", &g_ShowWaypointGuidSuffix );
-        ImGui::Checkbox( "Show Waypoint Arrows", &g_ShowWaypointArrows );
+		ImGui::SliderInt( "Depth Limit", &simultationDepth, 10, 50 );
+        planner.depthLimitMutator() = static_cast< size_t >( simultationDepth );
 
+        ImGui::Separator();
+        if( ImGui::Button( g_ShowMorePlannerOptions ? "Less" : "More" ) )
+        {
+            g_ShowMorePlannerOptions = !g_ShowMorePlannerOptions;
+        }
+        if( g_ShowMorePlannerOptions )
+        {
+            ImGui::Indent();
+            ImGui::Checkbox( "Step Plan", &planner.stepMutator() );
+            ImGui::Checkbox( "Show Waypoint IDs (last 4)", &g_ShowWaypointGuidSuffix );
+            ImGui::Checkbox( "Show Waypoint Arrows", &g_ShowWaypointArrows );
+            ImGui::Unindent();
+        }
         if( planner.isReady() )
         {
             if( ImGui::Button( "Plan!" ) )
@@ -635,12 +649,21 @@ void drawDebugMessagesWindow( ExampleParameters& params )
         {
             for( const auto& message : *debugMessages.messages() )
             {
-                ImGui::Text( "* %s", message.c_str() );
+				const bool hasScope = message.find( "::" ) != std::string::npos;
+				if( hasScope )
+                {
+					ImGui::TextColored( ImColor{ 1.0f, 0.6f, 0.0f, 1.0f }, "* %s", message.c_str() );
+				}
+                else
+                {
+					ImGui::TextUnformatted( message.c_str() );
+                }
+				
             }
         }
     }
     ImGui::End();
-}  
+}
 
 void drawSimulationArgumentsWindow( ExampleParameters& params )
 {  
@@ -687,10 +710,6 @@ void drawSimulationArgumentsWindow( ExampleParameters& params )
 void drawPlannerLogWindow( ExampleParameters& params )
 {
     if( !g_ShowPlannerLogWindow ) return;
-
-    const gie::Simulation* selectedSimulation = params.planner.simulation( selectedSimulationGuid );
-
-    if( !selectedSimulation ) return;
 
     gie::Planner& planner = params.planner;
 
