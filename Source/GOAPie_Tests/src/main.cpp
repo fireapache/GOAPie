@@ -16,6 +16,8 @@ extern int cutDownTrees( ExampleParameters& params );
 extern int treesOnHill( ExampleParameters& params );
 // example 5
 extern int survivalOnHill( ExampleParameters& params );
+// example 6
+extern int heistOpenSafe( ExampleParameters& params );
 
 // used to draw elements using OpenGL
 extern int visualization( ExampleParameters& params );
@@ -33,7 +35,8 @@ int main( int argc, char** argv )
 		openDoor,
 		cutDownTrees,
 		treesOnHill,
-		survivalOnHill
+		survivalOnHill,
+		heistOpenSafe
 	};
 
 	int ex = -1;

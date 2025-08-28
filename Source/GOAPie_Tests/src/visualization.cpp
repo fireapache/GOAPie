@@ -104,6 +104,7 @@ static void SaveWindowVisibilitySettings()
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
 void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
 void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
+void drawHeistOverlays( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params );
 void processInput( GLFWwindow* window );
 void framebuffer_size_callback( GLFWwindow* window, int width, int height );
@@ -222,6 +223,7 @@ int visualization( ExampleParameters& params )
 
         // rendering elements
         drawWaypointsAndLinks( world, planner, drawingLimits );
+        drawHeistOverlays( world, planner, drawingLimits );
         drawTrees( world, planner, drawingLimits );
         drawSelectedSimulationPath( world, planner );
         drawAgentCrosshair( world, planner );
@@ -925,6 +927,180 @@ void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner
             glEnd();
 
             drawLinks( waypointEntity, world, offset, scale, scaledLocation );
+        }
+    }
+}
+
+static bool isRoomName( std::string_view name )
+{
+    return name == "Garage" || name == "Kitchen" || name == "Corridor" || name == "LivingRoom" || name == "Bathroom" || name == "BedroomA" || name == "BedroomB";
+}
+
+void drawHeistOverlays( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits )
+{
+    const gie::Blackboard* context = &world.context();
+    const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
+    if( selectedSimulation ) context = &selectedSimulation->context();
+
+    // Transform matching the one used for waypoints
+    glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
+    glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
+    glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
+    glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
+    glm::vec3 scale = 2.0f / ( maxBounds - minBounds );
+
+    // Draw simple room rectangles around room waypoints
+    const auto* waypointSet = context->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+    if( waypointSet && !waypointSet->empty() )
+    {
+        // choose room rectangle size in world units
+        const float halfW = 4.0f, halfH = 3.0f;
+        glm::vec3 halfWorld{ halfW, halfH, 0.0f };
+        glm::vec3 half = halfWorld * scale;
+        glColor3f( 0.2f, 0.7f, 0.9f );
+        for( auto guid : *waypointSet )
+        {
+            auto e = world.entity( guid ); if( !e ) continue;
+            auto nm = gie::stringRegister().get( e->nameHash() );
+            if( !isRoomName( nm ) ) continue;
+            auto loc = e->property( "Location" ); if( !loc ) continue;
+            glm::vec3 c = ( *loc->getVec3() + offset ) * scale;
+            glBegin( GL_LINE_LOOP );
+            glVertex3f( c.x - half.x, c.y - half.y, c.z );
+            glVertex3f( c.x + half.x, c.y - half.y, c.z );
+            glVertex3f( c.x + half.x, c.y + half.y, c.z );
+            glVertex3f( c.x - half.x, c.y + half.y, c.z );
+            glEnd();
+        }
+    }
+
+    // Draw connectors as colored lines between From-To and marker at connector location
+    const auto* connectorSet = context->entityTagRegister().tagSet( { gie::stringHasher( "Connector" ) } );
+    if( connectorSet && !connectorSet->empty() )
+    {
+        // read alarm armed flag
+        bool alarmArmed = false;
+        for( const auto& [ eg, ent ] : context->entities() )
+        {
+            if( gie::stringRegister().get( ent.nameHash() ) == std::string_view( "AlarmSystem" ) )
+            {
+                if( auto a = context->entity( eg ) )
+                {
+                    if( auto p = a->property( "Armed" ) ) alarmArmed = *p->getBool();
+                }
+                break;
+            }
+        }
+
+        glLineWidth( 2.0f );
+        for( auto guid : *connectorSet )
+        {
+            auto c = context->entity( guid ); if( !c ) continue;
+            bool locked = *c->property( "Locked" )->getBool();
+            bool blocked = *c->property( "Blocked" )->getBool();
+            bool barred = *c->property( "Barred" )->getBool();
+            bool alarmed = *c->property( "Alarmed" )->getBool();
+            bool blockedAny = locked || blocked || barred;
+
+            if( blockedAny ) glColor3f( 1.0f, 0.2f, 0.2f );            // red
+            else if( alarmArmed && alarmed ) glColor3f( 1.0f, 1.0f, 0.2f ); // yellow
+            else glColor3f( 0.2f, 1.0f, 0.2f );                            // green
+
+            auto fromG = *c->property( "From" )->getGuid();
+            auto toG   = *c->property( "To" )->getGuid();
+            auto fromE = context->entity( fromG ); if( !fromE ) fromE = world.entity( fromG );
+            auto toE   = context->entity( toG );   if( !toE )   toE   = world.entity( toG );
+            if( fromE && toE )
+            {
+                auto l0 = fromE->property( "Location" );
+                auto l1 = toE->property( "Location" );
+                if( l0 && l1 )
+                {
+                    glm::vec3 a = ( *l0->getVec3() + offset ) * scale;
+                    glm::vec3 b = ( *l1->getVec3() + offset ) * scale;
+                    glBegin( GL_LINES );
+                    glVertex3f( a.x, a.y, a.z );
+                    glVertex3f( b.x, b.y, b.z );
+                    glEnd();
+                }
+            }
+
+            // draw connector location marker as a small cross
+            if( auto loc = c->property( "Location" ) )
+            {
+                glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+                const float s = 0.02f;
+                glBegin( GL_LINES );
+                glVertex3f( p.x - s, p.y, p.z ); glVertex3f( p.x + s, p.y, p.z );
+                glVertex3f( p.x, p.y - s, p.z ); glVertex3f( p.x, p.y + s, p.z );
+                glEnd();
+            }
+        }
+        glLineWidth( 1.0f );
+    }
+
+    // Draw POIs: AlarmPanel, FuseBox, Safe
+    // AlarmPanel and FuseBox have Location, Safe is in a room (use room location)
+    gie::Entity const* alarmPanel = nullptr;
+    gie::Entity const* fuseBox = nullptr;
+    gie::Entity const* safe = nullptr;
+    for( const auto& [ eg, ent ] : context->entities() )
+    {
+        auto name = gie::stringRegister().get( ent.nameHash() );
+        if( name == "AlarmPanelEntity" ) alarmPanel = context->entity( eg );
+        else if( name == "FuseBoxEntity" ) fuseBox = context->entity( eg );
+        else if( name == "Safe" ) safe = context->entity( eg );
+    }
+
+    auto drawFilledQuad = []( const glm::vec3& c, float s )
+    {
+        glBegin( GL_QUADS );
+        glVertex3f( c.x - s, c.y - s, c.z );
+        glVertex3f( c.x + s, c.y - s, c.z );
+        glVertex3f( c.x + s, c.y + s, c.z );
+        glVertex3f( c.x - s, c.y + s, c.z );
+        glEnd();
+    };
+    auto drawDiamond = []( const glm::vec3& c, float s )
+    {
+        glBegin( GL_TRIANGLES );
+        glVertex3f( c.x, c.y - s, c.z ); glVertex3f( c.x - s, c.y, c.z ); glVertex3f( c.x + s, c.y, c.z );
+        glVertex3f( c.x, c.y + s, c.z ); glVertex3f( c.x - s, c.y, c.z ); glVertex3f( c.x + s, c.y, c.z );
+        glEnd();
+    };
+
+    const float poiSize = 0.02f;
+
+    if( alarmPanel )
+    {
+        if( auto loc = alarmPanel->property( "Location" ) )
+        {
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            glColor3f( 0.2f, 0.6f, 1.0f );
+            drawFilledQuad( p, poiSize );
+        }
+    }
+    if( fuseBox )
+    {
+        if( auto loc = fuseBox->property( "Location" ) )
+        {
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            glColor3f( 1.0f, 0.6f, 0.2f );
+            drawFilledQuad( p, poiSize );
+        }
+    }
+    if( safe )
+    {
+        auto roomG = *const_cast< gie::Entity* >( safe )->property( "InRoom" )->getGuid();
+        const auto* room = context->entity( roomG ); if( !room ) room = world.entity( roomG );
+        if( room )
+        {
+            if( auto loc = room->property( "Location" ) )
+            {
+                glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+                glColor3f( 1.0f, 0.2f, 1.0f );
+                drawDiamond( p, poiSize * 1.2f );
+            }
         }
     }
 }
