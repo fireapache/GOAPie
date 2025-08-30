@@ -158,23 +158,69 @@ int heistOpenSafe( ExampleParameters& params )
     agent->createProperty( "CurrentRoom", gie::NullGuid );
     agent->createProperty( "Inventory", gie::Property::GuidVector{} );
 
+    // Room and POI names
+    const gie::StringHash OutsideFrontHash  = H( "OutsideFront" );
+    const gie::StringHash OutsideBackHash   = H( "OutsideBack" );
+    const gie::StringHash GarageHash        = H( "Garage" );
+    const gie::StringHash LaundryRoomHash   = H( "LaundryRoom" );
+    const gie::StringHash KitchenHash       = H( "Kitchen" );
+    const gie::StringHash CorridorHash      = H( "Corridor" );
+    const gie::StringHash LivingRoomHash    = H( "LivingRoom" );
+    const gie::StringHash BathroomHash      = H( "Bathroom" );
+    const gie::StringHash BedroomAHash      = H( "BedroomA" );
+    const gie::StringHash BedroomBHash      = H( "BedroomB" );
+    const gie::StringHash AlarmPanelHash    = H( "AlarmPanel" );
+    const gie::StringHash FuseBoxHash       = H( "FuseBox" );
+    const gie::StringHash FrontDoorHash     = H( "FrontDoor" );
+    const gie::StringHash BackDoorHash      = H( "BackDoor" );
+    const gie::StringHash KitchenWindowHash = H( "KitchenWindow" );
+	const gie::StringHash EntranceHash      = H( "Entrance" );
+
+    struct RoomInfo
+	{
+		gie::StringHash name;
+		glm::vec3 vertices[ 4 ] = {};
+	};
+
+    const RoomInfo rooms[] = {
+		{ LaundryRoomHash, { { -30.f, -20.f, 0.f }, { -20.f, -20.f, 0.f }, { -20.f, -10.f, 0.f }, { -30.f, -10.f, 0.f } } },
+		{ KitchenHash, { { -20.f, -20.f, 0.f }, { -5.f, -20.f, 0.f }, { -5.f, -10.f, 0.f }, { -20.f, -10.f, 0.f } } },
+		{ BathroomHash, { { -5.f, -20.f, 0.f }, { 5.f, -20.f, 0.f }, { 5.f, -10.f, 0.f }, { -5.f, -10.f, 0.f } } },
+		{ GarageHash, { { 5.f, -20.f, 0.f }, { 30.f, -20.f, 0.f }, { 30.f, -10.f, 0.f }, { 5.f, -10.f, 0.f } } },
+		{ CorridorHash, { { -30.f, -10.f, 0.f }, { 30.f, -10.f, 0.f }, { 30.f, -5.f, 0.f }, { -30.f, -5.f, 0.f } } },
+		{ LivingRoomHash, { { -30.f, -5.f, 0.f }, { -10.f, -5.f, 0.f }, { -10.f, 20.f, 0.f }, { -30.f, 20.f, 0.f } } },
+		{ EntranceHash, { { -10.f, -5.f, 0.f }, { 0.f, -5.f, 0.f }, { 0.f, 20.f, 0.f }, { -10.f, 20.f, 0.f } } },
+		{ BedroomAHash, { { 0.f, -5.f, 0.f }, { 15.f, -5.f, 0.f }, { 15.f, 20.f, 0.f }, { 0.f, 20.f, 0.f } } },
+		{ BedroomBHash, { { 15.f, -5.f, 0.f }, { 30.f, -5.f, 0.f }, { 30.f, 20.f, 0.f }, { 15.f, 20.f, 0.f } } },
+    };
+
+    for( const auto& room : rooms )
+    {
+        auto roomEntity = world.createEntity( gie::stringRegister().get( room.name ) );
+        roomEntity->createProperty( "WallVertices", std::vector< glm::vec3 >( std::begin( room.vertices ), std::end( room.vertices ) ) );
+		roomEntity->createProperty( "Discovered", false );
+        roomEntity->createProperty( "Location", ( room.vertices[ 0 ] + room.vertices[ 1 ] + room.vertices[ 2 ] + room.vertices[ 3 ] ) * 0.25f );
+		world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) } );
+    }
+
     // Waypoints (rooms + points of interest) laid roughly as a house layout
-    struct WP { const char* name; glm::vec3 p; };
+    struct WP { gie::StringHash name; glm::vec3 p; };
+
     const WP wps[] = {
-        { "OutsideFront",  {-30.f,  0.f, 0.f} },
-        { "OutsideBack",   { 30.f,  0.f, 0.f} },
-        { "Garage",        { 15.f, -5.f, 0.f} },
-        { "Kitchen",       {  5.f,  5.f, 0.f} },
-        { "Corridor",      {  0.f,  0.f, 0.f} },
-        { "LivingRoom",    { -5.f,  8.f, 0.f} },
-        { "Bathroom",      { -5.f, -8.f, 0.f} },
-        { "BedroomA",      { -12.f,  3.f, 0.f} },
-        { "BedroomB",      { -12.f, -3.f, 0.f} },
-        { "AlarmPanel",    {  0.f, -2.f, 0.f} },
-        { "FuseBox",       { 15.f, -7.f, 0.f} },
-        { "FrontDoor",     { -15.f, 0.f, 0.f} },
-        { "BackDoor",      {  15.f, 0.f, 0.f} },
-        { "KitchenWindow", {  8.f,  7.f, 0.f} }
+        { OutsideFrontHash,  {-30.f,  0.f, 0.f} },
+        { OutsideBackHash,   { 30.f,  0.f, 0.f} },
+        { GarageHash,        { 15.f, -5.f, 0.f} },
+        { KitchenHash,       {  5.f,  5.f, 0.f} },
+        { CorridorHash,      {  0.f,  0.f, 0.f} },
+        { LivingRoomHash,    { -5.f,  8.f, 0.f} },
+        { BathroomHash,      { -5.f, -8.f, 0.f} },
+        { BedroomAHash,      { -12.f,  3.f, 0.f} },
+        { BedroomBHash,      { -12.f, -3.f, 0.f} },
+        { AlarmPanelHash,    {  0.f, -2.f, 0.f} },
+        { FuseBoxHash,       { 15.f, -7.f, 0.f} },
+        { FrontDoorHash,     { -15.f, 0.f, 0.f} },
+        { BackDoorHash,      {  15.f, 0.f, 0.f} },
+        { KitchenWindowHash, {  8.f,  7.f, 0.f} }
     };
 
     std::vector< gie::Entity* > waypoints;
@@ -184,7 +230,7 @@ int heistOpenSafe( ExampleParameters& params )
 
     for( const auto& wp : wps )
     {
-        auto e = world.createEntity( wp.name );
+        auto e = world.createEntity( gie::stringRegister().get( wp.name ) );
         e->createProperty( "Location", wp.p );
         world.context().entityTagRegister().tag( e, { H( "Waypoint" ) } );
         waypoints.push_back( e );

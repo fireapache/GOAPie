@@ -7,7 +7,7 @@
 #include <imgui.h>
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
-#include <imgui_impl_glfw.h>  
+#include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 // clang-format on
 
@@ -31,17 +31,21 @@ GLuint VAO;          // vertex array object
 GLuint VBO;          // vertex buffer object
 GLuint FBO;          // frame buffer object
 GLuint RBO;          // rendering buffer object
-GLuint texture_id; // the texture id we'll need later to create a texture 
+GLuint texture_id;   // the texture id we'll need later to create a texture
 
+/** Drawing limits structure used for calculating bounds and scaling of the drawn world elements. */
 struct DrawingLimits
 {
-    glm::vec3 minBounds{ std::numeric_limits< float >::max() };
-    glm::vec3 maxBounds{ std::numeric_limits< float >::lowest() };
+    glm::vec3 minBounds{ std::numeric_limits< float >::max() }; /**< Minimum bounds of the drawing area. */
+    glm::vec3 maxBounds{ std::numeric_limits< float >::lowest() }; /**< Maximum bounds of the drawing area. */
+	glm::vec3 range{ 0.f }; /**< Range of the drawing area. */
+	glm::vec3 center{ 0.f }; /**< Center point of the drawing area. */
     const float margin = 0.1f; // 10% margin
 };
+static DrawingLimits g_DrawingLimits; /**< Global instance of DrawingLimits used for the entire visualization. */
 
 // Add this at the top of your file or in a suitable scope
-static gie::Guid selectedSimulationGuid = gie::NullGuid;
+static gie::Guid selectedSimulationGuid = gie::NullGuid; /**< GUID of the currently selected simulation. */
 // Global toggle to show waypoint GUID suffixes
 static bool g_ShowWaypointGuidSuffix = false;
 // Global toggle to show arrowheads on waypoint links
@@ -101,23 +105,29 @@ static void SaveWindowVisibilitySettings()
     out << "ShowBlackboardPropertiesWindow=" << ( g_ShowBlackboardPropertiesWindow ? 1 : 0 ) << '\n';
 }
 
-void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
-void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
-void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
-void drawHeistOverlays( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits );
-void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params );
-void processInput( GLFWwindow* window );
-void framebuffer_size_callback( GLFWwindow* window, int width, int height );
-void create_framebuffer();
 void bind_framebuffer();
-void unbind_framebuffer();
+void create_framebuffer();
+void drawAgentCrosshair( const gie::World& world, const gie::Planner& planner );
+void drawBlackboardPropertiesWindow( const gie::Simulation* simulation );
+void drawDebugPathWindow( ExampleParameters& params );
+void drawHeistOverlays( const gie::World& world, const gie::Planner& planner );
+void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params );
+void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& planner );
+void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
+void drawTrees( const gie::World& world, const gie::Planner& planner );
+void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner& planner, ImVec2 windowPos, float windowWidth, float windowHeight );
+void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner );
+void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner );
+void framebuffer_size_callback( GLFWwindow* window, int width, int height );
+void processInput( GLFWwindow* window );
 void rescale_framebuffer( float width, float height );
 void ShowExampleAppDockSpace( bool* p_open );
-void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& planner );
-void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner );
-void drawAgentCrosshair( const gie::World& world, const gie::Planner& planner );
-void drawDebugPathWindow( ExampleParameters& params );
-void drawBlackboardPropertiesWindow( const gie::Simulation* simulation );
+void unbind_framebuffer();
+void updateDrawingBounds( const gie::World& world );
+
+/** @file
+ * Creates a window to draw GOAPie world context states
+ */
 
 int visualization( ExampleParameters& params )
 {
@@ -173,7 +183,7 @@ int visualization( ExampleParameters& params )
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Enable multi-viewport support
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;    // Enable docking support
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;   // Enable docking support
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL( window, true );
     ImGui_ImplOpenGL3_Init( "#version 130" );
@@ -181,8 +191,6 @@ int visualization( ExampleParameters& params )
     // Load persistent UI windows visibility
     LoadWindowVisibilitySettings();
 
-    // Bounds of elements to be drawn
-    DrawingLimits drawingLimits;
     bool useHeuristics = true;
 
     // Main loop
@@ -222,9 +230,10 @@ int visualization( ExampleParameters& params )
         glClear( GL_COLOR_BUFFER_BIT );
 
         // rendering elements
-        drawWaypointsAndLinks( world, planner, drawingLimits );
-        drawHeistOverlays( world, planner, drawingLimits );
-        drawTrees( world, planner, drawingLimits );
+        updateDrawingBounds( world );
+        drawWaypointsAndLinks( world, planner );
+        drawHeistOverlays( world, planner );
+        drawTrees( world, planner );
         drawSelectedSimulationPath( world, planner );
         drawAgentCrosshair( world, planner );
 
@@ -286,125 +295,89 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
             ImVec2( 0, 1 ),
             ImVec2( 1, 0 ) );
 
-        // Optionally overlay last 4 digits of waypoint GUIDs
-        if( g_ShowWaypointGuidSuffix )
+        // Draw waypoint id suffix overlay (extracted)
+        drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
+    }
+    ImGui::End();
+}
+
+void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner& planner, ImVec2 pos, float windowWidth, float windowHeight )
+{
+    if( !g_ShowWaypointGuidSuffix ) return;
+
+    const gie::Blackboard* worldContext = &world.context();
+    if( const auto* sim = planner.simulation( selectedSimulationGuid ) )
+    {
+        worldContext = &sim->context();
+    }
+    const auto* waypointSet = worldContext->entityTagRegister().tagSet( { "Waypoint" } );
+
+    if( waypointSet && !waypointSet->empty() )
+    {
+        // Use global drawing limits
+        glm::vec3 minB = g_DrawingLimits.minBounds;
+        glm::vec3 maxB = g_DrawingLimits.maxBounds;
+        glm::vec3 offset = -g_DrawingLimits.center;
+        glm::vec3 scale = 2.0f / ( maxB - minB );
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+
+        for( auto guid : *waypointSet )
         {
-            const gie::Blackboard* contextBB = &world.context();
-            if( const auto* sim = planner.simulation( selectedSimulationGuid ) )
+            if( const auto* e = world.entity( guid ) )
             {
-                contextBB = &sim->context();
-            }
-
-            // gather bounds from waypoints and trees to match transform
-            glm::vec3 minBounds( std::numeric_limits< float >::max() );
-            glm::vec3 maxBounds( std::numeric_limits< float >::lowest() );
-
-            auto waypointTag = gie::stringHasher( "Waypoint" );
-            auto treeTag = gie::stringHasher( "Tree" );
-            const auto* waypointSet = contextBB->entityTagRegister().tagSet( { waypointTag } );
-            const auto* treeSet = contextBB->entityTagRegister().tagSet( { treeTag } );
-
-            if( waypointSet )
-            {
-                for( auto guid : *waypointSet )
+                if( const auto* loc = e->property( "Location" ) )
                 {
-                    if( const auto* e = world.entity( guid ) )
+                    glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
+                    // Map NDC [-1,1] to image pixels [0,w]x[0,h] and account for flipped Y in image UVs
+                    float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+                    float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+
+                    // Position in screen space (base position for suffix)
+                    ImVec2 suffixPos{ pos.x + x_px, pos.y + y_px - 12.0f };
+
+                    // last 4 decimal digits
+                    unsigned long long id = static_cast< unsigned long long >( guid );
+                    unsigned int last4 = static_cast< unsigned int >( id % 10000ULL );
+                    char buf[8];
+                    snprintf( buf, sizeof( buf ), "%04u", last4 );
+
+                    // center align suffix
+                    ImVec2 suffixSize = ImGui::CalcTextSize( buf );
+                    suffixPos.x -= suffixSize.x * 0.5f;
+
+                    // draw suffix with slight shadow for readability
+                    dl->AddText( ImVec2( suffixPos.x + 1, suffixPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
+                    dl->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
+
+                    // Derive waypoint index from entity name, expected to be "waypoint<number>"
+                    std::string idxLabel = "wp?";
+                    auto nameHash = e->nameHash();
+                    if( nameHash != gie::InvalidStringHash )
                     {
-                        if( const auto* loc = e->property( "Location" ) )
+                        std::string name( gie::stringRegister().get( nameHash ) );
+                        size_t j = name.size();
+                        while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
                         {
-                            glm::vec3 p = *loc->getVec3();
-                            minBounds = glm::min( minBounds, p );
-                            maxBounds = glm::max( maxBounds, p );
+                            --j;
+                        }
+                        if( j < name.size() )
+                        {
+                            idxLabel = std::string( "wp" ) + name.substr( j );
                         }
                     }
-                }
-            }
 
-            if( treeSet )
-            {
-                for( auto guid : *treeSet )
-                {
-                    if( const auto* e = contextBB->entity( guid ) )
-                    {
-                        if( const auto* loc = e->property( "Location" ) )
-                        {
-                            glm::vec3 p = *loc->getVec3();
-                            minBounds = glm::min( minBounds, p );
-                            maxBounds = glm::max( maxBounds, p );
-                        }
-                    }
-                }
-            }
+                    // Position index label above the suffix and center align
+                    ImVec2 idxSize = ImGui::CalcTextSize( idxLabel.c_str() );
+                    ImVec2 idxPos{ pos.x + x_px - idxSize.x * 0.5f, suffixPos.y - ( idxSize.y + 2.0f ) };
 
-            if( waypointSet && !waypointSet->empty() )
-            {
-                glm::vec3 range = maxBounds - minBounds;
-                glm::vec3 minB = minBounds - range * 0.1f;
-                glm::vec3 maxB = maxBounds + range * 0.1f;
-                glm::vec3 offset = -( minB + maxB ) * 0.5f;
-                glm::vec3 scale = 2.0f / ( maxB - minB );
-
-                ImDrawList* dl = ImGui::GetWindowDrawList();
-
-                for( auto guid : *waypointSet )
-                {
-                    if( const auto* e = world.entity( guid ) )
-                    {
-                        if( const auto* loc = e->property( "Location" ) )
-                        {
-                            glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
-                            // Map NDC [-1,1] to image pixels [0,w]x[0,h] and account for flipped Y in image UVs
-                            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
-                            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
-
-                            // Position in screen space (base position for suffix)
-                            ImVec2 suffixPos{ pos.x + x_px, pos.y + y_px - 12.0f };
-
-                            // last 4 decimal digits
-                            unsigned long long id = static_cast< unsigned long long >( guid );
-                            unsigned int last4 = static_cast< unsigned int >( id % 10000ULL );
-                            char buf[8];
-                            snprintf( buf, sizeof( buf ), "%04u", last4 );
-
-                            // center align suffix
-                            ImVec2 suffixSize = ImGui::CalcTextSize( buf );
-                            suffixPos.x -= suffixSize.x * 0.5f;
-
-                            // draw suffix with slight shadow for readability
-                            dl->AddText( ImVec2( suffixPos.x + 1, suffixPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
-                            dl->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
-
-                            // Derive waypoint index from entity name, expected to be "waypoint<number>"
-                            std::string idxLabel = "wp?";
-                            auto nameHash = e->nameHash();
-                            if( nameHash != gie::InvalidStringHash )
-                            {
-                                std::string name( gie::stringRegister().get( nameHash ) );
-                                size_t j = name.size();
-                                while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
-                                {
-                                    --j;
-                                }
-                                if( j < name.size() )
-                                {
-                                    idxLabel = std::string( "wp" ) + name.substr( j );
-                                }
-                            }
-
-                            // Position index label above the suffix and center align
-                            ImVec2 idxSize = ImGui::CalcTextSize( idxLabel.c_str() );
-                            ImVec2 idxPos{ pos.x + x_px - idxSize.x * 0.5f, suffixPos.y - ( idxSize.y + 2.0f ) };
-
-                            // draw index label (white) with shadow
-                            dl->AddText( ImVec2( idxPos.x + 1, idxPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), idxLabel.c_str() );
-                            dl->AddText( idxPos, IM_COL32( 255, 255, 255, 255 ), idxLabel.c_str() );
-                        }
-                    }
+                    // draw index label (white) with shadow
+                    dl->AddText( ImVec2( idxPos.x + 1, idxPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), idxLabel.c_str() );
+                    dl->AddText( idxPos, IM_COL32( 255, 255, 255, 255 ), idxLabel.c_str() );
                 }
             }
         }
     }
-    ImGui::End();
 }
 
 void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, const bool padding )
@@ -872,7 +845,7 @@ void drawLinks(
     }
 }
 
-void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits )
+void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner )
 {
     const gie::TagSet* waypointGuids = nullptr;
     const gie::Blackboard* context = &world.context();
@@ -890,22 +863,10 @@ void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner
         return; // No waypoints to draw
     }
 
-    for( gie::Guid waypointGuid : *waypointGuids )
-    {
-        auto waypointEntity = world.entity( waypointGuid );
-        if( auto locationPpt = waypointEntity->property( "Location" ) )
-        {
-            glm::vec3 location = *locationPpt->getVec3();
-            drawingLimits.minBounds = glm::min( drawingLimits.minBounds, location );
-            drawingLimits.maxBounds = glm::max( drawingLimits.maxBounds, location );
-        }
-    }
-
-    // Setting up drawing offset
-    glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
-    glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
-    glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
-    glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
+    // Use global drawing limits for transform
+    glm::vec3 minBounds = g_DrawingLimits.minBounds;
+    glm::vec3 maxBounds = g_DrawingLimits.maxBounds;
+    glm::vec3 offset = -g_DrawingLimits.center;
     glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
 
     // Set up OpenGL for rendering
@@ -936,17 +897,16 @@ static bool isRoomName( std::string_view name )
     return name == "Garage" || name == "Kitchen" || name == "Corridor" || name == "LivingRoom" || name == "Bathroom" || name == "BedroomA" || name == "BedroomB";
 }
 
-void drawHeistOverlays( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits )
+void drawHeistOverlays( const gie::World& world, const gie::Planner& planner )
 {
     const gie::Blackboard* context = &world.context();
     const gie::Simulation* selectedSimulation = planner.simulation( selectedSimulationGuid );
     if( selectedSimulation ) context = &selectedSimulation->context();
 
-    // Transform matching the one used for waypoints
-    glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
-    glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
-    glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
-    glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
+    // Transform matching the one used for waypoints using global limits
+    glm::vec3 minBounds = g_DrawingLimits.minBounds;
+    glm::vec3 maxBounds = g_DrawingLimits.maxBounds;
+    glm::vec3 offset = -g_DrawingLimits.center;
     glm::vec3 scale = 2.0f / ( maxBounds - minBounds );
 
     // Draw simple room rectangles around room waypoints
@@ -1040,7 +1000,6 @@ void drawHeistOverlays( const gie::World& world, const gie::Planner& planner, Dr
     }
 
     // Draw POIs: AlarmPanel, FuseBox, Safe
-    // AlarmPanel and FuseBox have Location, Safe is in a room (use room location)
     gie::Entity const* alarmPanel = nullptr;
     gie::Entity const* fuseBox = nullptr;
     gie::Entity const* safe = nullptr;
@@ -1105,7 +1064,7 @@ void drawHeistOverlays( const gie::World& world, const gie::Planner& planner, Dr
     }
 }
 
-void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLimits& drawingLimits )
+void drawTrees( const gie::World& world, const gie::Planner& planner )
 {
     const gie::TagSet* treeGuids = nullptr;
     const gie::Blackboard* context = &world.context();
@@ -1123,22 +1082,10 @@ void drawTrees( const gie::World& world, const gie::Planner& planner, DrawingLim
         return; // No trees to draw
     }
 
-    for( gie::Guid treeGuid : *treeGuids )
-    {
-        auto waypointEntity = context->entity( treeGuid );
-        if( auto locationPpt = waypointEntity->property( "Location" ) )
-        {
-            glm::vec3 location = *locationPpt->getVec3();
-            drawingLimits.minBounds = glm::min( drawingLimits.minBounds, location );
-            drawingLimits.maxBounds = glm::max( drawingLimits.maxBounds, location );
-        }
-    }
-
-    // Setting up drawing offset
-    glm::vec3 range = drawingLimits.maxBounds - drawingLimits.minBounds;
-    glm::vec3 minBounds = drawingLimits.minBounds - range * drawingLimits.margin;
-    glm::vec3 maxBounds = drawingLimits.maxBounds + range * drawingLimits.margin;
-    glm::vec3 offset = -( minBounds + maxBounds ) * 0.5f;
+    // Use global drawing limits for transform
+    glm::vec3 minBounds = g_DrawingLimits.minBounds;
+    glm::vec3 maxBounds = g_DrawingLimits.maxBounds;
+    glm::vec3 offset = -g_DrawingLimits.center;
     glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
 
     auto treeUpTag = gie::stringHasher( "TreeUp" );
@@ -1233,12 +1180,10 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
         ImGui::TreePop();
     }
 
-    ImGui::PopStyleVar( 2 ); // Restore previous padding
+    ImGui::PopStyleVar( 2 );
 }
 
 // here we create our framebuffer and our renderbuffer
-// you can find a more detailed explanation of framebuffer
-// on the official opengl homepage, see the link above
 void create_framebuffer()
 {
     glGenFramebuffers( 1, &FBO );
@@ -1276,6 +1221,50 @@ void unbind_framebuffer()
     glBindFramebuffer( GL_FRAMEBUFFER, 0 );
 }
 
+void updateDrawingBounds( const gie::World& world )
+{
+    const gie::Blackboard* worldContext = &world.context();
+
+    glm::vec3 minBounds( std::numeric_limits< float >::max() );
+    glm::vec3 maxBounds( std::numeric_limits< float >::lowest() );
+
+    const auto* drawTagSet = worldContext->entityTagRegister().tagSet( { "Draw" } );
+    const auto* waypointsTagSet = worldContext->entityTagRegister().tagSet( { "Waypoint" } );
+
+    const std::set< gie::Guid >* setToUse = drawTagSet && !drawTagSet->empty() ? drawTagSet
+                                             : ( waypointsTagSet && !waypointsTagSet->empty() ? waypointsTagSet : nullptr );
+    if( !setToUse )
+    {
+        return; // no data to compute bounds
+    }
+
+    // calculating min/max bounds
+    for( auto guid : *setToUse )
+    {
+        if( const auto* e = world.entity( guid ) )
+        {
+            if( const auto* loc = e->property( "Location" ) )
+            {
+                glm::vec3 p = *loc->getVec3();
+                minBounds = glm::min( minBounds, p );
+                maxBounds = glm::max( maxBounds, p );
+            }
+        }
+    }
+
+    glm::vec3 range = maxBounds - minBounds;
+    glm::vec3 center = ( maxBounds + minBounds ) * 0.5f;
+
+    // add some margin
+    minBounds = minBounds - range * g_DrawingLimits.margin;
+    maxBounds = maxBounds + range * g_DrawingLimits.margin;
+
+    g_DrawingLimits.minBounds = minBounds;
+    g_DrawingLimits.maxBounds = maxBounds;
+    g_DrawingLimits.center = center;
+    g_DrawingLimits.range = range;
+}
+
 // and we rescale the buffer, so we're able to resize the window
 void rescale_framebuffer( float width, float height )
 {
@@ -1290,38 +1279,21 @@ void rescale_framebuffer( float width, float height )
     glFramebufferRenderbuffer( GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, RBO );
 }
 
-void ShowExampleAppDockSpace(bool* p_open)
+void ShowExampleAppDockSpace( bool* p_open )
 {
-    // READ THIS !!!
-    // TL;DR; this demo is more complicated than what most users you would normally use.
-    // If we remove all options we are showcasing, this demo would become:
-    //     void ShowExampleAppDockSpace()
-    //     {
-    //         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-    //     }
-    // In most cases you should be able to just call DockSpaceOverViewport() and ignore all the code below!
-    // In this specific demo, we are not using DockSpaceOverViewport() because:
-    // - (1) we allow the host window to be floating/moveable instead of filling the viewport (when opt_fullscreen == false)
-    // - (2) we allow the host window to have padding (when opt_padding == true)
-    // - (3) we expose many flags and need a way to have them visible.
-    // - (4) we have a local menu bar in the host window (vs. you could use BeginMainMenuBar() + DockSpaceOverViewport()
-    //      in your code, but we don't here because we allow the window to be floating)
-
     static bool opt_fullscreen = true;
     static bool opt_padding = false;
     static ImGuiDockNodeFlags dockspace_flags = ImGuiDockNodeFlags_None;
 
-    // We are using the ImGuiWindowFlags_NoDocking flag to make the parent window not dockable into,
-    // because it would be confusing to have two docking targets within each others.
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;
-    if (opt_fullscreen)
+    if( opt_fullscreen )
     {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(viewport->WorkPos);
-        ImGui::SetNextWindowSize(viewport->WorkSize);
-        ImGui::SetNextWindowViewport(viewport->ID);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::SetNextWindowPos( viewport->WorkPos );
+        ImGui::SetNextWindowSize( viewport->WorkSize );
+        ImGui::SetNextWindowViewport( viewport->ID );
+        ImGui::PushStyleVar( ImGuiStyleVar_WindowRounding, 0.0f );
+        ImGui::PushStyleVar( ImGuiStyleVar_WindowBorderSize, 0.0f );
         window_flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove;
         window_flags |= ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
     }
@@ -1330,67 +1302,56 @@ void ShowExampleAppDockSpace(bool* p_open)
         dockspace_flags &= ~ImGuiDockNodeFlags_PassthruCentralNode;
     }
 
-    // When using ImGuiDockNodeFlags_PassthruCentralNode, DockSpace() will render our background
-    // and handle the pass-thru hole, so we ask Begin() to not render a background.
-    if (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode)
+    if( dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode )
         window_flags |= ImGuiWindowFlags_NoBackground;
 
-    // Important: note that we proceed even if Begin() returns false (aka window is collapsed).
-    // This is because we want to keep our DockSpace() active. If a DockSpace() is inactive,
-    // all active windows docked into it will lose their parent and become undocked.
-    // We cannot preserve the docking relationship between an active window and an inactive docking, otherwise
-    // any change of dockspace/settings would lead to windows being stuck in limbo and never being visible.
-    if (!opt_padding)
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::Begin("DockSpace Demo", p_open, window_flags);
-    if (!opt_padding)
+    if( !opt_padding )
+        ImGui::PushStyleVar( ImGuiStyleVar_WindowPadding, ImVec2( 0.0f, 0.0f ) );
+    ImGui::Begin( "DockSpace Demo", p_open, window_flags );
+    if( !opt_padding )
         ImGui::PopStyleVar();
 
-    if (opt_fullscreen)
-        ImGui::PopStyleVar(2);
+    if( opt_fullscreen )
+        ImGui::PopStyleVar( 2 );
 
-    // Submit the DockSpace
     ImGuiIO& io = ImGui::GetIO();
-    if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable)
+    if( io.ConfigFlags & ImGuiConfigFlags_DockingEnable )
     {
-        ImGuiID dockspace_id = ImGui::GetID("MyDockSpace");
-        ImGui::DockSpace(dockspace_id, ImVec2(0.0f, 0.0f), dockspace_flags);
+        ImGuiID dockspace_id = ImGui::GetID( "MyDockSpace" );
+        ImGui::DockSpace( dockspace_id, ImVec2( 0.0f, 0.0f ), dockspace_flags );
     }
 
-    if (ImGui::BeginMenuBar())
+    if( ImGui::BeginMenuBar() )
     {
-        if (ImGui::BeginMenu("Options"))
+        if( ImGui::BeginMenu( "Options" ) )
         {
-            // Disabling fullscreen would allow the window to be moved to the front of other windows,
-            // which we can't undo at the moment without finer window depth/z control.
-            ImGui::MenuItem("Fullscreen", NULL, &opt_fullscreen);
-            ImGui::MenuItem("Padding", NULL, &opt_padding);
+            ImGui::MenuItem( "Fullscreen", NULL, &opt_fullscreen );
+            ImGui::MenuItem( "Padding", NULL, &opt_padding );
             ImGui::Separator();
 
-            if (ImGui::MenuItem("Flag: NoDockingOverCentralNode", "", (dockspace_flags & ImGuiDockNodeFlags_NoDockingOverCentralNode) != 0)) { dockspace_flags ^= ImGuiDockNodeFlags_NoDockingOverCentralNode; }
-            if (ImGui::MenuItem("Flag: NoDockingSplit",         "", (dockspace_flags & ImGuiDockNodeFlags_NoDockingSplit) != 0))             { dockspace_flags ^= ImGuiDockNodeFlags_NoDockingSplit; }
-            if (ImGui::MenuItem("Flag: NoUndocking",            "", (dockspace_flags & ImGuiDockNodeFlags_NoUndocking) != 0))                { dockspace_flags ^= ImGuiDockNodeFlags_NoUndocking; }
-            if (ImGui::MenuItem("Flag: NoResize",               "", (dockspace_flags & ImGuiDockNodeFlags_NoResize) != 0))                   { dockspace_flags ^= ImGuiDockNodeFlags_NoResize; }
-            if (ImGui::MenuItem("Flag: AutoHideTabBar",         "", (dockspace_flags & ImGuiDockNodeFlags_AutoHideTabBar) != 0))             { dockspace_flags ^= ImGuiDockNodeFlags_AutoHideTabBar; }
-            if (ImGui::MenuItem("Flag: PassthruCentralNode",    "", (dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode) != 0, opt_fullscreen)) { dockspace_flags ^= ImGuiDockNodeFlags_PassthruCentralNode; }
+            if( ImGui::MenuItem( "Flag: NoDockingOverCentralNode", "", ( dockspace_flags & ImGuiDockNodeFlags_NoDockingOverCentralNode ) != 0 ) ) { dockspace_flags ^= ImGuiDockNodeFlags_NoDockingOverCentralNode; }
+            if( ImGui::MenuItem( "Flag: NoDockingSplit",         "", ( dockspace_flags & ImGuiDockNodeFlags_NoDockingSplit ) != 0 ) )             { dockspace_flags ^= ImGuiDockNodeFlags_NoDockingSplit; }
+            if( ImGui::MenuItem( "Flag: NoUndocking",            "", ( dockspace_flags & ImGuiDockNodeFlags_NoUndocking ) != 0 ) )                { dockspace_flags ^= ImGuiDockNodeFlags_NoUndocking; }
+            if( ImGui::MenuItem( "Flag: NoResize",               "", ( dockspace_flags & ImGuiDockNodeFlags_NoResize ) != 0 ) )                   { dockspace_flags ^= ImGuiDockNodeFlags_NoResize; }
+            if( ImGui::MenuItem( "Flag: AutoHideTabBar",         "", ( dockspace_flags & ImGuiDockNodeFlags_AutoHideTabBar ) != 0 ) )             { dockspace_flags ^= ImGuiDockNodeFlags_AutoHideTabBar; }
+            if( ImGui::MenuItem( "Flag: PassthruCentralNode",    "", ( dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode ) != 0, opt_fullscreen ) ) { dockspace_flags ^= ImGuiDockNodeFlags_PassthruCentralNode; }
             ImGui::Separator();
 
-            if (ImGui::MenuItem("Close", NULL, false, p_open != NULL))
+            if( ImGui::MenuItem( "Close", NULL, false, p_open != NULL ) )
                 *p_open = false;
             ImGui::EndMenu();
         }
 
-        // New Tools menu beside Options
-        if (ImGui::BeginMenu("Tools"))
+        if( ImGui::BeginMenu( "Tools" ) )
         {
-            ImGui::MenuItem("GOAPie Visualization", NULL, &g_ShowGoapieVisualizationWindow);
-            ImGui::MenuItem("World View", NULL, &g_ShowWorldViewWindow);
-            ImGui::MenuItem("Debug Messages", NULL, &g_ShowDebugMessagesWindow);
-            ImGui::MenuItem("Simulation Arguments", NULL, &g_ShowSimulationArgumentsWindow);
-            ImGui::MenuItem("Planner Log", NULL, &g_ShowPlannerLogWindow);
-            ImGui::MenuItem("Blackboard Properties", NULL, &g_ShowBlackboardPropertiesWindow);
+            ImGui::MenuItem( "GOAPie Visualization", NULL, &g_ShowGoapieVisualizationWindow );
+            ImGui::MenuItem( "World View", NULL, &g_ShowWorldViewWindow );
+            ImGui::MenuItem( "Debug Messages", NULL, &g_ShowDebugMessagesWindow );
+            ImGui::MenuItem( "Simulation Arguments", NULL, &g_ShowSimulationArgumentsWindow );
+            ImGui::MenuItem( "Planner Log", NULL, &g_ShowPlannerLogWindow );
+            ImGui::MenuItem( "Blackboard Properties", NULL, &g_ShowBlackboardPropertiesWindow );
             ImGui::Separator();
-            ImGui::MenuItem("Debug Path", NULL, &g_ShowDebugPathWindow);
+            ImGui::MenuItem( "Debug Path", NULL, &g_ShowDebugPathWindow );
             ImGui::EndMenu();
         }
 
@@ -1407,42 +1368,10 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
 
     const gie::Blackboard* contextBB = &selectedSimulation->context();
 
-    // compute bounds again (same as tree/waypoint drawing)
-    glm::vec3 minBounds( std::numeric_limits< float >::max() );
-    glm::vec3 maxBounds( std::numeric_limits< float >::lowest() );
-    auto waypointGuidsTag = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-    if( waypointGuidsTag )
-    {
-        for( auto guid : *waypointGuidsTag )
-        {
-            auto e = world.entity( guid );
-            if( auto loc = e->property( "Location" ) )
-            {
-                glm::vec3 p = *loc->getVec3();
-                minBounds = glm::min( minBounds, p );
-                maxBounds = glm::max( maxBounds, p );
-            }
-        }
-    }
-    auto treeGuids = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
-    if( treeGuids )
-    {
-        for( auto guid : *treeGuids )
-        {
-            auto e = contextBB->entity( guid );
-            if( auto loc = e->property( "Location" ) )
-            {
-                glm::vec3 p = *loc->getVec3();
-                minBounds = glm::min( minBounds, p );
-                maxBounds = glm::max( maxBounds, p );
-            }
-        }
-    }
-
-    glm::vec3 range = maxBounds - minBounds;
-    glm::vec3 minB = minBounds - range * 0.1f;
-    glm::vec3 maxB = maxBounds + range * 0.1f;
-    glm::vec3 offset = -( minB + maxB ) * 0.5f;
+    // Use global drawing limits
+    glm::vec3 minB = g_DrawingLimits.minBounds;
+    glm::vec3 maxB = g_DrawingLimits.maxBounds;
+    glm::vec3 offset = -g_DrawingLimits.center;
     glm::vec3 scale = 2.0f / ( maxB - minB );
 
     // Path steps available?
@@ -1620,10 +1549,10 @@ void drawSelectedSimulationPath( const gie::World& world, const gie::Planner& pl
     }
 
     // draw segment from agent to first waypoint in the path (if available)
-	const auto agentStartLocationArgument = selectedSimulation->arguments().get( "AgentStartLocation" );
-	if( !pathGuids.empty() && agentStartLocationArgument )
+    const auto agentStartLocationArgument = selectedSimulation->arguments().get( "AgentStartLocation" );
+    if( !pathGuids.empty() && agentStartLocationArgument )
     {
-		auto agentStartLocPpt = std::get< glm::vec3 >( *agentStartLocationArgument );
+        auto agentStartLocPpt = std::get< glm::vec3 >( *agentStartLocationArgument );
         auto firstWp = world.entity( pathGuids.front() );
         if( auto wpLoc = firstWp->property( "Location" ) )
         {
@@ -1676,48 +1605,10 @@ void drawAgentCrosshair( const gie::World& world, const gie::Planner& planner )
 
     const gie::Blackboard* contextBB = &selectedSimulation->context();
 
-    // compute bounds from waypoints and trees to match transform
-    glm::vec3 minBounds( std::numeric_limits< float >::max() );
-    glm::vec3 maxBounds( std::numeric_limits< float >::lowest() );
-
-    auto waypointSet = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-    if( waypointSet )
-    {
-        for( auto guid : *waypointSet )
-        {
-            if( auto e = world.entity( guid ) )
-            {
-                if( auto loc = e->property( "Location" ) )
-                {
-                    glm::vec3 p = *loc->getVec3();
-                    minBounds = glm::min( minBounds, p );
-                    maxBounds = glm::max( maxBounds, p );
-                }
-            }
-        }
-    }
-
-    auto treeSet = contextBB->entityTagRegister().tagSet( { gie::stringHasher( "Tree" ) } );
-    if( treeSet )
-    {
-        for( auto guid : *treeSet )
-        {
-            if( auto e = contextBB->entity( guid ) )
-            {
-                if( auto loc = e->property( "Location" ) )
-                {
-                    glm::vec3 p = *loc->getVec3();
-                    minBounds = glm::min( minBounds, p );
-                    maxBounds = glm::max( maxBounds, p );
-                }
-            }
-        }
-    }
-
-    glm::vec3 range = maxBounds - minBounds;
-    glm::vec3 minB = minBounds - range * 0.1f;
-    glm::vec3 maxB = maxBounds + range * 0.1f;
-    glm::vec3 offset = -( minB + maxB ) * 0.5f;
+    // Use global drawing limits transform
+    glm::vec3 minB = g_DrawingLimits.minBounds;
+    glm::vec3 maxB = g_DrawingLimits.maxBounds;
+    glm::vec3 offset = -g_DrawingLimits.center;
     glm::vec3 scale = 2.0f / ( maxB - minB );
 
     // get agent location from simulation context

@@ -130,20 +130,25 @@ int survivalOnHill( ExampleParameters& params )
     std::array< gie::Property::GuidVector*, waypointCount > waypointLinks;
 
     std::vector< gie::Entity* > waypoints;
-    std::vector< gie::Guid > waypointGuids;
-    waypoints.reserve( waypointCount );
-    waypointGuids.reserve( waypointCount );
-    for( size_t i = 0; i < waypointCount; i++ )
-    {
-        auto& waypointLocation = waypointLocations[ i ];
-        auto wypointEntityName = std::string( "waypoint" + std::to_string( i ) );
-        auto& createdWaypoint = waypoints.emplace_back( world.createEntity( wypointEntityName ) );
-        world.context().entityTagRegister().tag( createdWaypoint, { gie::stringHasher( "Waypoint" ) } );
-        waypointGuids.push_back( createdWaypoint->guid() );
-        createdWaypoint->createProperty( "Location", waypointLocation );
-        auto linksPpt = createdWaypoint->createProperty( "Links", gie::Property::GuidVector{} );
-        waypointLinks[ i ] = linksPpt->getGuidArray();
-    }
+	std::vector< gie::Guid > waypointGuids;
+	waypoints.reserve( waypointCount );
+	waypointGuids.reserve( waypointCount );
+	const auto waypointTag = gie::stringHasher( "Waypoint" );
+
+	// all waypoints and other renderable entities will have this tag
+	const auto drawTag = gie::stringHasher( "Draw" );
+
+	for( size_t i = 0; i < waypointCount; i++ )
+	{
+		auto& waypointLocation = waypointLocations[ i ];
+		auto wypointEntityName = std::string( "waypoint" + std::to_string( i ) );
+		auto& createdWaypoint = waypoints.emplace_back( world.createEntity( wypointEntityName ) );
+		world.context().entityTagRegister().tag( createdWaypoint, { waypointTag, drawTag } );
+		waypointGuids.push_back( createdWaypoint->guid() );
+		createdWaypoint->createProperty( "Location", waypointLocation );
+		auto linksPpt = createdWaypoint->createProperty( "Links", gie::Property::GuidVector{} );
+		waypointLinks[ i ] = linksPpt->getGuidArray();
+	}
 
     // connecting waypoints
     constexpr bool linkLadder = false;
@@ -1182,13 +1187,16 @@ int survivalOnHill( ExampleParameters& params )
         glm::vec3{ -12.f,  -4.f,  0.f }
     };
 
-    // adding trees to world
-    for( size_t i = 0; i < treeCount; i++ )
-    {
-        auto treeEntity = world.createEntity( std::string( "tree" + std::to_string( i ) ) );
-        treeEntity->createProperty( "Location", treeLocations[ i ] );
-        world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "Tree" ), gie::stringHasher( "TreeUp" ) } );
-    }
+    const auto treeTag = gie::stringHasher( "Tree" );
+	const auto treeUpTag = gie::stringHasher( "TreeUp" );
+
+	// adding trees to world
+	for( size_t i = 0; i < treeCount; i++ )
+	{
+		auto treeEntity = world.createEntity( std::string( "tree" + std::to_string( i ) ) );
+		treeEntity->createProperty( "Location", treeLocations[ i ] );
+		world.context().entityTagRegister().tag( treeEntity, { treeTag, treeUpTag, drawTag } );
+	}
 
     // setting up planner passing goal and agent to reach the goal
     planner.simulate( goal, *agentEntity );
