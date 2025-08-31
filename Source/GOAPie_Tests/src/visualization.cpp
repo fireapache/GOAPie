@@ -40,6 +40,7 @@ struct DrawingLimits
     glm::vec3 maxBounds{ std::numeric_limits< float >::lowest() }; /**< Maximum bounds of the drawing area. */
 	glm::vec3 range{ 0.f }; /**< Range of the drawing area. */
 	glm::vec3 center{ 0.f }; /**< Center point of the drawing area. */
+	glm::vec3 scale{ 1.f }; /**< Scale factor for transforming world coordinates to clip space. */
     const float margin = 0.1f; // 10% margin
 };
 static DrawingLimits g_DrawingLimits; /**< Global instance of DrawingLimits used for the entire visualization. */
@@ -324,7 +325,7 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
         glm::vec3 minB = g_DrawingLimits.minBounds;
         glm::vec3 maxB = g_DrawingLimits.maxBounds;
         glm::vec3 offset = -g_DrawingLimits.center;
-        glm::vec3 scale = 2.0f / ( maxB - minB );
+        glm::vec3 scale = g_DrawingLimits.scale;
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
@@ -873,7 +874,7 @@ void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner
     glm::vec3 minBounds = g_DrawingLimits.minBounds;
     glm::vec3 maxBounds = g_DrawingLimits.maxBounds;
     glm::vec3 offset = -g_DrawingLimits.center;
-    glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
+    glm::vec3 scale = g_DrawingLimits.scale;
 
     // Set up OpenGL for rendering
     glPointSize( 10.0f );        // Set point size for waypoints
@@ -913,7 +914,7 @@ void drawHeistOverlays( const gie::World& world, const gie::Planner& planner )
     glm::vec3 minBounds = g_DrawingLimits.minBounds;
     glm::vec3 maxBounds = g_DrawingLimits.maxBounds;
     glm::vec3 offset = -g_DrawingLimits.center;
-    glm::vec3 scale = 2.0f / ( maxBounds - minBounds );
+    glm::vec3 scale = g_DrawingLimits.scale;
 
     // Draw simple room rectangles around room waypoints
     const auto* waypointSet = context->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
@@ -1092,7 +1093,7 @@ void drawTrees( const gie::World& world, const gie::Planner& planner )
     glm::vec3 minBounds = g_DrawingLimits.minBounds;
     glm::vec3 maxBounds = g_DrawingLimits.maxBounds;
     glm::vec3 offset = -g_DrawingLimits.center;
-    glm::vec3 scale = 2.0f / ( maxBounds - minBounds ); // Scale to fit in clip space
+    glm::vec3 scale = g_DrawingLimits.scale;
 
     auto treeUpTag = gie::stringHasher( "TreeUp" );
     auto treeDownTag = gie::stringHasher( "TreeDown" );
@@ -1280,10 +1281,15 @@ void updateDrawingBounds( const gie::World& world )
     minBounds = minBounds - range * g_DrawingLimits.margin;
     maxBounds = maxBounds + range * g_DrawingLimits.margin;
 
+    // Calculate scale and ensure z-component is 1.0f
+    glm::vec3 scale = 2.0f / ( maxBounds - minBounds );
+    scale.z = 1.0f;
+
     g_DrawingLimits.minBounds = minBounds;
     g_DrawingLimits.maxBounds = maxBounds;
     g_DrawingLimits.center = center;
     g_DrawingLimits.range = range;
+    g_DrawingLimits.scale = scale;
 }
 
 // and we rescale the buffer, so we're able to resize the window

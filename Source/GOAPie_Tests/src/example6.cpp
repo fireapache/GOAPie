@@ -193,7 +193,7 @@ int heistOpenSafe( ExampleParameters& params )
     { LivingRoomHash,  { {  -30.f,   -5.f,   0.f }, {  -10.f,   -5.f,   0.f }, {  -10.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
     { EntranceHash,    { {  -10.f,   -5.f,   0.f }, {    0.f,   -5.f,   0.f }, {    0.f,   20.f,   0.f }, {  -10.f,   20.f,   0.f } } },
     { BedroomAHash,    { {    0.f,   -5.f,   0.f }, {   15.f,   -5.f,   0.f }, {   15.f,   20.f,   0.f }, {    0.f,   20.f,   0.f } } },
-    { BedroomBHash,    { {   15.f,   -5.f,   0.f }, {   30.f,   -5.f,   0.f }, {   30.f,  20.f,   0.f }, {   15.f,   20.f,   0.f } } },
+    { BedroomBHash,    { {   15.f,   -5.f,   0.f }, {   30.f,   -5.f,   0.f }, {   30.f,   20.f,   0.f }, {   15.f,   20.f,   0.f } } },
     };
 
     std::vector< gie::Entity* > roomEntities;
@@ -213,24 +213,53 @@ int heistOpenSafe( ExampleParameters& params )
     *( roomEntities[ 0 ]->property( "Discovered" )->getBool() ) = true; // WholeHouse known from start
 	*( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false; // don't display WholeHouse name in visualization
 
-    // Waypoints (rooms + points of interest) laid roughly as a house layout
+    // Waypoints (rooms + points of interest + doors/windows + outdoor) laid roughly as a house layout
     struct WP { gie::StringHash name; glm::vec3 p; };
 
     const WP wps[] = {
-        { OutsideFrontHash,  {-30.f,  0.f, 0.f} },
-        { OutsideBackHash,   { 30.f,  0.f, 0.f} },
-        { GarageHash,        { 15.f, -5.f, 0.f} },
-        { KitchenHash,       {  5.f,  5.f, 0.f} },
-        { CorridorHash,      {  0.f,  0.f, 0.f} },
-        { LivingRoomHash,    { -5.f,  8.f, 0.f} },
-        { BathroomHash,      { -5.f, -8.f, 0.f} },
-        { BedroomAHash,      { -12.f,  3.f, 0.f} },
-        { BedroomBHash,      { -12.f, -3.f, 0.f} },
-        { AlarmPanelHash,    {  0.f, -2.f, 0.f} },
-        { FuseBoxHash,       { 15.f, -7.f, 0.f} },
-        { FrontDoorHash,     { -15.f, 0.f, 0.f} },
-        { BackDoorHash,      {  15.f, 0.f, 0.f} },
-        { KitchenWindowHash, {  8.f,  7.f, 0.f} }
+        // Outdoor waypoints (9 points around the house)
+        { OutsideFrontHash,      {-35.f,   0.f, 0.f} },  // Front center
+        { H("OutsideFrontLeft"), {-35.f,  10.f, 0.f} },  // Front left
+        { H("OutsideFrontRight"),{-35.f, -10.f, 0.f} },  // Front right
+        { OutsideBackHash,       { 35.f,   0.f, 0.f} },  // Back center
+        { H("OutsideBackLeft"),  { 35.f,  10.f, 0.f} },  // Back left
+        { H("OutsideBackRight"), { 35.f, -10.f, 0.f} },  // Back right
+        { H("OutsideLeft"),      { -5.f,  25.f, 0.f} },  // Left side
+        { H("OutsideRight"),     { 15.f, -25.f, 0.f} },  // Right side
+        { H("OutsideCorner"),    { 35.f,  25.f, 0.f} },  // Corner (back-left)
+
+        // Room centers
+        { GarageHash,        { 17.5f, -15.f, 0.f} },
+        { KitchenHash,       {-12.5f, -15.f, 0.f} },
+        { CorridorHash,      {  0.f,  -7.5f, 0.f} },
+        { LivingRoomHash,    {-20.f,   7.5f, 0.f} },
+        { BathroomHash,      {  0.f,  -15.f, 0.f} },
+        { BedroomAHash,      {  7.5f,   7.5f, 0.f} },
+        { BedroomBHash,      { 22.5f,   7.5f, 0.f} },
+        { LaundryRoomHash,   {-25.f,  -15.f, 0.f} },
+        { EntranceHash,      { -5.f,    7.5f, 0.f} },
+
+        // Points of Interest
+        { AlarmPanelHash,    {  0.f,  -2.f, 0.f} },
+        { FuseBoxHash,       { 17.5f, -17.f, 0.f} },
+
+        // Doors (positioned at room boundaries)
+        { FrontDoorHash,     {-10.f,   -5.f, 0.f} },  // Between Entrance and Corridor
+        { BackDoorHash,      { 30.f,  -10.f, 0.f} },  // Between Garage and outside
+        { H("GarageToKitchen"),    { 5.f,  -10.f, 0.f} },  // Internal door
+        { H("CorridorToLiving"),   {-10.f,  -5.f, 0.f} },  // Internal door  
+        { H("CorridorToBedA"),     { 0.f,   -5.f, 0.f} },   // Internal door
+        { H("CorridorToBedB"),     {15.f,   -5.f, 0.f} },   // Internal door
+        { H("CorridorToBath"),     { 0.f,  -10.f, 0.f} },   // Internal door
+        { H("EntranceToLiving"),   {-10.f,   0.f, 0.f} },   // Internal door
+
+        // Windows (positioned at exterior walls)
+        { KitchenWindowHash,       {-12.5f, -20.f, 0.f} }, // Kitchen south wall
+        { H("LivingRoomWindow"),   {-30.f,   7.5f, 0.f} }, // Living room west wall
+        { H("BedroomAWindow"),     {  7.5f,  20.f, 0.f} }, // Bedroom A north wall  
+        { H("BedroomBWindow"),     { 22.5f,  20.f, 0.f} }, // Bedroom B north wall
+        { H("BathroomWindow"),     {  5.f,  -20.f, 0.f} }, // Bathroom south wall
+        { H("GarageWindow"),       { 30.f,  -15.f, 0.f} }, // Garage east wall
     };
 
     std::vector< gie::Entity* > waypoints;
@@ -242,10 +271,10 @@ int heistOpenSafe( ExampleParameters& params )
     {
         auto e = world.createEntity( gie::stringRegister().get( wp.name ) );
         e->createProperty( "Location", wp.p );
-        world.context().entityTagRegister().tag( e, { H( "Waypoint" ) } );
+        world.context().entityTagRegister().tag( e, { H( "Waypoint" ), H( "Draw" ) } );
         waypoints.push_back( e );
         waypointGuids.push_back( e->guid() );
-        // Links array for interior movement graph
+        // Links array for movement graph
         e->createProperty( "Links", gie::Property::GuidVector{} );
     }
 
@@ -255,7 +284,7 @@ int heistOpenSafe( ExampleParameters& params )
         return nullptr;
     };
 
-    // Basic interior connectivity (Rooms only)
+    // Enhanced connectivity system
     auto link = [&]( const char* a, const char* b )
     {
         auto ea = findWp( a ); auto eb = findWp( b );
@@ -264,16 +293,72 @@ int heistOpenSafe( ExampleParameters& params )
         auto lb = eb->property( "Links" )->getGuidArray(); lb->push_back( ea->guid() );
     };
 
+    // Outdoor connectivity (around the house perimeter)
+    link( "OutsideFront", "OutsideFrontLeft" );
+    link( "OutsideFront", "OutsideFrontRight" );
+    link( "OutsideFrontLeft", "OutsideLeft" );
+    link( "OutsideFrontRight", "OutsideRight" );
+    link( "OutsideLeft", "OutsideCorner" );
+    link( "OutsideRight", "OutsideBackRight" );
+    link( "OutsideCorner", "OutsideBackLeft" );
+    link( "OutsideBackLeft", "OutsideBack" );
+    link( "OutsideBackRight", "OutsideBack" );
+    link( "OutsideBack", "OutsideCorner" );
+
+    // Outdoor to doors/windows connectivity
+    link( "OutsideFront", "FrontDoor" );
+    link( "OutsideBack", "BackDoor" );
+    link( "OutsideLeft", "LivingRoomWindow" );
+    link( "OutsideFrontRight", "KitchenWindow" );
+    link( "OutsideRight", "BathroomWindow" );
+    link( "OutsideBackLeft", "BedroomAWindow" );
+    link( "OutsideBackLeft", "BedroomBWindow" );
+    link( "OutsideBack", "GarageWindow" );
+
+    // Room to door connectivity
+    link( "Entrance", "FrontDoor" );
+    link( "Garage", "BackDoor" );
+    link( "Kitchen", "GarageToKitchen" );
+    link( "Garage", "GarageToKitchen" );
+    link( "Corridor", "CorridorToLiving" );
+    link( "LivingRoom", "CorridorToLiving" );
+    link( "Corridor", "CorridorToBedA" );
+    link( "BedroomA", "CorridorToBedA" );
+    link( "Corridor", "CorridorToBedB" );
+    link( "BedroomB", "CorridorToBedB" );
+    link( "Corridor", "CorridorToBath" );
+    link( "Bathroom", "CorridorToBath" );
+    link( "Entrance", "EntranceToLiving" );
+    link( "LivingRoom", "EntranceToLiving" );
+
+    // Room to window connectivity
+    link( "Kitchen", "KitchenWindow" );
+    link( "LivingRoom", "LivingRoomWindow" );
+    link( "BedroomA", "BedroomAWindow" );
+    link( "BedroomB", "BedroomBWindow" );
+    link( "Bathroom", "BathroomWindow" );
+    link( "Garage", "GarageWindow" );
+
+    // Door to door connectivity (through corridor)
+    link( "FrontDoor", "CorridorToLiving" );
+    link( "FrontDoor", "CorridorToBedA" );
+    link( "FrontDoor", "CorridorToBedB" );
+    link( "FrontDoor", "CorridorToBath" );
+    link( "EntranceToLiving", "CorridorToLiving" );
+
+    // Interior room to room connectivity through corridor
     link( "Corridor", "Kitchen" );
     link( "Corridor", "LivingRoom" );
     link( "Corridor", "Bathroom" );
     link( "Corridor", "BedroomA" );
     link( "Corridor", "BedroomB" );
-    link( "Garage", "Kitchen" ); // internal door from garage to kitchen
+    link( "Corridor", "LaundryRoom" );
+    link( "Corridor", "Entrance" );
 
-    // House systems
-    auto alarmSystem = world.createEntity( "AlarmSystem" );
-    alarmSystem->createProperty( "Armed", true );
+    // Additional direct room connections
+    link( "Kitchen", "LaundryRoom" );
+    link( "Entrance", "LivingRoom" );
+
 
     // Create connectors: FrontDoor, BackDoor, KitchenWindow (entry points)
     auto makeConnector = [&]( const char* name, const char* fromRoom, const char* toRoom, const glm::vec3& where ) -> gie::Entity*
@@ -293,9 +378,13 @@ int heistOpenSafe( ExampleParameters& params )
         return c;
     };
 
-    auto cFront = makeConnector( "FrontDoorConnector", "OutsideFront", "Corridor", *findWp( "FrontDoor" )->property( "Location" )->getVec3() );
-    auto cBack  = makeConnector( "BackDoorConnector",  "OutsideBack",  "Kitchen",  *findWp( "BackDoor" )->property( "Location" )->getVec3() );
-    auto cKWin  = makeConnector( "KitchenWindowConnector", "OutsideBack", "Kitchen", *findWp( "KitchenWindow" )->property( "Location" )->getVec3() );
+    auto cFront = makeConnector( "FrontDoorConnector", "OutsideFront", "Entrance", *findWp( "FrontDoor" )->property( "Location" )->getVec3() );
+    auto cBack  = makeConnector( "BackDoorConnector",  "OutsideBack",  "Garage",   *findWp( "BackDoor" )->property( "Location" )->getVec3() );
+    auto cKWin  = makeConnector( "KitchenWindowConnector", "OutsideFrontRight", "Kitchen", *findWp( "KitchenWindow" )->property( "Location" )->getVec3() );
+
+    // House systems
+    auto alarmSystem = world.createEntity( "AlarmSystem" );
+    alarmSystem->createProperty( "Armed", true );
 
     // Info entities
     auto makeInfo = [&]( const char* infoName ) -> gie::Entity*
