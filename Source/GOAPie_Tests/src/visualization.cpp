@@ -124,6 +124,9 @@ void rescale_framebuffer( float width, float height );
 void ShowExampleAppDockSpace( bool* p_open );
 void unbind_framebuffer();
 void updateDrawingBounds( const gie::World& world );
+// NEW: draw discovered room walls and their names in World View
+void drawDiscoveredRoomsWalls( const gie::World& world, const gie::Planner& planner );
+void drawRoomNamesOverlay( const gie::World& world, const gie::Planner& planner, ImVec2 pos, float windowWidth, float windowHeight );
 
 /** @file
  * Creates a window to draw GOAPie world context states
@@ -231,6 +234,7 @@ int visualization( ExampleParameters& params )
 
         // rendering elements
         updateDrawingBounds( world );
+        drawDiscoveredRoomsWalls( world, planner ); // NEW: draw discovered rooms first
         drawWaypointsAndLinks( world, planner );
         drawHeistOverlays( world, planner );
         drawTrees( world, planner );
@@ -297,6 +301,8 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
 
         // Draw waypoint id suffix overlay (extracted)
         drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
+        // NEW: room names overlay
+        drawRoomNamesOverlay( world, planner, pos, windowWidth, windowHeight );
     }
     ImGui::End();
 }
@@ -1243,11 +1249,26 @@ void updateDrawingBounds( const gie::World& world )
     {
         if( const auto* e = world.entity( guid ) )
         {
+            // First check for Location property (existing behavior)
             if( const auto* loc = e->property( "Location" ) )
             {
                 glm::vec3 p = *loc->getVec3();
                 minBounds = glm::min( minBounds, p );
                 maxBounds = glm::max( maxBounds, p );
+            }
+            
+            // NEW: Also check for Vertices property to include room boundaries
+            if( const auto* verticesPpt = e->property( "Vertices" ) )
+            {
+                const auto* verts = std::get_if< gie::Property::Vec3Vector >( &verticesPpt->value );
+                if( verts && !verts->empty() )
+                {
+                    for( const auto& vertex : *verts )
+                    {
+                        minBounds = glm::min( minBounds, vertex );
+                        maxBounds = glm::max( maxBounds, vertex );
+                    }
+                }
             }
         }
     }
@@ -1632,4 +1653,110 @@ void drawAgentCrosshair( const gie::World& world, const gie::Planner& planner )
     glVertex3f( p.x, p.y + half, p.z );
     glEnd();
     glLineWidth( 1.0f );
+}
+
+// NEW: Draw walls for discovered rooms using their Vertices
+void drawDiscoveredRoomsWalls( const gie::World& world, const gie::Planner& planner )
+{
+    const gie::Blackboard* context = &world.context();
+    if( const auto* sim = planner.simulation( selectedSimulationGuid ) ) context = &sim->context();
+
+    const auto* roomSet = context->entityTagRegister().tagSet( { gie::stringHasher( "Room" ) } );
+    if( !roomSet || roomSet->empty() ) return;
+
+    glm::vec3 minB = g_DrawingLimits.minBounds;
+    glm::vec3 maxB = g_DrawingLimits.maxBounds;
+    glm::vec3 offset = -g_DrawingLimits.center;
+    glm::vec3 scale = 2.0f / ( maxB - minB );
+	scale.z = 1.0f; // no Z scaling
+
+    glColor3f( 0.85f, 0.85f, 0.85f );
+    glLineWidth( 2.0f );
+
+    for( auto guid : *roomSet )
+    {
+        const auto* e = context->entity( guid ); if( !e ) { e = world.entity( guid ); if( !e ) continue; }
+        // Only draw discovered rooms
+        auto disc = e->property( "Discovered" );
+        if( !disc || !*disc->getBool() ) continue;
+
+        auto verticesPpt = e->property( "Vertices" );
+        if( !verticesPpt ) continue;
+        const auto* verts = std::get_if< gie::Property::Vec3Vector >( &verticesPpt->value );
+        if( !verts || verts->size() < 3 ) continue;
+
+        // Draw lines connecting each vertex to the next, including last to first
+        glBegin( GL_LINES );
+        for( size_t i = 0; i < verts->size(); ++i )
+        {
+            // Current vertex
+            const auto& currentVertex = (*verts)[i];
+            glm::vec3 currentPos = ( currentVertex + offset ) * scale;
+            
+            // Next vertex (wrap around to first vertex when at the end)
+            size_t nextIndex = ( i + 1 ) % verts->size();
+            const auto& nextVertex = (*verts)[nextIndex];
+            glm::vec3 nextPos = ( nextVertex + offset ) * scale;
+            
+            // Draw line from current vertex to next vertex
+            glVertex3f( currentPos.x, currentPos.y, currentPos.z );
+            glVertex3f( nextPos.x, nextPos.y, nextPos.z );
+        }
+        glEnd();
+    }
+
+    glLineWidth( 1.0f );
+}
+
+// NEW: Overlay room names at top-left inside each discovered room (if DisplayName is true)
+void drawRoomNamesOverlay( const gie::World& world, const gie::Planner& planner, ImVec2 pos, float windowWidth, float windowHeight )
+{
+    const gie::Blackboard* context = &world.context();
+    if( const auto* sim = planner.simulation( selectedSimulationGuid ) ) context = &sim->context();
+
+    const auto* roomSet = context->entityTagRegister().tagSet( { gie::stringHasher( "Room" ) } );
+    if( !roomSet || roomSet->empty() ) return;
+
+    glm::vec3 minB = g_DrawingLimits.minBounds;
+    glm::vec3 maxB = g_DrawingLimits.maxBounds;
+    glm::vec3 offset = -g_DrawingLimits.center;
+    glm::vec3 scale = 2.0f / ( maxB - minB );
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    for( auto guid : *roomSet )
+    {
+        const auto* e = context->entity( guid ); if( !e ) { e = world.entity( guid ); if( !e ) continue; }
+        // Only discovered rooms
+        auto disc = e->property( "Discovered" );
+        if( !disc || !*disc->getBool() ) continue;
+        // Check DisplayName flag
+        auto disp = e->property( "DisplayName" );
+        if( !disp || !*disp->getBool() ) continue;
+
+        auto verticesPpt = e->property( "Vertices" ); if( !verticesPpt ) continue;
+        const auto* verts = std::get_if< gie::Property::Vec3Vector >( &verticesPpt->value );
+        if( !verts || verts->size() < 3 ) continue;
+
+        // Compute top-left pixel position from transformed vertices
+        float minXpx = FLT_MAX, minYpx = FLT_MAX; // min x and min y in pixel space (min y => top)
+        for( const auto& v : *verts )
+        {
+            glm::vec3 p = ( v + offset ) * scale; // NDC
+            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight; // flip Y
+            if( x_px < minXpx ) minXpx = x_px;
+            if( y_px < minYpx ) minYpx = y_px;
+        }
+
+        // Room name
+        std::string name = "";
+        if( e->nameHash() != gie::InvalidStringHash ) name = std::string( gie::stringRegister().get( e->nameHash() ) );
+        if( name.empty() ) continue;
+
+        ImVec2 textPos{ pos.x + minXpx + 4.0f, pos.y + minYpx + 4.0f }; // small padding inside
+        // shadow
+        dl->AddText( ImVec2( textPos.x + 1, textPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), name.c_str() );
+        dl->AddText( textPos, IM_COL32( 255, 255, 255, 255 ), name.c_str() );
+    }
 }

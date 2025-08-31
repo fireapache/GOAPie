@@ -159,22 +159,23 @@ int heistOpenSafe( ExampleParameters& params )
     agent->createProperty( "Inventory", gie::Property::GuidVector{} );
 
     // Room and POI names
-    const gie::StringHash OutsideFrontHash  = H( "OutsideFront" );
-    const gie::StringHash OutsideBackHash   = H( "OutsideBack" );
-    const gie::StringHash GarageHash        = H( "Garage" );
-    const gie::StringHash LaundryRoomHash   = H( "LaundryRoom" );
-    const gie::StringHash KitchenHash       = H( "Kitchen" );
-    const gie::StringHash CorridorHash      = H( "Corridor" );
-    const gie::StringHash LivingRoomHash    = H( "LivingRoom" );
+    const gie::StringHash AlarmPanelHash    = H( "AlarmPanel" );
+    const gie::StringHash BackDoorHash      = H( "BackDoor" );
     const gie::StringHash BathroomHash      = H( "Bathroom" );
     const gie::StringHash BedroomAHash      = H( "BedroomA" );
     const gie::StringHash BedroomBHash      = H( "BedroomB" );
-    const gie::StringHash AlarmPanelHash    = H( "AlarmPanel" );
-    const gie::StringHash FuseBoxHash       = H( "FuseBox" );
-    const gie::StringHash FrontDoorHash     = H( "FrontDoor" );
-    const gie::StringHash BackDoorHash      = H( "BackDoor" );
-    const gie::StringHash KitchenWindowHash = H( "KitchenWindow" );
+    const gie::StringHash CorridorHash      = H( "Corridor" );
 	const gie::StringHash EntranceHash      = H( "Entrance" );
+    const gie::StringHash FrontDoorHash     = H( "FrontDoor" );
+    const gie::StringHash FuseBoxHash       = H( "FuseBox" );
+    const gie::StringHash GarageHash        = H( "Garage" );
+    const gie::StringHash KitchenHash       = H( "Kitchen" );
+    const gie::StringHash KitchenWindowHash = H( "KitchenWindow" );
+    const gie::StringHash LaundryRoomHash   = H( "LaundryRoom" );
+    const gie::StringHash LivingRoomHash    = H( "LivingRoom" );
+    const gie::StringHash OutsideBackHash   = H( "OutsideBack" );
+    const gie::StringHash OutsideFrontHash  = H( "OutsideFront" );
+	const gie::StringHash WholeHouseHash    = H( "WholeHouse" );
 
     struct RoomInfo
 	{
@@ -183,25 +184,34 @@ int heistOpenSafe( ExampleParameters& params )
 	};
 
     const RoomInfo rooms[] = {
-		{ LaundryRoomHash, { { -30.f, -20.f, 0.f }, { -20.f, -20.f, 0.f }, { -20.f, -10.f, 0.f }, { -30.f, -10.f, 0.f } } },
-		{ KitchenHash, { { -20.f, -20.f, 0.f }, { -5.f, -20.f, 0.f }, { -5.f, -10.f, 0.f }, { -20.f, -10.f, 0.f } } },
-		{ BathroomHash, { { -5.f, -20.f, 0.f }, { 5.f, -20.f, 0.f }, { 5.f, -10.f, 0.f }, { -5.f, -10.f, 0.f } } },
-		{ GarageHash, { { 5.f, -20.f, 0.f }, { 30.f, -20.f, 0.f }, { 30.f, -10.f, 0.f }, { 5.f, -10.f, 0.f } } },
-		{ CorridorHash, { { -30.f, -10.f, 0.f }, { 30.f, -10.f, 0.f }, { 30.f, -5.f, 0.f }, { -30.f, -5.f, 0.f } } },
-		{ LivingRoomHash, { { -30.f, -5.f, 0.f }, { -10.f, -5.f, 0.f }, { -10.f, 20.f, 0.f }, { -30.f, 20.f, 0.f } } },
-		{ EntranceHash, { { -10.f, -5.f, 0.f }, { 0.f, -5.f, 0.f }, { 0.f, 20.f, 0.f }, { -10.f, 20.f, 0.f } } },
-		{ BedroomAHash, { { 0.f, -5.f, 0.f }, { 15.f, -5.f, 0.f }, { 15.f, 20.f, 0.f }, { 0.f, 20.f, 0.f } } },
-		{ BedroomBHash, { { 15.f, -5.f, 0.f }, { 30.f, -5.f, 0.f }, { 30.f, 20.f, 0.f }, { 15.f, 20.f, 0.f } } },
+    { WholeHouseHash,  { {  -30.f,  -20.f,   0.f }, {   30.f,  -20.f,   0.f }, {   30.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
+    { LaundryRoomHash, { {  -30.f,  -20.f,   0.f }, {  -20.f,  -20.f,   0.f }, {  -20.f,  -10.f,   0.f }, {  -30.f,  -10.f,   0.f } } },
+    { KitchenHash,     { {  -20.f,  -20.f,   0.f }, {   -5.f,  -20.f,   0.f }, {   -5.f,  -10.f,   0.f }, {  -20.f,  -10.f,   0.f } } },
+    { BathroomHash,    { {   -5.f,  -20.f,   0.f }, {    5.f,  -20.f,   0.f }, {    5.f,  -10.f,   0.f }, {   -5.f,  -10.f,   0.f } } },
+    { GarageHash,      { {    5.f,  -20.f,   0.f }, {   30.f,  -20.f,   0.f }, {   30.f,  -10.f,   0.f }, {    5.f,  -10.f,   0.f } } },
+    { CorridorHash,    { {  -30.f,  -10.f,   0.f }, {   30.f,  -10.f,   0.f }, {   30.f,   -5.f,   0.f }, {  -30.f,   -5.f,   0.f } } },
+    { LivingRoomHash,  { {  -30.f,   -5.f,   0.f }, {  -10.f,   -5.f,   0.f }, {  -10.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
+    { EntranceHash,    { {  -10.f,   -5.f,   0.f }, {    0.f,   -5.f,   0.f }, {    0.f,   20.f,   0.f }, {  -10.f,   20.f,   0.f } } },
+    { BedroomAHash,    { {    0.f,   -5.f,   0.f }, {   15.f,   -5.f,   0.f }, {   15.f,   20.f,   0.f }, {    0.f,   20.f,   0.f } } },
+    { BedroomBHash,    { {   15.f,   -5.f,   0.f }, {   30.f,   -5.f,   0.f }, {   30.f,  20.f,   0.f }, {   15.f,   20.f,   0.f } } },
     };
+
+    std::vector< gie::Entity* > roomEntities;
+	roomEntities.reserve( std::size( rooms ) );
 
     for( const auto& room : rooms )
     {
         auto roomEntity = world.createEntity( gie::stringRegister().get( room.name ) );
-        roomEntity->createProperty( "WallVertices", std::vector< glm::vec3 >( std::begin( room.vertices ), std::end( room.vertices ) ) );
-		roomEntity->createProperty( "Discovered", false );
+        roomEntity->createProperty( "Vertices", std::vector< glm::vec3 >( std::begin( room.vertices ), std::end( room.vertices ) ) );
+		roomEntity->createProperty( "Discovered", true );
+		roomEntity->createProperty( "DisplayName", true );
         roomEntity->createProperty( "Location", ( room.vertices[ 0 ] + room.vertices[ 1 ] + room.vertices[ 2 ] + room.vertices[ 3 ] ) * 0.25f );
 		world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) } );
+        roomEntities.push_back( roomEntity );
     }
+
+    *( roomEntities[ 0 ]->property( "Discovered" )->getBool() ) = true; // WholeHouse known from start
+	*( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false; // don't display WholeHouse name in visualization
 
     // Waypoints (rooms + points of interest) laid roughly as a house layout
     struct WP { gie::StringHash name; glm::vec3 p; };
