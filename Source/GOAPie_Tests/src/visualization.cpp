@@ -364,14 +364,22 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
                     {
                         std::string name( gie::stringRegister().get( nameHash ) );
                         size_t j = name.size();
-                        while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
+                        if( name.find( "waypoint" ) == 0 )
                         {
-                            --j;
+							while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
+							{
+								--j;
+							}
+							if( j < name.size() )
+							{
+								idxLabel = std::string( "wp" ) + name.substr( j );
+							}
                         }
-                        if( j < name.size() )
+                        else
                         {
-                            idxLabel = std::string( "wp" ) + name.substr( j );
+							idxLabel = name; // fallback to full name if not matching expected pattern
                         }
+                        
                     }
 
                     // Position index label above the suffix and center align
