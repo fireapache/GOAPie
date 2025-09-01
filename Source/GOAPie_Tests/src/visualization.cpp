@@ -20,6 +20,7 @@
 #include <sstream>
 #include <string>
 #include <algorithm>
+#include <limits>
 
 #include "example.h"
 
@@ -45,6 +46,12 @@ struct DrawingLimits
     const float margin = 0.1f; // 10% margin
 };
 static DrawingLimits g_DrawingLimits; /**< Global instance of DrawingLimits used for the entire visualization. */
+// NEW: Once drawing limits are computed first time, avoid auto-updating unless user applies manual bounds
+static bool g_DrawingLimitsInitialized = false;
+// NEW: Bounds editor overlay visibility and inputs
+static bool g_BoundsEditorVisible = false;
+static float g_BoundsInputX[ 2 ] = { 0.0f, 0.0f }; // [min, max]
+static float g_BoundsInputY[ 2 ] = { 0.0f, 0.0f }; // [min, max]
 
 // Add this at the top of your file or in a suitable scope
 static gie::Guid selectedSimulationGuid = gie::NullGuid; /**< GUID of the currently selected simulation. */
@@ -78,6 +85,22 @@ static bool g_WaypointEditPlaceArmed = false;
 // NEW: Target preview when move is armed
 static glm::vec3 g_WaypointEditTargetWorldPos{ 0.f, 0.f, 0.f };
 static bool g_WaypointEditHasTargetWorldPos = false;
+// NEW: Dragging state for moving waypoint with same click used to select
+static bool g_WaypointDragActive = false;
+static float g_WaypointDragZ = 0.0f;
+// NEW: begin moving only after threshold exceeded
+static bool g_WaypointDragMoving = false;
+static float g_WaypointDragStartLocalX = 0.0f;
+static float g_WaypointDragStartLocalY = 0.0f;
+
+// Helper: reset waypoint editor tool state when window closes
+static void ResetWaypointEditorState()
+{
+    g_WaypointEditSelectedGuid = gie::NullGuid;
+    g_WaypointEditPlaceArmed = false;
+    g_WaypointEditHasTargetWorldPos = false;
+    g_WaypointDragActive = false;
+}
 
 // UI settings persistence
 static const char* kUiWindowsSettingsFile = "goapie_ui_windows.ini";
@@ -146,8 +169,8 @@ void drawDiscoveredRoomsWalls( const gie::World& world, const gie::Planner& plan
 void drawRoomNamesOverlay( const gie::World& world, const gie::Planner& planner, ImVec2 pos, float windowWidth, float windowHeight );
 // NEW: Waypoint editor window and interactions on World View
 void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner );
-void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
-void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
+static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
+static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
 
 /** @file
  * Creates a window to draw GOAPie world context states
@@ -323,6 +346,93 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
             ImVec2( pos.x + windowWidth, pos.y + windowHeight ),
             ImVec2( 0, 1 ),
             ImVec2( 1, 0 ) );
+
+        // NEW: Top-left overlay: Update Bounds button OR Bounds editor panel
+        ImGui::SetCursorScreenPos( ImVec2( pos.x + 8.0f, pos.y + 8.0f ) );
+        if( !g_BoundsEditorVisible )
+        {
+            if( ImGui::Button( "Update Bounds" ) )
+            {
+                // Ensure we have initial bounds on first open
+                if( !g_DrawingLimitsInitialized )
+                {
+                    updateDrawingBounds( world );
+                }
+                // Initialize inputs from current limits
+                g_BoundsInputX[ 0 ] = g_DrawingLimits.minBounds.x;
+                g_BoundsInputX[ 1 ] = g_DrawingLimits.maxBounds.x;
+                g_BoundsInputY[ 0 ] = g_DrawingLimits.minBounds.y;
+                g_BoundsInputY[ 1 ] = g_DrawingLimits.maxBounds.y;
+                g_BoundsEditorVisible = true;
+            }
+        }
+        else
+        {
+            ImGui::PushStyleVar( ImGuiStyleVar_Alpha, 0.95f );
+            ImGui::BeginChild( "##BoundsPanel", ImVec2( 300, 0 ), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+            ImGui::TextUnformatted( "Bounds" );
+            ImGui::Separator();
+            ImGui::InputFloat2( "X Min/Max", g_BoundsInputX, "%.3f" );
+            ImGui::InputFloat2( "Y Min/Max", g_BoundsInputY, "%.3f" );
+
+            // determine if inputs differ from current used bounds
+            bool differs = false;
+            if( g_DrawingLimitsInitialized )
+            {
+                auto nearly = []( float a, float b )
+                {
+                    return std::fabs( a - b ) <= 1e-5f;
+                };
+                differs = !nearly( g_BoundsInputX[ 0 ], g_DrawingLimits.minBounds.x ) ||
+                          !nearly( g_BoundsInputX[ 1 ], g_DrawingLimits.maxBounds.x ) ||
+                          !nearly( g_BoundsInputY[ 0 ], g_DrawingLimits.minBounds.y ) ||
+                          !nearly( g_BoundsInputY[ 1 ], g_DrawingLimits.maxBounds.y );
+            }
+
+            // Apply and Cancel buttons enabled only when values differ
+            ImGui::BeginDisabled( !differs );
+            if( ImGui::Button( "Apply" ) )
+            {
+                // enforce min <= max by swapping if needed
+                if( g_BoundsInputX[ 0 ] > g_BoundsInputX[ 1 ] ) std::swap( g_BoundsInputX[ 0 ], g_BoundsInputX[ 1 ] );
+                if( g_BoundsInputY[ 0 ] > g_BoundsInputY[ 1 ] ) std::swap( g_BoundsInputY[ 0 ], g_BoundsInputY[ 1 ] );
+
+                // apply to drawing limits (preserve Z bounds)
+                g_DrawingLimits.minBounds.x = g_BoundsInputX[ 0 ];
+                g_DrawingLimits.maxBounds.x = g_BoundsInputX[ 1 ];
+                g_DrawingLimits.minBounds.y = g_BoundsInputY[ 0 ];
+                g_DrawingLimits.maxBounds.y = g_BoundsInputY[ 1 ];
+
+                // recompute derived values
+                g_DrawingLimits.range = g_DrawingLimits.maxBounds - g_DrawingLimits.minBounds;
+                g_DrawingLimits.center = ( g_DrawingLimits.maxBounds + g_DrawingLimits.minBounds ) * 0.5f;
+                g_DrawingLimits.scale = 2.0f / ( g_DrawingLimits.maxBounds - g_DrawingLimits.minBounds );
+                g_DrawingLimits.scale.z = 1.0f;
+
+                // lock remains enabled
+                g_DrawingLimitsInitialized = true;
+
+                // hide panel
+                g_BoundsEditorVisible = false;
+            }
+			ImGui::EndDisabled();
+            ImGui::SameLine();
+            if( ImGui::Button( "Cancel" ) )
+            {
+                // revert input fields to current used bounds and hide panel
+                if( g_DrawingLimitsInitialized )
+                {
+                    g_BoundsInputX[ 0 ] = g_DrawingLimits.minBounds.x;
+                    g_BoundsInputX[ 1 ] = g_DrawingLimits.maxBounds.x;
+                    g_BoundsInputY[ 0 ] = g_DrawingLimits.minBounds.y;
+                    g_BoundsInputY[ 1 ] = g_DrawingLimits.maxBounds.y;
+                }
+                g_BoundsEditorVisible = false;
+            }
+
+            ImGui::EndChild();
+            ImGui::PopStyleVar();
+        }
 
         // Draw waypoint id suffix overlay (extracted)
         drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
@@ -819,6 +929,14 @@ void drawDebugPathWindow( ExampleParameters& params )
 
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
 {
+    // Detect closing of Waypoint Editor window and reset state
+    static bool s_prevShowWaypointEditorWindow = false;
+    if( s_prevShowWaypointEditorWindow && !g_ShowWaypointEditorWindow )
+    {
+        ResetWaypointEditorState();
+    }
+    s_prevShowWaypointEditorWindow = g_ShowWaypointEditorWindow;
+
     drawGoapieVisualizationWindow( useHeuristics, params );
     drawWorldViewWindow( params.world, params.planner );
     drawDebugMessagesWindow( params );
@@ -834,7 +952,8 @@ void drawLinks(
     const gie::World& world,
     const glm::vec3& offset,
     const glm::vec3& scale,
-    const glm::vec3& scaledLocation )
+    const glm::vec3& scaledLocation,
+    bool isSelectedWaypoint )
 {
     // Draw links if they exist
     if( auto linksPpt = waypointEntity->property( "Links" ) )
@@ -842,7 +961,9 @@ void drawLinks(
         auto linkedGuids = linksPpt->getGuidArray();
         if( linkedGuids )
         {
-            glColor3f( 0.5f, 0.5f, 0.5f ); // Set color to gray for links
+            // brighter color for selected waypoint links
+            if( isSelectedWaypoint ) glColor3f( 0.85f, 0.85f, 0.85f );
+            else                     glColor3f( 0.5f,  0.5f,  0.5f  );
             for( const auto& linkedGuid : *linkedGuids )
             {
                 auto linkedEntity = world.entity( linkedGuid );
@@ -857,7 +978,8 @@ void drawLinks(
                     glVertex3f( scaledLinkedLocation.x, scaledLinkedLocation.y, scaledLinkedLocation.z );
                     glEnd();
 
-                    if( g_ShowWaypointArrows )
+                    // Show arrowheads if globally enabled OR if this waypoint is selected
+                    if( g_ShowWaypointArrows || isSelectedWaypoint )
                     {
                         // Draw an arrowhead pointing to the linked waypoint
                         // Using a small triangle at the end of the line oriented along the link direction (2D on XY)
@@ -874,16 +996,43 @@ void drawLinks(
                             const float arrowLength = 0.03f;
                             const float arrowWidth = 0.02f;
 
+                            // Arrow at the linked end (pointing from start->end)
                             glm::vec2 base = end2 - dir * arrowLength; // base of the arrow near the tip
                             glm::vec2 left = base + perp * ( arrowWidth * 0.5f );
                             glm::vec2 right = base - perp * ( arrowWidth * 0.5f );
-
-                            float z = scaledLinkedLocation.z;
+                            float zTip = scaledLinkedLocation.z;
                             glBegin( GL_TRIANGLES );
-                            glVertex3f( end2.x, end2.y, z );
-                            glVertex3f( left.x, left.y, z );
-                            glVertex3f( right.x, right.y, z );
+                            glVertex3f( end2.x, end2.y, zTip );
+                            glVertex3f( left.x, left.y, zTip );
+                            glVertex3f( right.x, right.y, zTip );
                             glEnd();
+
+                            // If selected waypoint has a bidirectional link with this neighbor, draw reverse arrow at start
+                            if( isSelectedWaypoint )
+                            {
+                                bool hasReverse = false;
+                                if( auto neighborLinksPpt = linkedEntity->property( "Links" ) )
+                                {
+                                    if( auto neighborLinks = neighborLinksPpt->getGuidArray() )
+                                    {
+                                        hasReverse = std::find( neighborLinks->begin(), neighborLinks->end(), waypointEntity->guid() ) != neighborLinks->end();
+                                    }
+                                }
+                                if( hasReverse )
+                                {
+                                    // Reverse direction arrow near the start (pointing to start)
+                                    glm::vec2 dirRev = -dir;
+                                    glm::vec2 baseS = start2 - dirRev * arrowLength; // base near the selected endpoint
+                                    glm::vec2 leftS = baseS + perp * ( arrowWidth * 0.5f );
+                                    glm::vec2 rightS = baseS - perp * ( arrowWidth * 0.5f );
+                                    float zStart = scaledLocation.z;
+                                    glBegin( GL_TRIANGLES );
+                                    glVertex3f( start2.x, start2.y, zStart );
+                                    glVertex3f( leftS.x, leftS.y, zStart );
+                                    glVertex3f( rightS.x, rightS.y, zStart );
+                                    glEnd();
+                                }
+                            }
                         }
                     }
                 }
@@ -934,7 +1083,8 @@ void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner
             glVertex3f( scaledLocation.x, scaledLocation.y, scaledLocation.z );
             glEnd();
 
-            drawLinks( waypointEntity, world, offset, scale, scaledLocation );
+            bool isSelected = ( g_WaypointEditSelectedGuid != gie::NullGuid && waypointGuid == g_WaypointEditSelectedGuid );
+            drawLinks( waypointEntity, world, offset, scale, scaledLocation, isSelected );
         }
     }
 }
@@ -1270,6 +1420,9 @@ void unbind_framebuffer()
 
 void updateDrawingBounds( const gie::World& world )
 {
+    // Avoid updating automatically once initialized
+    if( g_DrawingLimitsInitialized ) return;
+
     const gie::Blackboard* worldContext = &world.context();
 
     glm::vec3 minBounds( std::numeric_limits< float >::max() );
@@ -1330,6 +1483,9 @@ void updateDrawingBounds( const gie::World& world )
     g_DrawingLimits.center = center;
     g_DrawingLimits.range = range;
     g_DrawingLimits.scale = scale;
+
+    // Lock further automatic updates
+    g_DrawingLimitsInitialized = true;
 }
 
 // and we rescale the buffer, so we're able to resize the window
@@ -1793,7 +1949,7 @@ void drawRoomNamesOverlay( const gie::World& world, const gie::Planner& planner,
         {
             glm::vec3 p = ( v + offset ) * scale; // NDC
             float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
-            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight; // flip Y
+            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
             if( x_px < minXpx ) minXpx = x_px;
             if( y_px < minYpx ) minYpx = y_px;
         }
@@ -1853,9 +2009,7 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
             }
             if( ImGui::Button( "Clear Selection" ) )
             {
-                g_WaypointEditSelectedGuid = gie::NullGuid;
-                g_WaypointEditPlaceArmed = false;
-                g_WaypointEditHasTargetWorldPos = false;
+                ResetWaypointEditorState();
             }
 
             // Links listing with direction toggles
@@ -1910,16 +2064,34 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
             }
             auto buttonAlpha = [&]( bool enabled ) { ImGui::PushStyleVar( ImGuiStyleVar_Alpha, enabled ? 1.0f : 0.4f ); };
 
-            // Clear all outgoing ">
+            // Clear/Add all outgoing ">"
             buttonAlpha( anyOutgoing );
             if( ImGui::Button( ">##clear_all_out" ) )
             {
-                if( selOutgoing ) selOutgoing->clear();
+                if( anyOutgoing )
+                {
+                    if( selOutgoing ) selOutgoing->clear();
+                }
+                else
+                {
+                    // Add outgoing link to all neighbors
+                    if( selOutgoing )
+                    {
+                        for( auto neighborGuid : unionNeighbors )
+                        {
+                            if( neighborGuid == g_WaypointEditSelectedGuid ) continue;
+                            if( std::find( selOutgoing->begin(), selOutgoing->end(), neighborGuid ) == selOutgoing->end() )
+                            {
+                                selOutgoing->push_back( neighborGuid );
+                            }
+                        }
+                    }
+                }
             }
             ImGui::PopStyleVar();
             ImGui::SameLine();
 
-            // Clear all bidirectional "-"
+            // Clear/Add all bidirectional "-"
             buttonAlpha( anyBidirectional );
             if( ImGui::Button( "-##clear_all_bi" ) )
             {
@@ -1927,24 +2099,40 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
                 {
                     auto neighbor = world.entity( neighborGuid ); if( !neighbor ) continue;
                     auto neighborLinksPpt = neighbor->property( "Links" );
-                    if( !neighborLinksPpt ) continue;
+                    if( !neighborLinksPpt ) neighborLinksPpt = neighbor->createProperty( "Links", gie::Property::GuidVector{} );
                     auto neighborLinks = neighborLinksPpt->getGuidArray();
                     bool hasOut = selOutgoing && std::find( selOutgoing->begin(), selOutgoing->end(), neighborGuid ) != selOutgoing->end();
                     bool hasIn = neighborLinks && std::find( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ) != neighborLinks->end();
-                    if( hasOut )
+                    if( anyBidirectional )
                     {
-                        selOutgoing->erase( std::remove( selOutgoing->begin(), selOutgoing->end(), neighborGuid ), selOutgoing->end() );
+                        if( hasOut && selOutgoing )
+                        {
+                            selOutgoing->erase( std::remove( selOutgoing->begin(), selOutgoing->end(), neighborGuid ), selOutgoing->end() );
+                        }
+                        if( hasIn && neighborLinks )
+                        {
+                            neighborLinks->erase( std::remove( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ), neighborLinks->end() );
+                        }
                     }
-                    if( hasIn && neighborLinks )
+                    else
                     {
-                        neighborLinks->erase( std::remove( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ), neighborLinks->end() );
+                        if( selOutgoing )
+                        {
+                            if( std::find( selOutgoing->begin(), selOutgoing->end(), neighborGuid ) == selOutgoing->end() )
+                                selOutgoing->push_back( neighborGuid );
+                        }
+                        if( neighborLinks )
+                        {
+                            if( std::find( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ) == neighborLinks->end() )
+                                neighborLinks->push_back( g_WaypointEditSelectedGuid );
+                        }
                     }
                 }
             }
             ImGui::PopStyleVar();
             ImGui::SameLine();
 
-            // Clear all incoming "<"
+            // Clear/Add all incoming "<"
             buttonAlpha( anyIncoming );
             if( ImGui::Button( "<##clear_all_in" ) )
             {
@@ -1952,10 +2140,23 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
                 {
                     auto neighbor = world.entity( neighborGuid ); if( !neighbor ) continue;
                     auto neighborLinksPpt = neighbor->property( "Links" );
-                    if( !neighborLinksPpt ) continue;
+                    if( !neighborLinksPpt ) neighborLinksPpt = neighbor->createProperty( "Links", gie::Property::GuidVector{} );
                     auto neighborLinks = neighborLinksPpt->getGuidArray();
-                    if( !neighborLinks ) continue;
-                    neighborLinks->erase( std::remove( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ), neighborLinks->end() );
+                    if( anyIncoming )
+                    {
+                        if( neighborLinks )
+                        {
+                            neighborLinks->erase( std::remove( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ), neighborLinks->end() );
+                        }
+                    }
+                    else
+                    {
+                        if( neighborLinks )
+                        {
+                            if( std::find( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ) == neighborLinks->end() )
+                                neighborLinks->push_back( g_WaypointEditSelectedGuid );
+                        }
+                    }
                 }
             }
             ImGui::PopStyleVar();
@@ -2085,183 +2286,176 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
     ImGui::End();
 }
 
-// NEW: Handle mouse clicks in World View to select/place waypoints and create links via right-click
-void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
+// NEW: Handle waypoint editor interactions on World View (internal/static)
+static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
 {
     if( !g_ShowWaypointEditorWindow ) return;
     if( !g_WorldPtr ) return;
 
-    ImVec2 min{ pos.x, pos.y };
-    ImVec2 max{ pos.x + windowWidth, pos.y + windowHeight };
-
     ImGuiIO& io = ImGui::GetIO();
-    const ImVec2 mp = io.MousePos;
-    const bool inside = ( mp.x >= min.x && mp.x <= max.x && mp.y >= min.y && mp.y <= max.y );
+    // Local mouse position within the World View image
+    const float localX = io.MousePos.x - pos.x;
+    const float localY = io.MousePos.y - pos.y;
+    const bool mouseOverWindow = ( localX >= 0.0f && localX <= windowWidth && localY >= 0.0f && localY <= windowHeight );
 
-    // Precompute transforms
-    glm::vec3 offset = -g_DrawingLimits.center;
-    glm::vec3 scale = g_DrawingLimits.scale;
-
-    // Relative pixel coordinates
-    const float localX = mp.x - pos.x;
-    const float localY = mp.y - pos.y;
-
-    // Update target preview when move is armed
-    if( g_WaypointEditPlaceArmed && inside )
+    // Utility: map local pixel coords to world coords (inverse of (world+offset)*scale)
+    auto MouseToWorld = [&]( float lx, float ly ) -> glm::vec3
     {
-        float u = localX / windowWidth; // [0,1]
-        float v = localY / windowHeight; // [0,1]
+        float u = lx / windowWidth;  // [0,1]
+        float v = ly / windowHeight; // [0,1]
         float ndcX = u * 2.0f - 1.0f;
         float ndcY = ( 1.0f - v ) * 2.0f - 1.0f; // flip Y
         glm::vec3 ndc{ ndcX, ndcY, 0.0f };
-        g_WaypointEditTargetWorldPos = ndc / g_DrawingLimits.scale - ( -g_DrawingLimits.center );
-        g_WaypointEditHasTargetWorldPos = true;
-    }
-    else if( !g_WaypointEditPlaceArmed )
-    {
-        g_WaypointEditHasTargetWorldPos = false;
-    }
+        // inverse transform: world = ndc / scale + center
+        return ndc / g_DrawingLimits.scale + g_DrawingLimits.center;
+    };
 
-    if( !inside ) return;
-
-    // Double-click on waypoint: select and arm placement
-    if( ImGui::IsMouseDoubleClicked( 0 ) )
+    // Utility: find nearest waypoint within pixel radius from current mouse
+    auto FindNearestWaypointUnderMouse = [&]() -> gie::Guid
     {
         const auto* set = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-        if( set && !set->empty() )
-        {
-            float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx;
-            gie::Guid best = gie::NullGuid;
-            for( auto guid : *set )
-            {
-                auto e = g_WorldPtr->entity( guid ); if( !e ) continue;
-                auto loc = e->property( "Location" ); if( !loc ) continue;
-                glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
-                float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
-                float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
-                float dx = x_px - localX;
-                float dy = y_px - localY;
-                float d2 = dx * dx + dy * dy;
-                if( d2 <= bestDist2 ) { bestDist2 = d2; best = guid; }
-            }
-            if( best != gie::NullGuid )
-            {
-                g_WaypointEditSelectedGuid = best;
-                g_WaypointEditPlaceArmed = true; // arm repositioning
-            }
-        }
-        return; // consume
-    }
+        if( !set || set->empty() ) return gie::NullGuid;
 
-    // Right-click to create outgoing link from selected to clicked waypoint (if not armed)
-    if( ImGui::IsMouseClicked( ImGuiMouseButton_Right ) )
-    {
-        if( g_WaypointEditSelectedGuid != gie::NullGuid && !g_WaypointEditPlaceArmed )
+        float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx;
+        gie::Guid best = gie::NullGuid;
+        glm::vec3 offset = -g_DrawingLimits.center;
+        glm::vec3 scale = g_DrawingLimits.scale;
+        for( auto guid : *set )
         {
-            const auto* set = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-            if( set && !set->empty() )
+            if( const auto* e = g_WorldPtr->entity( guid ) )
             {
-                float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx;
-                gie::Guid best = gie::NullGuid;
-                for( auto guid : *set )
+                if( const auto* loc = e->property( "Location" ) )
                 {
-                    auto e = g_WorldPtr->entity( guid ); if( !e ) continue;
-                    auto loc = e->property( "Location" ); if( !loc ) continue;
                     glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
                     float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
                     float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
                     float dx = x_px - localX;
                     float dy = y_px - localY;
                     float d2 = dx * dx + dy * dy;
-                    if( d2 <= bestDist2 ) { bestDist2 = d2; best = guid; }
-                }
-                if( best != gie::NullGuid && best != g_WaypointEditSelectedGuid )
-                {
-                    auto selectedE = g_WorldPtr->entity( g_WaypointEditSelectedGuid );
-                    if( selectedE )
+                    if( d2 <= bestDist2 )
                     {
-                        auto linksPpt = selectedE->property( "Links" );
-                        if( !linksPpt ) linksPpt = selectedE->createProperty( "Links", gie::Property::GuidVector{} );
-                        auto out = linksPpt->getGuidArray();
-                        if( out )
+                        bestDist2 = d2;
+                        best = guid;
+                    }
+                }
+            }
+        }
+        return best;
+    };
+
+    if( !mouseOverWindow )
+    {
+        // Stop dragging if mouse leaves the area while LMB is not down
+        if( !ImGui::IsMouseDown( 0 ) )
+        {
+            g_WaypointDragActive = false;
+            g_WaypointDragMoving = false;
+        }
+        return;
+    }
+
+    // Left-click: select and arm dragging but only start moving after threshold exceeded
+    if( ImGui::IsMouseClicked( 0 ) )
+    {
+        gie::Guid nearest = FindNearestWaypointUnderMouse();
+        if( nearest != gie::NullGuid )
+        {
+            g_WaypointEditSelectedGuid = nearest;
+            g_WaypointEditPlaceArmed = false; // prefer drag move now
+            // arm dragging, remember Z and starting mouse position
+            if( auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid ) )
+            {
+                if( auto loc = e->property( "Location" ) )
+                {
+                    g_WaypointDragZ = loc->getVec3()->z;
+                    g_WaypointDragActive = true;
+                    g_WaypointDragMoving = false;
+                    g_WaypointDragStartLocalX = localX;
+                    g_WaypointDragStartLocalY = localY;
+                }
+            }
+        }
+    }
+
+    // While LMB is down, check threshold and move if exceeded
+    if( g_WaypointDragActive && ImGui::IsMouseDown( 0 ) && g_WaypointEditSelectedGuid != gie::NullGuid )
+    {
+        if( !g_WaypointDragMoving )
+        {
+            float dx = localX - g_WaypointDragStartLocalX;
+            float dy = localY - g_WaypointDragStartLocalY;
+            float dist2 = dx * dx + dy * dy;
+            if( dist2 >= g_WaypointPickRadiusPx * g_WaypointPickRadiusPx )
+            {
+                g_WaypointDragMoving = true;
+            }
+        }
+        if( g_WaypointDragMoving )
+        {
+            glm::vec3 worldPos = MouseToWorld( localX, localY );
+            if( auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid ) )
+            {
+                if( auto loc = e->property( "Location" ) )
+                {
+                    loc->value = glm::vec3{ worldPos.x, worldPos.y, g_WaypointDragZ };
+                }
+            }
+        }
+    }
+
+    // End dragging on LMB release
+    if( g_WaypointDragActive && ImGui::IsMouseReleased( 0 ) )
+    {
+        g_WaypointDragActive = false;
+        g_WaypointDragMoving = false;
+    }
+
+    // Double-click: select and arm repositioning (optional legacy behavior)
+    if( ImGui::IsMouseDoubleClicked( 0 ) )
+    {
+        gie::Guid nearest = FindNearestWaypointUnderMouse();
+        if( nearest != gie::NullGuid )
+        {
+            g_WaypointEditSelectedGuid = nearest;
+            g_WaypointEditPlaceArmed = true;
+        }
+    }
+
+    // If move is armed, update target preview while moving mouse
+    if( g_WaypointEditPlaceArmed )
+    {
+        glm::vec3 wp = MouseToWorld( localX, localY );
+        g_WaypointEditTargetWorldPos = wp;
+        g_WaypointEditHasTargetWorldPos = true;
+    }
+
+    // Right-click: if a waypoint is selected and the clicked waypoint is an outgoing neighbor, remove that outgoing link
+    if( ImGui::IsMouseClicked( ImGuiMouseButton_Right ) && g_WaypointEditSelectedGuid != gie::NullGuid )
+    {
+        gie::Guid hit = FindNearestWaypointUnderMouse();
+        if( hit != gie::NullGuid && hit != g_WaypointEditSelectedGuid )
+        {
+            if( auto selectedE = g_WorldPtr->entity( g_WaypointEditSelectedGuid ) )
+            {
+                auto linksPpt = selectedE->property( "Links" );
+                if( linksPpt )
+                {
+                    if( auto arr = linksPpt->getGuidArray() )
+                    {
+                        auto it = std::find( arr->begin(), arr->end(), hit );
+                        if( it != arr->end() )
                         {
-                            if( std::find( out->begin(), out->end(), best ) == out->end() )
-                            {
-                                out->push_back( best );
-                            }
+                            arr->erase( it ); // remove outgoing link only
                         }
                     }
                 }
             }
         }
     }
-
-    // On left click inside the image
-    if( ImGui::IsMouseClicked( 0 ) )
-    {
-        if( g_WaypointEditPlaceArmed && g_WaypointEditSelectedGuid != gie::NullGuid )
-        {
-            // placement step: convert pixel to world, move selected waypoint
-            float u = localX / windowWidth; // [0,1]
-            float v = localY / windowHeight; // [0,1]
-            float ndcX = u * 2.0f - 1.0f;
-            float ndcY = ( 1.0f - v ) * 2.0f - 1.0f; // flip Y
-            glm::vec3 ndc{ ndcX, ndcY, 0.0f };
-
-            // Invert transform: world = ndc / scale - offset  (offset = -center)
-            glm::vec3 worldPos = ndc / g_DrawingLimits.scale - ( -g_DrawingLimits.center );
-
-            auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid );
-            if( e )
-            {
-                if( auto loc = e->property( "Location" ) )
-                {
-                    float oldZ = loc->getVec3()->z;
-                    loc->value = glm::vec3{ worldPos.x, worldPos.y, oldZ };
-                }
-            }
-
-            // disarm but keep selection and clear target preview
-            g_WaypointEditPlaceArmed = false;
-            g_WaypointEditHasTargetWorldPos = false;
-            return; // placed, stop further processing
-        }
-
-        // selection step: find nearest waypoint within radius
-        const auto* set = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-        if( !set || set->empty() ) return;
-
-        float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx;
-        gie::Guid best = gie::NullGuid;
-
-        for( auto guid : *set )
-        {
-            auto e = g_WorldPtr->entity( guid ); if( !e ) continue;
-            auto loc = e->property( "Location" ); if( !loc ) continue;
-            glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
-            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
-            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
-            float dx = x_px - localX;
-            float dy = y_px - localY;
-            float d2 = dx * dx + dy * dy;
-            if( d2 <= bestDist2 )
-            {
-                bestDist2 = d2;
-                best = guid;
-            }
-        }
-
-        if( best != gie::NullGuid )
-        {
-            g_WaypointEditSelectedGuid = best;
-            g_WaypointEditPlaceArmed = false; // single click selects only
-            g_WaypointEditHasTargetWorldPos = false;
-        }
-    }
 }
 
-// NEW: Draw selection marker for waypoint editor on top of World View
-void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
+// NEW: draw selection marker for waypoint editor on top of World View
+static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
 {
     if( !g_ShowWaypointEditorWindow ) return;
     if( !g_WorldPtr ) return;
