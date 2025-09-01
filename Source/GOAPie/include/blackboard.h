@@ -81,6 +81,9 @@ namespace gie
 		const EntityTagRegister* parent() const { return _parent; }  
 		void setParent( const EntityTagRegister* parent ) { _parent = parent; }  
 
+		// Clear all tag mappings for this register (does not affect parent)
+		void clear() { _storage.clear(); }
+
 		void tag( Entity* entity, std::vector< Tag >& tags )  
 		{  
 			if( !entity )
@@ -197,18 +200,18 @@ namespace gie
 		void setParent( const Blackboard* parent ) { _parent = parent; }
 
 		// IDataEntityManager interface
-		class Agent* createAgent( std::string_view name )	override;
+		class Agent* createAgent( std::string_view name )		override;
 		Entity* createEntity( std::string_view name = "", Blackboard* context = nullptr ) override;
 		Property* property( const Guid guid )				override;
 		const Property* property( const Guid guid )	const	override;
-		Entity* entity( const Guid guid )					override;
+		Entity* entity( const Guid guid )				override;
 		const Entity* entity( const Guid guid ) const		override;
 		class Agent* agent( const Guid guid )				override;
 		const class Agent* agent( const Guid guid ) const	override;
-		void removeAgent( const Guid guid )					override { removeEntity( guid ); }
+		void removeAgent( const Guid guid )				override { removeEntity( guid ); }
 		void removeEntity( const Guid guid )				override { _entities.erase( guid ); }
 		void removeProperty( const Guid guid )				override { _properties.erase( guid ); }
-		void eraseAll()										override { _entities.clear(); }
+		void eraseAll()								override { _entities.clear(); }
 
 		Property* createProperty( Guid guid, StringHash hash, Guid owner = NullGuid, Property::Variant defaultValue = false )	override;
 

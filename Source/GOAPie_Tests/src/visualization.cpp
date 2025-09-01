@@ -12,6 +12,7 @@
 // clang-format on
 
 #include <goapie.h>
+#include <persistency.h>
 
 #include <glm/glm.hpp>
 #include <cmath>
@@ -46,9 +47,7 @@ struct DrawingLimits
     const float margin = 0.1f; // 10% margin
 };
 static DrawingLimits g_DrawingLimits; /**< Global instance of DrawingLimits used for the entire visualization. */
-// NEW: Once drawing limits are computed first time, avoid auto-updating unless user applies manual bounds
 static bool g_DrawingLimitsInitialized = false;
-// NEW: Bounds editor overlay visibility and inputs
 static bool g_BoundsEditorVisible = false;
 static float g_BoundsInputX[ 2 ] = { 0.0f, 0.0f }; // [min, max]
 static float g_BoundsInputY[ 2 ] = { 0.0f, 0.0f }; // [min, max]
@@ -157,7 +156,7 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
 void drawTrees( const gie::World& world, const gie::Planner& planner );
 void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner& planner, ImVec2 windowPos, float windowWidth, float windowHeight );
 void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner );
-void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner );
+void drawWorldViewWindow( gie::World& world, const gie::Planner& planner );
 void framebuffer_size_callback( GLFWwindow* window, int width, int height );
 void processInput( GLFWwindow* window );
 void rescale_framebuffer( float width, float height );
@@ -322,7 +321,7 @@ void framebuffer_size_callback( GLFWwindow* window, int width, int height )
     glViewport( 0, 0, width, height );
 }
 
-void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
+void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
 {
     if( !g_ShowWorldViewWindow ) return;
 
@@ -349,6 +348,8 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
 
         // NEW: Top-left overlay: Update Bounds button OR Bounds editor panel
         ImGui::SetCursorScreenPos( ImVec2( pos.x + 8.0f, pos.y + 8.0f ) );
+        static float s_SaveMsgTimer = 0.0f;
+        static float s_LoadMsgTimer = 0.0f;
         if( !g_BoundsEditorVisible )
         {
             if( ImGui::Button( "Update Bounds" ) )
@@ -364,6 +365,37 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
                 g_BoundsInputY[ 0 ] = g_DrawingLimits.minBounds.y;
                 g_BoundsInputY[ 1 ] = g_DrawingLimits.maxBounds.y;
                 g_BoundsEditorVisible = true;
+            }
+            ImGui::SameLine();
+            if( ImGui::Button( "Save" ) )
+            {
+                // Save world.json next to executable
+                if( gie::persistency::SaveWorldToJson( world, "world.json" ) )
+                {
+                    s_SaveMsgTimer = 2.0f; // show feedback for 2 seconds
+                }
+            }
+            ImGui::SameLine();
+            if( ImGui::Button( "Load" ) )
+            {
+                if( gie::persistency::LoadWorldFromJson( world, "world.json" ) )
+                {
+                    // Reset bounds so they recompute with new content
+                    g_DrawingLimitsInitialized = false;
+                    s_LoadMsgTimer = 2.0f;
+                }
+            }
+            if( s_SaveMsgTimer > 0.0f )
+            {
+                ImGui::SameLine();
+                ImGui::TextColored( ImVec4( 0.2f, 1.0f, 0.2f, 1.0f ), "Saved" );
+                s_SaveMsgTimer -= ImGui::GetIO().DeltaTime;
+            }
+            if( s_LoadMsgTimer > 0.0f )
+            {
+                ImGui::SameLine();
+                ImGui::TextColored( ImVec4( 0.2f, 0.6f, 1.0f, 1.0f ), "Loaded" );
+                s_LoadMsgTimer -= ImGui::GetIO().DeltaTime;
             }
         }
         else
