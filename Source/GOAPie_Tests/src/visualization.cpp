@@ -64,6 +64,14 @@ static bool g_ShowSimulationArgumentsWindow = false;
 static bool g_ShowPlannerLogWindow = false;
 static bool g_ShowBlackboardPropertiesWindow = false;
 static bool g_ShowMorePlannerOptions = false;
+// NEW: Waypoint editor tool window (only when visible interactions are enabled)
+static bool g_ShowWaypointEditorWindow = false;
+// NEW: Waypoint editor state
+static gie::Guid g_WaypointEditSelectedGuid = gie::NullGuid;
+static float g_WaypointPickRadiusPx = 14.0f;
+// NEW: Global pointers to world/planner so World View (const refs) can still interact when editor visible
+static gie::World* g_WorldPtr = nullptr;
+static gie::Planner* g_PlannerPtr = nullptr;
 
 // UI settings persistence
 static const char* kUiWindowsSettingsFile = "goapie_ui_windows.ini";
@@ -90,6 +98,7 @@ static void LoadWindowVisibilitySettings()
         else if( key == "ShowSimulationArgumentsWindow" ) g_ShowSimulationArgumentsWindow = parseBool( val );
         else if( key == "ShowPlannerLogWindow" ) g_ShowPlannerLogWindow = parseBool( val );
         else if( key == "ShowBlackboardPropertiesWindow" ) g_ShowBlackboardPropertiesWindow = parseBool( val );
+        else if( key == "ShowWaypointEditorWindow" ) g_ShowWaypointEditorWindow = parseBool( val );
     }
 }
 static void SaveWindowVisibilitySettings()
@@ -104,6 +113,7 @@ static void SaveWindowVisibilitySettings()
     out << "ShowSimulationArgumentsWindow=" << ( g_ShowSimulationArgumentsWindow ? 1 : 0 ) << '\n';
     out << "ShowPlannerLogWindow=" << ( g_ShowPlannerLogWindow ? 1 : 0 ) << '\n';
     out << "ShowBlackboardPropertiesWindow=" << ( g_ShowBlackboardPropertiesWindow ? 1 : 0 ) << '\n';
+    out << "ShowWaypointEditorWindow=" << ( g_ShowWaypointEditorWindow ? 1 : 0 ) << '\n';
 }
 
 void bind_framebuffer();
@@ -128,6 +138,10 @@ void updateDrawingBounds( const gie::World& world );
 // NEW: draw discovered room walls and their names in World View
 void drawDiscoveredRoomsWalls( const gie::World& world, const gie::Planner& planner );
 void drawRoomNamesOverlay( const gie::World& world, const gie::Planner& planner, ImVec2 pos, float windowWidth, float windowHeight );
+// NEW: Waypoint editor window and interactions on World View
+void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner );
+void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
+void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
 
 /** @file
  * Creates a window to draw GOAPie world context states
@@ -196,6 +210,10 @@ int visualization( ExampleParameters& params )
     LoadWindowVisibilitySettings();
 
     bool useHeuristics = true;
+
+    // Expose world/planner to editor interactions inside World View
+    g_WorldPtr = &world;
+    g_PlannerPtr = &planner;
 
     // Main loop
     while( !glfwWindowShouldClose( window ) )
@@ -304,6 +322,12 @@ void drawWorldViewWindow( const gie::World& world, const gie::Planner& planner )
         drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
         // NEW: room names overlay
         drawRoomNamesOverlay( world, planner, pos, windowWidth, windowHeight );
+        // NEW: waypoint editor interactions and overlay (active only if tool window is visible)
+        if( g_ShowWaypointEditorWindow )
+        {
+            handleWaypointEditorOnWorldView( pos, windowWidth, windowHeight );
+            drawWaypointEditorOverlayOnWorldView( pos, windowWidth, windowHeight );
+        }
     }
     ImGui::End();
 }
@@ -354,8 +378,8 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
                     suffixPos.x -= suffixSize.x * 0.5f;
 
                     // draw suffix with slight shadow for readability
-                    dl->AddText( ImVec2( suffixPos.x + 1, suffixPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
-                    dl->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
+                    ImGui::GetWindowDrawList()->AddText( ImVec2( suffixPos.x + 1, suffixPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
+                    ImGui::GetWindowDrawList()->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
 
                     // Derive waypoint index from entity name, expected to be "waypoint<number>"
                     std::string idxLabel = "wp?";
@@ -366,18 +390,18 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
                         size_t j = name.size();
                         if( name.find( "waypoint" ) == 0 )
                         {
-							while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
-							{
-								--j;
-							}
-							if( j < name.size() )
-							{
-								idxLabel = std::string( "wp" ) + name.substr( j );
-							}
+						while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
+						{
+							--j;
+						}
+						if( j < name.size() )
+						{
+							idxLabel = std::string( "wp" ) + name.substr( j );
+						}
                         }
                         else
                         {
-							idxLabel = name; // fallback to full name if not matching expected pattern
+						idxLabel = name; // fallback to full name if not matching expected pattern
                         }
                         
                     }
@@ -387,8 +411,8 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
                     ImVec2 idxPos{ pos.x + x_px - idxSize.x * 0.5f, suffixPos.y - ( idxSize.y + 2.0f ) };
 
                     // draw index label (white) with shadow
-                    dl->AddText( ImVec2( idxPos.x + 1, idxPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), idxLabel.c_str() );
-                    dl->AddText( idxPos, IM_COL32( 255, 255, 255, 255 ), idxLabel.c_str() );
+                    ImGui::GetWindowDrawList()->AddText( ImVec2( idxPos.x + 1, idxPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), idxLabel.c_str() );
+                    ImGui::GetWindowDrawList()->AddText( idxPos, IM_COL32( 255, 255, 255, 255 ), idxLabel.c_str() );
                 }
             }
         }
@@ -795,6 +819,8 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
     drawSimulationArgumentsWindow( params );
     drawPlannerLogWindow( params );
     drawDebugPathWindow( params );
+    // NEW: Waypoint editor tool window
+    drawWaypointEditorWindow( params.world, params.planner );
 }
 
 void drawLinks(
@@ -1387,6 +1413,9 @@ void ShowExampleAppDockSpace( bool* p_open )
             ImGui::MenuItem( "Blackboard Properties", NULL, &g_ShowBlackboardPropertiesWindow );
             ImGui::Separator();
             ImGui::MenuItem( "Debug Path", NULL, &g_ShowDebugPathWindow );
+            ImGui::Separator();
+            // NEW: Waypoint Editor tool window toggler
+            ImGui::MenuItem( "Waypoint Editor", NULL, &g_ShowWaypointEditorWindow );
             ImGui::EndMenu();
         }
 
@@ -1753,7 +1782,7 @@ void drawRoomNamesOverlay( const gie::World& world, const gie::Planner& planner,
         if( !verts || verts->size() < 3 ) continue;
 
         // Compute top-left pixel position from transformed vertices
-        float minXpx = FLT_MAX, minYpx = FLT_MAX; // min x and min y in pixel space (min y => top)
+        float minXpx = std::numeric_limits<float>::max(), minYpx = std::numeric_limits<float>::max(); // min x and min y in pixel space (min y => top)
         for( const auto& v : *verts )
         {
             glm::vec3 p = ( v + offset ) * scale; // NDC
@@ -1773,4 +1802,148 @@ void drawRoomNamesOverlay( const gie::World& world, const gie::Planner& planner,
         dl->AddText( ImVec2( textPos.x + 1, textPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), name.c_str() );
         dl->AddText( textPos, IM_COL32( 255, 255, 255, 255 ), name.c_str() );
     }
+}
+
+// NEW: Waypoint Editor tool window (toggle + simple controls)
+void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
+{
+    if( !g_ShowWaypointEditorWindow ) return;
+
+    if( ImGui::Begin( "Waypoint Editor", &g_ShowWaypointEditorWindow ) )
+    {
+        ImGui::TextUnformatted( "Click a waypoint in World View to select it, then click again anywhere to place it." );
+        ImGui::SliderFloat( "Pick Radius (px)", &g_WaypointPickRadiusPx, 4.0f, 30.0f );
+        if( g_WaypointEditSelectedGuid != gie::NullGuid )
+        {
+            auto e = world.entity( g_WaypointEditSelectedGuid );
+            std::string name = e && e->nameHash() != gie::InvalidStringHash ? std::string( gie::stringRegister().get( e->nameHash() ) ) : std::string( "<unknown>" );
+            ImGui::Text( "Selected: %s (%llu)", name.c_str(), static_cast< unsigned long long >( g_WaypointEditSelectedGuid ) );
+            if( ImGui::Button( "Clear Selection" ) )
+            {
+                g_WaypointEditSelectedGuid = gie::NullGuid;
+            }
+        }
+        else
+        {
+            ImGui::TextUnformatted( "Selected: <none>" );
+        }
+        ImGui::Separator();
+        ImGui::TextUnformatted( g_ShowWorldViewWindow ? "World View is open." : "Open World View to interact." );
+    }
+    ImGui::End();
+}
+
+// NEW: Handle mouse clicks in World View to select/place waypoints
+void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
+{
+    if( !g_ShowWaypointEditorWindow ) return;
+    if( !g_WorldPtr ) return;
+
+    ImVec2 min{ pos.x, pos.y };
+    ImVec2 max{ pos.x + windowWidth, pos.y + windowHeight };
+
+    ImGuiIO& io = ImGui::GetIO();
+    const ImVec2 mp = io.MousePos;
+    const bool inside = ( mp.x >= min.x && mp.x <= max.x && mp.y >= min.y && mp.y <= max.y );
+
+    if( !inside ) return;
+
+    // On left click inside the image
+    if( ImGui::IsMouseClicked( 0 ) )
+    {
+        // Precompute transforms
+        glm::vec3 offset = -g_DrawingLimits.center;
+        glm::vec3 scale = g_DrawingLimits.scale;
+
+        // Relative pixel coordinates
+        const float localX = mp.x - pos.x;
+        const float localY = mp.y - pos.y;
+
+        if( g_WaypointEditSelectedGuid == gie::NullGuid )
+        {
+            // selection step: find nearest waypoint within radius
+            const auto* set = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+            if( !set || set->empty() ) return;
+
+            float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx;
+            gie::Guid best = gie::NullGuid;
+
+            for( auto guid : *set )
+            {
+                auto e = g_WorldPtr->entity( guid ); if( !e ) continue;
+                auto loc = e->property( "Location" ); if( !loc ) continue;
+                glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
+                float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+                float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+                float dx = x_px - localX;
+                float dy = y_px - localY;
+                float d2 = dx * dx + dy * dy;
+                if( d2 <= bestDist2 )
+                {
+                    bestDist2 = d2;
+                    best = guid;
+                }
+            }
+
+            if( best != gie::NullGuid )
+            {
+                g_WaypointEditSelectedGuid = best;
+            }
+        }
+        else
+        {
+            // placement step: convert pixel to world, move selected waypoint
+            // Convert pixel to NDC
+            float u = localX / windowWidth; // [0,1]
+            float v = localY / windowHeight; // [0,1]
+            float ndcX = u * 2.0f - 1.0f;
+            float ndcY = ( 1.0f - v ) * 2.0f - 1.0f; // flip Y
+            glm::vec3 ndc{ ndcX, ndcY, 0.0f };
+
+            // Invert transform: world = ndc / scale - offset  (offset = -center)
+            glm::vec3 worldPos = ndc / g_DrawingLimits.scale - ( -g_DrawingLimits.center );
+
+            // keep original Z
+            auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid );
+            if( e )
+            {
+                if( auto loc = e->property( "Location" ) )
+                {
+                    float oldZ = loc->getVec3()->z;
+                    loc->value = glm::vec3{ worldPos.x, worldPos.y, oldZ };
+                }
+            }
+
+            // clear selection
+            g_WaypointEditSelectedGuid = gie::NullGuid;
+        }
+    }
+}
+
+// NEW: Draw selection marker for waypoint editor on top of World View
+void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
+{
+    if( !g_ShowWaypointEditorWindow ) return;
+    if( !g_WorldPtr ) return;
+    if( g_WaypointEditSelectedGuid == gie::NullGuid ) return;
+
+    auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid );
+    if( !e ) return;
+    auto loc = e->property( "Location" );
+    if( !loc ) return;
+
+    glm::vec3 offset = -g_DrawingLimits.center;
+    glm::vec3 scale = g_DrawingLimits.scale;
+
+    glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
+    float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+    float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 c{ pos.x + x_px, pos.y + y_px };
+    ImU32 col = IM_COL32( 255, 255, 0, 220 );
+    ImU32 colBg = IM_COL32( 0, 0, 0, 120 );
+    float r = g_WaypointPickRadiusPx;
+    dl->AddCircleFilled( c, r + 2.0f, colBg, 24 );
+    dl->AddCircle( c, r, col, 24, 2.0f );
 }
