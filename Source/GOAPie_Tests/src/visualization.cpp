@@ -19,6 +19,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <algorithm>
 
 #include "example.h"
 
@@ -72,6 +73,8 @@ static float g_WaypointPickRadiusPx = 14.0f;
 // NEW: Global pointers to world/planner so World View (const refs) can still interact when editor visible
 static gie::World* g_WorldPtr = nullptr;
 static gie::Planner* g_PlannerPtr = nullptr;
+// NEW: Double-click to arm waypoint repositioning
+static bool g_WaypointEditPlaceArmed = false;
 
 // UI settings persistence
 static const char* kUiWindowsSettingsFile = "goapie_ui_windows.ini";
@@ -901,7 +904,7 @@ void drawWaypointsAndLinks( const gie::World& world, const gie::Planner& planner
     waypointGuids = context->entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
     if( !waypointGuids || waypointGuids->empty() )
     {
-        return; // No waypoints to draw
+        return;
     }
 
     // Use global drawing limits for transform
@@ -1811,16 +1814,169 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
 
     if( ImGui::Begin( "Waypoint Editor", &g_ShowWaypointEditorWindow ) )
     {
-        ImGui::TextUnformatted( "Click a waypoint in World View to select it, then click again anywhere to place it." );
+        ImGui::TextUnformatted( "Single-click a waypoint to select it." );
+        ImGui::TextUnformatted( "Double-click a waypoint to arm repositioning, then click to place." );
         ImGui::SliderFloat( "Pick Radius (px)", &g_WaypointPickRadiusPx, 4.0f, 30.0f );
         if( g_WaypointEditSelectedGuid != gie::NullGuid )
         {
             auto e = world.entity( g_WaypointEditSelectedGuid );
             std::string name = e && e->nameHash() != gie::InvalidStringHash ? std::string( gie::stringRegister().get( e->nameHash() ) ) : std::string( "<unknown>" );
             ImGui::Text( "Selected: %s (%llu)", name.c_str(), static_cast< unsigned long long >( g_WaypointEditSelectedGuid ) );
+            ImGui::SameLine();
+            ImGui::Text( " | Move armed: %s", g_WaypointEditPlaceArmed ? "Yes" : "No" );
             if( ImGui::Button( "Clear Selection" ) )
             {
                 g_WaypointEditSelectedGuid = gie::NullGuid;
+                g_WaypointEditPlaceArmed = false;
+            }
+
+            // Links listing with direction toggles
+            auto linksPpt = e->property( "Links" );
+            if( !linksPpt )
+            {
+                linksPpt = e->createProperty( "Links", gie::Property::GuidVector{} );
+            }
+            auto selOutgoing = linksPpt->getGuidArray();
+
+            // gather incoming neighbors by scanning waypoints
+            std::set< gie::Guid > unionNeighbors;
+            // Add outgoing neighbors first
+            if( selOutgoing )
+            {
+                for( auto g : *selOutgoing ) if( g != g_WaypointEditSelectedGuid ) unionNeighbors.insert( g );
+            }
+            // All waypoints
+            const auto* set = world.context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+            if( set )
+            {
+                for( auto g : *set )
+                {
+                    if( g == g_WaypointEditSelectedGuid ) continue;
+                    auto n = world.entity( g );
+                    if( !n ) continue;
+                    auto lp = n->property( "Links" );
+                    if( !lp ) continue;
+                    auto arr = lp->getGuidArray();
+                    if( !arr ) continue;
+                    if( std::find( arr->begin(), arr->end(), g_WaypointEditSelectedGuid ) != arr->end() )
+                    {
+                        unionNeighbors.insert( g );
+                    }
+                }
+            }
+
+            if( unionNeighbors.empty() )
+            {
+                ImGui::TextUnformatted( "No links." );
+            }
+            else
+            {
+                ImGui::Separator();
+                ImGui::TextUnformatted( "Links:" );
+                for( auto neighborGuid : unionNeighbors )
+                {
+                    auto neighbor = world.entity( neighborGuid );
+                    if( !neighbor ) continue;
+                    auto neighborLinksPpt = neighbor->property( "Links" );
+                    if( !neighborLinksPpt ) neighborLinksPpt = neighbor->createProperty( "Links", gie::Property::GuidVector{} );
+                    auto neighborLinks = neighborLinksPpt->getGuidArray();
+
+                    bool hasOut = selOutgoing && std::find( selOutgoing->begin(), selOutgoing->end(), neighborGuid ) != selOutgoing->end();
+                    bool hasIn = neighborLinks && std::find( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ) != neighborLinks->end();
+
+                    auto buttonAlpha = [&]( bool enabled )
+                    {
+                        ImGui::PushStyleVar( ImGuiStyleVar_Alpha, enabled ? 1.0f : 0.4f );
+                    };
+
+                    // Incoming button: "<"
+                    buttonAlpha( hasIn );
+                    std::string inLbl = std::string( "<##in_" ) + std::to_string( static_cast< int >( neighborGuid ) );
+                    if( ImGui::Button( inLbl.c_str() ) )
+                    {
+                        if( neighborLinks )
+                        {
+                            auto it = std::find( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid );
+                            if( it != neighborLinks->end() )
+                            {
+                                neighborLinks->erase( it );
+                                hasIn = false;
+                            }
+                            else
+                            {
+                                neighborLinks->push_back( g_WaypointEditSelectedGuid );
+                                hasIn = true;
+                            }
+                        }
+                    }
+                    ImGui::PopStyleVar();
+                    ImGui::SameLine();
+
+                    // Both directions button: "-"
+                    bool both = hasIn && hasOut;
+                    buttonAlpha( both );
+                    std::string biLbl = std::string( "-##bi_" ) + std::to_string( static_cast< int >( neighborGuid ) );
+                    if( ImGui::Button( biLbl.c_str() ) )
+                    {
+                        if( both )
+                        {
+                            // remove both
+                            if( neighborLinks )
+                            {
+                                neighborLinks->erase( std::remove( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ), neighborLinks->end() );
+                            }
+                            if( selOutgoing )
+                            {
+                                selOutgoing->erase( std::remove( selOutgoing->begin(), selOutgoing->end(), neighborGuid ), selOutgoing->end() );
+                            }
+                            hasIn = false; hasOut = false;
+                        }
+                        else
+                        {
+                            // add both
+                            if( neighborLinks )
+                            {
+                                if( std::find( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ) == neighborLinks->end() )
+                                    neighborLinks->push_back( g_WaypointEditSelectedGuid );
+                            }
+                            if( selOutgoing )
+                            {
+                                if( std::find( selOutgoing->begin(), selOutgoing->end(), neighborGuid ) == selOutgoing->end() )
+                                    selOutgoing->push_back( neighborGuid );
+                            }
+                            hasIn = true; hasOut = true;
+                        }
+                    }
+                    ImGui::PopStyleVar();
+                    ImGui::SameLine();
+
+                    // Outgoing button: ">"
+                    buttonAlpha( hasOut );
+                    std::string outLbl = std::string( ">##out_" ) + std::to_string( static_cast< int >( neighborGuid ) );
+                    if( ImGui::Button( outLbl.c_str() ) )
+                    {
+                        if( selOutgoing )
+                        {
+                            auto it = std::find( selOutgoing->begin(), selOutgoing->end(), neighborGuid );
+                            if( it != selOutgoing->end() )
+                            {
+                                selOutgoing->erase( it );
+                                hasOut = false;
+                            }
+                            else
+                            {
+                                selOutgoing->push_back( neighborGuid );
+                                hasOut = true;
+                            }
+                        }
+                    }
+                    ImGui::PopStyleVar();
+                    ImGui::SameLine( 0.0f, 8.0f );
+
+                    // Neighbor label
+                    std::string nName = neighbor->nameHash() != gie::InvalidStringHash ? std::string( gie::stringRegister().get( neighbor->nameHash() ) ) : std::string( "<unnamed>" );
+                    ImGui::Text( "%s (%llu)", nName.c_str(), static_cast< unsigned long long >( neighborGuid ) );
+                }
             }
         }
         else
@@ -1848,26 +2004,22 @@ void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windo
 
     if( !inside ) return;
 
-    // On left click inside the image
-    if( ImGui::IsMouseClicked( 0 ) )
+    // Precompute transforms
+    glm::vec3 offset = -g_DrawingLimits.center;
+    glm::vec3 scale = g_DrawingLimits.scale;
+
+    // Relative pixel coordinates
+    const float localX = mp.x - pos.x;
+    const float localY = mp.y - pos.y;
+
+    // Double-click on waypoint: select and arm placement
+    if( ImGui::IsMouseDoubleClicked( 0 ) )
     {
-        // Precompute transforms
-        glm::vec3 offset = -g_DrawingLimits.center;
-        glm::vec3 scale = g_DrawingLimits.scale;
-
-        // Relative pixel coordinates
-        const float localX = mp.x - pos.x;
-        const float localY = mp.y - pos.y;
-
-        if( g_WaypointEditSelectedGuid == gie::NullGuid )
+        const auto* set = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+        if( set && !set->empty() )
         {
-            // selection step: find nearest waypoint within radius
-            const auto* set = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-            if( !set || set->empty() ) return;
-
             float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx;
             gie::Guid best = gie::NullGuid;
-
             for( auto guid : *set )
             {
                 auto e = g_WorldPtr->entity( guid ); if( !e ) continue;
@@ -1878,22 +2030,23 @@ void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windo
                 float dx = x_px - localX;
                 float dy = y_px - localY;
                 float d2 = dx * dx + dy * dy;
-                if( d2 <= bestDist2 )
-                {
-                    bestDist2 = d2;
-                    best = guid;
-                }
+                if( d2 <= bestDist2 ) { bestDist2 = d2; best = guid; }
             }
-
             if( best != gie::NullGuid )
             {
                 g_WaypointEditSelectedGuid = best;
+                g_WaypointEditPlaceArmed = true; // arm repositioning
             }
         }
-        else
+        return; // consume
+    }
+
+    // On left click inside the image
+    if( ImGui::IsMouseClicked( 0 ) )
+    {
+        if( g_WaypointEditPlaceArmed && g_WaypointEditSelectedGuid != gie::NullGuid )
         {
             // placement step: convert pixel to world, move selected waypoint
-            // Convert pixel to NDC
             float u = localX / windowWidth; // [0,1]
             float v = localY / windowHeight; // [0,1]
             float ndcX = u * 2.0f - 1.0f;
@@ -1903,7 +2056,6 @@ void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windo
             // Invert transform: world = ndc / scale - offset  (offset = -center)
             glm::vec3 worldPos = ndc / g_DrawingLimits.scale - ( -g_DrawingLimits.center );
 
-            // keep original Z
             auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid );
             if( e )
             {
@@ -1914,8 +2066,39 @@ void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windo
                 }
             }
 
-            // clear selection
-            g_WaypointEditSelectedGuid = gie::NullGuid;
+            // disarm but keep selection
+            g_WaypointEditPlaceArmed = false;
+            return; // placed, stop further processing
+        }
+
+        // selection step: find nearest waypoint within radius
+        const auto* set = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+        if( !set || set->empty() ) return;
+
+        float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx;
+        gie::Guid best = gie::NullGuid;
+
+        for( auto guid : *set )
+        {
+            auto e = g_WorldPtr->entity( guid ); if( !e ) continue;
+            auto loc = e->property( "Location" ); if( !loc ) continue;
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
+            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+            float dx = x_px - localX;
+            float dy = y_px - localY;
+            float d2 = dx * dx + dy * dy;
+            if( d2 <= bestDist2 )
+            {
+                bestDist2 = d2;
+                best = guid;
+            }
+        }
+
+        if( best != gie::NullGuid )
+        {
+            g_WaypointEditSelectedGuid = best;
+            g_WaypointEditPlaceArmed = false; // single click selects only
         }
     }
 }
@@ -1946,4 +2129,10 @@ void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float 
     float r = g_WaypointPickRadiusPx;
     dl->AddCircleFilled( c, r + 2.0f, colBg, 24 );
     dl->AddCircle( c, r, col, 24, 2.0f );
+
+    // optional: show armed indicator
+    if( g_WaypointEditPlaceArmed )
+    {
+        dl->AddCircle( c, r * 0.6f, IM_COL32( 255, 120, 0, 220 ), 24, 2.0f );
+    }
 }
