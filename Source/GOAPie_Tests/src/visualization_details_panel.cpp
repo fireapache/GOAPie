@@ -223,6 +223,23 @@ void drawDetailsPanelWindow( gie::World& world )
         drawEntityHeader( entity, g_SelectedEntityGuid );
         ImGui::Separator();
 
+        // New: show tags of selected entity
+        if( !entity->tags().empty() )
+        {
+            ImGui::TextUnformatted( "Tags:" );
+            ImGui::SameLine();
+            bool first = true;
+            for( auto tag : entity->tags() )
+            {
+                auto sv = gie::stringRegister().get( tag );
+                std::string label = sv.empty() ? std::to_string( static_cast<unsigned long long>( tag ) ) : std::string( sv );
+                if( !first ) ImGui::SameLine( 0.f, 6.f );
+                ImGui::TextWrapped( "%s", label.c_str() );
+                first = false;
+            }
+            ImGui::Separator();
+        }
+
         bool didDelete = false;
 
         // Controls: Add / Edit / Delete

@@ -6,10 +6,68 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <set>
 
 // Forward declarations for internal helpers
 static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
 static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
+
+// New: generic entity selection from World View (agnostic to tools)
+static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
+{
+    if( !g_WorldPtr ) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    const float localX = io.MousePos.x - pos.x;
+    const float localY = io.MousePos.y - pos.y;
+    const bool mouseOverWindow = ( localX >= 0.0f && localX <= windowWidth && localY >= 0.0f && localY <= windowHeight );
+    if( !mouseOverWindow ) return;
+
+    // Only react on fresh left click when Waypoint Editor is not handling interactions
+    if( g_ShowWaypointEditorWindow ) return; // let the waypoint tool handle selection when active
+    if( !ImGui::IsMouseClicked( 0 ) ) return;
+
+    // Pick nearest entity among those tagged for drawing and having a Location
+    const auto* drawSet = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Draw" ) } );
+    if( !drawSet || drawSet->empty() ) return;
+
+    float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx; // reuse pick radius
+    gie::Guid best = gie::NullGuid;
+
+    glm::vec3 offset = -g_DrawingLimits.center;
+    glm::vec3 scale = g_DrawingLimits.scale;
+
+    for( auto guid : *drawSet )
+    {
+        const auto* e = g_WorldPtr->entity( guid );
+        if( !e ) continue;
+        const auto* loc = e->property( "Location" );
+        if( !loc || !loc->getVec3() ) continue;
+
+        glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+        float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+        float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+        float dx = x_px - localX;
+        float dy = y_px - localY;
+        float d2 = dx * dx + dy * dy;
+        if( d2 <= bestDist2 )
+        {
+            bestDist2 = d2;
+            best = guid;
+        }
+    }
+
+    if( best != gie::NullGuid )
+    {
+        g_SelectedEntityGuid = best;
+        // Sync waypoint editor selection if it's a waypoint when tool opens later
+        const auto* waypointSet = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+        if( waypointSet && waypointSet->find( best ) != waypointSet->end() )
+        {
+            g_WaypointEditSelectedGuid = best;
+        }
+    }
+}
 
 void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
 {
@@ -141,6 +199,10 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
         // overlays and interactions
         drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
         drawRoomNamesOverlay( world, planner, pos, windowWidth, windowHeight );
+
+        // New: generic selection (when Waypoint Editor is inactive)
+        handleEntitySelectionOnWorldView( pos, windowWidth, windowHeight );
+
         if( g_ShowWaypointEditorWindow )
         {
             handleWaypointEditorOnWorldView( pos, windowWidth, windowHeight );
