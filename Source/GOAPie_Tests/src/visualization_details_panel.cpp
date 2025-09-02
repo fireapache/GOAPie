@@ -223,6 +223,8 @@ void drawDetailsPanelWindow( gie::World& world )
         drawEntityHeader( entity, g_SelectedEntityGuid );
         ImGui::Separator();
 
+        bool didDelete = false;
+
         // Controls: Add / Edit / Delete
         if( ImGui::Button( "+ Add Property" ) )
         {
@@ -243,13 +245,46 @@ void drawDetailsPanelWindow( gie::World& world )
         ImGui::SameLine();
         if( ImGui::Button( "Delete" ) )
         {
-            // Remove mapping on entity then remove property from world context
-            entity->removeProperty( s_SelectedPropHash );
-            world.removeProperty( s_SelectedPropGuid );
+            // Re-validate selected mapping before deletion
+            auto it = entity->properties().find( s_SelectedPropHash );
+            if( it != entity->properties().end() && it->second == s_SelectedPropGuid )
+            {
+                entity->removeProperty( s_SelectedPropHash );
+                world.removeProperty( s_SelectedPropGuid );
+            }
             resetSelection();
             resetEdit();
+            didDelete = true;
         }
         ImGui::EndDisabled();
+
+        // Optional: keyboard Delete to remove property as well
+        if( hasPropSelected && s_AddPropMode == AddPropMode::None && !s_EditActive && ImGui::IsWindowFocused( ImGuiFocusedFlags_RootAndChildWindows ) )
+        {
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 18700
+            if( ImGui::IsKeyPressed( ImGuiKey_Delete ) )
+#else
+            if( ImGui::IsKeyPressed( ImGui::GetKeyIndex( ImGuiKey_Delete ) ) )
+#endif
+            {
+                auto it = entity->properties().find( s_SelectedPropHash );
+                if( it != entity->properties().end() && it->second == s_SelectedPropGuid )
+                {
+                    entity->removeProperty( s_SelectedPropHash );
+                    world.removeProperty( s_SelectedPropGuid );
+                }
+                resetSelection();
+                resetEdit();
+                didDelete = true;
+            }
+        }
+
+        if( didDelete )
+        {
+            // Stop drawing this frame to avoid using stale state
+            ImGui::End();
+            return;
+        }
 
         ImGui::Separator();
 

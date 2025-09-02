@@ -47,11 +47,7 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
             }
 
             auto linksPpt = e->property( "Links" );
-            if( !linksPpt )
-            {
-                linksPpt = e->createProperty( "Links", gie::Property::GuidVector{} );
-            }
-            auto selOutgoing = linksPpt->getGuidArray();
+            gie::Property::GuidVector* selOutgoing = linksPpt ? linksPpt->getGuidArray() : nullptr; // don't auto-create
 
             std::set< gie::Guid > unionNeighbors;
             if( selOutgoing )
@@ -67,7 +63,7 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
                     auto n = world.entity( g );
                     if( !n ) continue;
                     auto lp = n->property( "Links" );
-                    if( !lp ) continue;
+                    if( !lp ) continue; // don't auto-create
                     auto arr = lp->getGuidArray();
                     if( !arr ) continue;
                     if( std::find( arr->begin(), arr->end(), g_WaypointEditSelectedGuid ) != arr->end() )
@@ -82,8 +78,7 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
             {
                 auto neighbor = world.entity( neighborGuid ); if( !neighbor ) continue;
                 auto neighborLinksPpt = neighbor->property( "Links" );
-                if( !neighborLinksPpt ) neighborLinksPpt = neighbor->createProperty( "Links", gie::Property::GuidVector{} );
-                auto neighborLinks = neighborLinksPpt->getGuidArray();
+                auto neighborLinks = neighborLinksPpt ? neighborLinksPpt->getGuidArray() : nullptr; // don't auto-create
                 bool hasOut = selOutgoing && std::find( selOutgoing->begin(), selOutgoing->end(), neighborGuid ) != selOutgoing->end();
                 bool hasIn = neighborLinks && std::find( neighborLinks->begin(), neighborLinks->end(), g_WaypointEditSelectedGuid ) != neighborLinks->end();
                 anyOutgoing |= hasOut;
