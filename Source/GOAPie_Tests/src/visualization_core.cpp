@@ -41,6 +41,7 @@ bool g_ShowBlackboardPropertiesWindow = false;
 bool g_ShowMorePlannerOptions = false;
 bool g_ShowWaypointEditorWindow = false;
 bool g_ShowEntityOutlinerWindow = false; // New: Entity Outliner visibility
+bool g_ShowDetailsPanelWindow = false;   // New: Details Panel visibility
 
 // Shared selection
 gie::Guid g_SelectedEntityGuid = gie::NullGuid; // New: selected entity shared state
@@ -87,6 +88,7 @@ static void LoadWindowVisibilitySettings()
         else if( key == "ShowBlackboardPropertiesWindow" ) g_ShowBlackboardPropertiesWindow = parseBool(val);
         else if( key == "ShowWaypointEditorWindow" ) g_ShowWaypointEditorWindow = parseBool(val);
         else if( key == "ShowEntityOutlinerWindow" ) g_ShowEntityOutlinerWindow = parseBool(val); // New
+        else if( key == "ShowDetailsPanelWindow" ) g_ShowDetailsPanelWindow = parseBool(val);     // New
     }
 }
 static void SaveWindowVisibilitySettings()
@@ -103,6 +105,7 @@ static void SaveWindowVisibilitySettings()
     out << "ShowBlackboardPropertiesWindow=" << ( g_ShowBlackboardPropertiesWindow ? 1 : 0 ) << '\n';
     out << "ShowWaypointEditorWindow=" << ( g_ShowWaypointEditorWindow ? 1 : 0 ) << '\n';
     out << "ShowEntityOutlinerWindow=" << ( g_ShowEntityOutlinerWindow ? 1 : 0 ) << '\n'; // New
+    out << "ShowDetailsPanelWindow=" << ( g_ShowDetailsPanelWindow ? 1 : 0 ) << '\n';     // New
 }
 
 int visualization( ExampleParameters& params )
@@ -379,6 +382,7 @@ void ShowExampleAppDockSpace( bool* p_open )
             ImGui::Separator();
             ImGui::MenuItem( "Waypoint Editor", NULL, &g_ShowWaypointEditorWindow );
             ImGui::MenuItem( "Entity Outliner", NULL, &g_ShowEntityOutlinerWindow ); // New
+            ImGui::MenuItem( "Details Panel", NULL, &g_ShowDetailsPanelWindow );     // New
             ImGui::EndMenu();
         }
 

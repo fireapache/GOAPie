@@ -26,4 +26,5 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
     drawDebugPathWindow( params );
     drawWaypointEditorWindow( params.world, params.planner );
     drawEntityOutlinerWindow( params.world ); // New
+    drawDetailsPanelWindow( params.world );   // New
 }
