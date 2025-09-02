@@ -302,3 +302,11 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
     }
     ImGui::End();
 }
+
+void ResetWaypointEditorState()
+{
+    g_WaypointEditSelectedGuid = gie::NullGuid;
+    g_WaypointEditPlaceArmed = false;
+    g_WaypointEditHasTargetWorldPos = false;
+    g_WaypointDragActive = false;
+}
