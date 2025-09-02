@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <string>
+#include <vector>
 
 static void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, const bool padding )
 {
@@ -388,6 +389,154 @@ void drawDebugPathWindow( ExampleParameters& params )
     ImGui::End();
 }
 
+// New: Entity Outliner implementation
+void drawEntityOutlinerWindow( gie::World& world )
+{
+    if( !g_ShowEntityOutlinerWindow ) return;
+
+    if( ImGui::Begin( "Entity Outliner", &g_ShowEntityOutlinerWindow ) )
+    {
+        // Sync selection from other tools -> outliner
+        if( g_WaypointEditSelectedGuid != gie::NullGuid && g_SelectedEntityGuid != g_WaypointEditSelectedGuid )
+        {
+            g_SelectedEntityGuid = g_WaypointEditSelectedGuid;
+        }
+
+        // Controls
+        bool hasSelection = ( g_SelectedEntityGuid != gie::NullGuid && world.entity( g_SelectedEntityGuid ) != nullptr );
+
+        if( ImGui::Button( "+ Add" ) )
+        {
+            if( auto* e = world.createEntity( "a_new_entity" ) )
+            {
+                g_SelectedEntityGuid = e->guid();
+                g_WaypointEditSelectedGuid = g_SelectedEntityGuid; // sync
+            }
+        }
+        ImGui::SameLine();
+
+        ImGui::BeginDisabled( !hasSelection );
+        if( ImGui::Button( "Delete" ) )
+        {
+            if( hasSelection )
+            {
+                world.removeEntity( g_SelectedEntityGuid );
+                if( g_WaypointEditSelectedGuid == g_SelectedEntityGuid )
+                {
+                    g_WaypointEditSelectedGuid = gie::NullGuid;
+                }
+                g_SelectedEntityGuid = gie::NullGuid;
+            }
+        }
+        ImGui::SameLine();
+        static bool s_Renaming = false;
+        if( ImGui::Button( "Rename" ) )
+        {
+            if( hasSelection )
+            {
+                s_Renaming = true;
+            }
+        }
+        ImGui::EndDisabled();
+
+        // Rename row
+        static char s_RenameBuf[256] = { 0 };
+        if( s_Renaming )
+        {
+            auto* e = world.entity( g_SelectedEntityGuid );
+            std::string curName = ( e && e->nameHash() != gie::InvalidStringHash ) ? std::string( gie::stringRegister().get( e->nameHash() ) ) : std::string{};
+            if( s_RenameBuf[0] == '\0' )
+            {
+                strncpy( s_RenameBuf, curName.c_str(), sizeof( s_RenameBuf ) - 1 );
+                s_RenameBuf[ sizeof( s_RenameBuf ) - 1 ] = '\0';
+            }
+            ImGui::Separator();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted( "New name:" );
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth( 240.0f );
+            bool apply = ImGui::InputText( "##rename", s_RenameBuf, IM_ARRAYSIZE( s_RenameBuf ), ImGuiInputTextFlags_EnterReturnsTrue );
+            ImGui::SameLine();
+            if( ImGui::Button( "Apply" ) ) apply = true;
+            ImGui::SameLine();
+            if( ImGui::Button( "Cancel" ) )
+            {
+                s_Renaming = false;
+                s_RenameBuf[0] = '\0';
+            }
+            if( apply )
+            {
+                if( e )
+                {
+                    // Update name hash
+                    e->setName( s_RenameBuf );
+                }
+                s_Renaming = false;
+                s_RenameBuf[0] = '\0';
+            }
+            ImGui::Separator();
+        }
+
+        // Build sorted list of entities
+        std::vector<std::pair<gie::Guid, const gie::Entity*>> entries;
+        entries.reserve( world.context().entities().size() );
+        for( const auto& kv : world.context().entities() )
+        {
+            entries.emplace_back( kv.first, &kv.second );
+        }
+        auto nameOf = []( const gie::Entity* e ) -> std::string
+        {
+            if( !e ) return std::string{};
+            auto nh = e->nameHash();
+            if( nh != gie::InvalidStringHash ) return std::string( gie::stringRegister().get( nh ) );
+            return std::string{};
+        };
+        std::sort( entries.begin(), entries.end(), [&]( const auto& a, const auto& b )
+        {
+            std::string an = nameOf( a.second );
+            std::string bn = nameOf( b.second );
+            // Empty names go last
+            if( an.empty() && bn.empty() ) return a.first < b.first;
+            if( an.empty() ) return false;
+            if( bn.empty() ) return true;
+            if( an == bn ) return a.first < b.first;
+            return an < bn;
+        } );
+
+        // List header
+        if( ImGui::BeginTable( "##entity_outliner_table", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp ) )
+        {
+            ImGui::TableSetupColumn( "Entity" );
+            ImGui::TableSetupColumn( "Guid" );
+            ImGui::TableHeadersRow();
+
+            for( const auto& [ guid, ent ] : entries )
+            {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex( 0 );
+                std::string displayName = nameOf( ent );
+                if( displayName.empty() ) displayName = "<unnamed>";
+                bool selected = ( g_SelectedEntityGuid == guid );
+                std::string selLabel = displayName + "##" + std::to_string( static_cast<unsigned long long>( guid ) );
+                if( ImGui::Selectable( selLabel.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns ) )
+                {
+                    g_SelectedEntityGuid = guid;
+                    g_WaypointEditSelectedGuid = guid; // sync to other tools
+                }
+
+                ImGui::TableSetColumnIndex( 1 );
+                ImGui::Text( "%llu", static_cast<unsigned long long>( guid ) );
+            }
+            ImGui::EndTable();
+        }
+
+        // Hint
+        ImGui::Separator();
+        ImGui::TextUnformatted( "Tip: Click a row to select. 'Add' creates a_new_entity." );
+    }
+    ImGui::End();
+}
+
 void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
 {
     static bool s_prevShowWaypointEditorWindow = false;
@@ -397,6 +546,7 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
     }
     s_prevShowWaypointEditorWindow = g_ShowWaypointEditorWindow;
 
+    // Draw tools
     drawGoapieVisualizationWindow( useHeuristics, params );
     drawWorldViewWindow( params.world, params.planner );
     drawDebugMessagesWindow( params );
@@ -404,6 +554,7 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
     drawPlannerLogWindow( params );
     drawDebugPathWindow( params );
     drawWaypointEditorWindow( params.world, params.planner );
+    drawEntityOutlinerWindow( params.world ); // New
 }
 
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation )

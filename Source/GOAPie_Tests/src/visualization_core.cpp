@@ -39,9 +39,14 @@ bool g_ShowSimulationArgumentsWindow = false;
 bool g_ShowPlannerLogWindow = false;
 bool g_ShowBlackboardPropertiesWindow = false;
 bool g_ShowMorePlannerOptions = false;
+bool g_ShowWaypointEditorWindow = false;
+bool g_ShowEntityOutlinerWindow = false; // New: Entity Outliner visibility
+
+// Shared selection
+gie::Guid g_SelectedEntityGuid = gie::NullGuid; // New: selected entity shared state
 
 // Waypoint editor globals
-bool g_ShowWaypointEditorWindow = false;
+// bool g_ShowWaypointEditorWindow = false; // moved above with other flags
 gie::Guid g_WaypointEditSelectedGuid = gie::NullGuid;
 float g_WaypointPickRadiusPx = 14.0f;
 gie::World* g_WorldPtr = nullptr;
@@ -81,6 +86,7 @@ static void LoadWindowVisibilitySettings()
         else if( key == "ShowPlannerLogWindow" ) g_ShowPlannerLogWindow = parseBool(val);
         else if( key == "ShowBlackboardPropertiesWindow" ) g_ShowBlackboardPropertiesWindow = parseBool(val);
         else if( key == "ShowWaypointEditorWindow" ) g_ShowWaypointEditorWindow = parseBool(val);
+        else if( key == "ShowEntityOutlinerWindow" ) g_ShowEntityOutlinerWindow = parseBool(val); // New
     }
 }
 static void SaveWindowVisibilitySettings()
@@ -96,6 +102,7 @@ static void SaveWindowVisibilitySettings()
     out << "ShowPlannerLogWindow=" << ( g_ShowPlannerLogWindow ? 1 : 0 ) << '\n';
     out << "ShowBlackboardPropertiesWindow=" << ( g_ShowBlackboardPropertiesWindow ? 1 : 0 ) << '\n';
     out << "ShowWaypointEditorWindow=" << ( g_ShowWaypointEditorWindow ? 1 : 0 ) << '\n';
+    out << "ShowEntityOutlinerWindow=" << ( g_ShowEntityOutlinerWindow ? 1 : 0 ) << '\n'; // New
 }
 
 int visualization( ExampleParameters& params )
@@ -371,6 +378,7 @@ void ShowExampleAppDockSpace( bool* p_open )
             ImGui::MenuItem( "Debug Path", NULL, &g_ShowDebugPathWindow );
             ImGui::Separator();
             ImGui::MenuItem( "Waypoint Editor", NULL, &g_ShowWaypointEditorWindow );
+            ImGui::MenuItem( "Entity Outliner", NULL, &g_ShowEntityOutlinerWindow ); // New
             ImGui::EndMenu();
         }
 

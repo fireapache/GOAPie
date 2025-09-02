@@ -65,6 +65,8 @@ namespace gie
 		bool hasTag( Tag tag ) const { return _tags.find( tag ) != _tags.end(); }
 		const auto& properties() const { return _propertyGuids; }
 		auto nameHash() const { return _nameHash; }
+		// Rename entity by updating its name hash in the global string register
+		void setName( std::string_view name ) { _nameHash = stringHasher( name ); }
 		void setContext( Blackboard* context ) { _context = context; }
 
 		// Register a property in data entity and world using its literal name.

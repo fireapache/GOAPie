@@ -108,7 +108,7 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
                 if( g_BoundsInputY[ 0 ] > g_BoundsInputY[ 1 ] ) std::swap( g_BoundsInputY[ 0 ], g_BoundsInputY[ 1 ] );
 
                 g_DrawingLimits.minBounds.x = g_BoundsInputX[ 0 ];
-                g_DrawingLimits.maxBounds.x = g_BoundsInputX[ 1 ];
+                g_DrawingLimits.maxBounds.x = g_BoundsInputX[  1 ];
                 g_DrawingLimits.minBounds.y = g_BoundsInputY[ 0 ];
                 g_DrawingLimits.maxBounds.y = g_BoundsInputY[ 1 ];
 
@@ -343,6 +343,7 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
         if( nearest != gie::NullGuid )
         {
             g_WaypointEditSelectedGuid = nearest;
+            g_SelectedEntityGuid = nearest; // sync selection to outliner
             g_WaypointEditPlaceArmed = false;
             if( auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid ) )
             {
@@ -395,6 +396,7 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
         if( nearest != gie::NullGuid )
         {
             g_WaypointEditSelectedGuid = nearest;
+            g_SelectedEntityGuid = nearest; // sync selection to outliner
             g_WaypointEditPlaceArmed = true;
         }
     }

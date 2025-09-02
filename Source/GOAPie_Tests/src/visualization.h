@@ -65,6 +65,10 @@ extern bool g_ShowPlannerLogWindow;
 extern bool g_ShowBlackboardPropertiesWindow;
 extern bool g_ShowMorePlannerOptions;
 extern bool g_ShowWaypointEditorWindow;
+extern bool g_ShowEntityOutlinerWindow; // New: Entity Outliner visibility
+
+// Global selection shared across tools
+extern gie::Guid g_SelectedEntityGuid; // New: selected entity shared state
 
 // Waypoint editor state
 extern gie::Guid g_WaypointEditSelectedGuid;
@@ -103,6 +107,7 @@ void drawPlannerLogWindow( ExampleParameters& params );
 void drawDebugPathWindow( ExampleParameters& params );
 void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation* simulation );
 void drawBlackboardPropertiesWindow( const gie::Simulation* simulation );
+void drawEntityOutlinerWindow( gie::World& world ); // New: Entity Outliner
 
 // World View and overlays
 void drawWorldViewWindow( gie::World& world, const gie::Planner& planner );
