@@ -3,6 +3,22 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <cstring>
+
+// Local state for Entity Outliner name dialog (Add/Rename)
+namespace {
+    enum class NameDialogMode : uint8_t { None = 0, Add, Rename };
+    static NameDialogMode s_NameDialogMode = NameDialogMode::None;
+    static char s_NameDialogBuf[256] = { 0 };
+    static bool s_NameDialogFocus = false; // request keyboard focus on next frame
+
+    inline void CancelNameDialog()
+    {
+        s_NameDialogMode = NameDialogMode::None;
+        s_NameDialogBuf[0] = '\0';
+        s_NameDialogFocus = false;
+    }
+}
 
 static void drawEntityNameText( const gie::Entity& entity, const gie::Guid entityGuid, const bool padding )
 {
@@ -117,13 +133,13 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 
     gie::World& world = params.world;
     gie::Planner& planner = params.planner;
-	static int simultationDepth = 10;
+    static int simultationDepth = 10;
 
     if( ImGui::Begin( "GOAPie Visualization", &g_ShowGoapieVisualizationWindow ) )
     {
         ImGui::Checkbox( "Use Heuristics", &useHeuristics );
         ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
-		ImGui::SliderInt( "Depth Limit", &simultationDepth, 10, 50 );
+        ImGui::SliderInt( "Depth Limit", &simultationDepth, 10, 50 );
         planner.depthLimitMutator() = static_cast< size_t >( simultationDepth );
 
         ImGui::Separator();
@@ -247,16 +263,15 @@ void drawDebugMessagesWindow( ExampleParameters& params )
         {
             for( const auto& message : *debugMessages.messages() )
             {
-				const bool hasScope = message.find( "::" ) != std::string::npos;
-				if( hasScope )
+                const bool hasScope = message.find( "::" ) != std::string::npos;
+                if( hasScope )
                 {
-					ImGui::TextColored( ImColor{ 1.0f, 0.6f, 0.0f, 1.0f }, "* %s", message.c_str() );
-				}
+                    ImGui::TextColored( ImColor{ 1.0f, 0.6f, 0.0f, 1.0f }, "* %s", message.c_str() );
+                }
                 else
                 {
-					ImGui::TextUnformatted( message.c_str() );
+                    ImGui::TextUnformatted( message.c_str() );
                 }
-				
             }
         }
     }
@@ -396,6 +411,19 @@ void drawEntityOutlinerWindow( gie::World& world )
 
     if( ImGui::Begin( "Entity Outliner", &g_ShowEntityOutlinerWindow ) )
     {
+        // If name dialog is open and user interacts/focuses elsewhere, cancel it
+        if( s_NameDialogMode != NameDialogMode::None )
+        {
+            if( !ImGui::IsWindowFocused( ImGuiFocusedFlags_RootAndChildWindows ) )
+            {
+                ImGuiIO& io = ImGui::GetIO();
+                if( io.MouseClicked[0] || io.MouseClicked[1] || io.MouseClicked[2] || io.MouseWheel != 0.0f )
+                {
+                    CancelNameDialog();
+                }
+            }
+        }
+
         // Sync selection from other tools -> outliner
         if( g_WaypointEditSelectedGuid != gie::NullGuid && g_SelectedEntityGuid != g_WaypointEditSelectedGuid )
         {
@@ -405,13 +433,13 @@ void drawEntityOutlinerWindow( gie::World& world )
         // Controls
         bool hasSelection = ( g_SelectedEntityGuid != gie::NullGuid && world.entity( g_SelectedEntityGuid ) != nullptr );
 
+        ImGui::BeginDisabled( s_NameDialogMode != NameDialogMode::None );
         if( ImGui::Button( "+ Add" ) )
         {
-            if( auto* e = world.createEntity( "a_new_entity" ) )
-            {
-                g_SelectedEntityGuid = e->guid();
-                g_WaypointEditSelectedGuid = g_SelectedEntityGuid; // sync
-            }
+            // Start name dialog for Add
+            s_NameDialogMode = NameDialogMode::Add;
+            s_NameDialogBuf[0] = '\0';
+            s_NameDialogFocus = true;
         }
         ImGui::SameLine();
 
@@ -429,50 +457,57 @@ void drawEntityOutlinerWindow( gie::World& world )
             }
         }
         ImGui::SameLine();
-        static bool s_Renaming = false;
         if( ImGui::Button( "Rename" ) )
         {
             if( hasSelection )
             {
-                s_Renaming = true;
+                s_NameDialogMode = NameDialogMode::Rename;
+                auto* e = world.entity( g_SelectedEntityGuid );
+                std::string curName = ( e && e->nameHash() != gie::InvalidStringHash ) ? std::string( gie::stringRegister().get( e->nameHash() ) ) : std::string{};
+                std::strncpy( s_NameDialogBuf, curName.c_str(), sizeof( s_NameDialogBuf ) - 1 );
+                s_NameDialogBuf[ sizeof( s_NameDialogBuf ) - 1 ] = '\0';
+                s_NameDialogFocus = true;
             }
         }
         ImGui::EndDisabled();
+        ImGui::EndDisabled();
 
-        // Rename row
-        static char s_RenameBuf[256] = { 0 };
-        if( s_Renaming )
+        // Name dialog row (shared for Add/Rename)
+        if( s_NameDialogMode != NameDialogMode::None )
         {
-            auto* e = world.entity( g_SelectedEntityGuid );
-            std::string curName = ( e && e->nameHash() != gie::InvalidStringHash ) ? std::string( gie::stringRegister().get( e->nameHash() ) ) : std::string{};
-            if( s_RenameBuf[0] == '\0' )
-            {
-                strncpy( s_RenameBuf, curName.c_str(), sizeof( s_RenameBuf ) - 1 );
-                s_RenameBuf[ sizeof( s_RenameBuf ) - 1 ] = '\0';
-            }
             ImGui::Separator();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted( "New name:" );
+            ImGui::TextUnformatted( "Name:" );
             ImGui::SameLine();
             ImGui::SetNextItemWidth( 240.0f );
-            bool apply = ImGui::InputText( "##rename", s_RenameBuf, IM_ARRAYSIZE( s_RenameBuf ), ImGuiInputTextFlags_EnterReturnsTrue );
+            if( s_NameDialogFocus ) { ImGui::SetKeyboardFocusHere(); s_NameDialogFocus = false; }
+            bool apply = ImGui::InputText( "##entity_name_dialog", s_NameDialogBuf, IM_ARRAYSIZE( s_NameDialogBuf ), ImGuiInputTextFlags_EnterReturnsTrue );
             ImGui::SameLine();
             if( ImGui::Button( "Apply" ) ) apply = true;
             ImGui::SameLine();
             if( ImGui::Button( "Cancel" ) )
             {
-                s_Renaming = false;
-                s_RenameBuf[0] = '\0';
+                CancelNameDialog();
             }
             if( apply )
             {
-                if( e )
+                if( s_NameDialogMode == NameDialogMode::Rename )
                 {
-                    // Update name hash
-                    e->setName( s_RenameBuf );
+                    auto* e = world.entity( g_SelectedEntityGuid );
+                    if( e )
+                    {
+                        e->setName( s_NameDialogBuf );
+                    }
                 }
-                s_Renaming = false;
-                s_RenameBuf[0] = '\0';
+                else if( s_NameDialogMode == NameDialogMode::Add )
+                {
+                    if( auto* e = world.createEntity( s_NameDialogBuf[0] ? s_NameDialogBuf : "entity" ) )
+                    {
+                        g_SelectedEntityGuid = e->guid();
+                        g_WaypointEditSelectedGuid = g_SelectedEntityGuid; // sync
+                    }
+                }
+                CancelNameDialog();
             }
             ImGui::Separator();
         }
@@ -532,7 +567,7 @@ void drawEntityOutlinerWindow( gie::World& world )
 
         // Hint
         ImGui::Separator();
-        ImGui::TextUnformatted( "Tip: Click a row to select. 'Add' creates a_new_entity." );
+        ImGui::TextUnformatted( "Tip: Click a row to select. 'Add' opens a name dialog." );
     }
     ImGui::End();
 }
@@ -545,6 +580,14 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
         ResetWaypointEditorState();
     }
     s_prevShowWaypointEditorWindow = g_ShowWaypointEditorWindow;
+
+    // Track outliner visibility to cancel name dialog when closed or toggled off
+    static bool s_prevShowEntityOutlinerWindow = false;
+    if( s_prevShowEntityOutlinerWindow && !g_ShowEntityOutlinerWindow )
+    {
+        ResetEntityOutlinerState();
+    }
+    s_prevShowEntityOutlinerWindow = g_ShowEntityOutlinerWindow;
 
     // Draw tools
     drawGoapieVisualizationWindow( useHeuristics, params );
@@ -623,4 +666,10 @@ void ResetWaypointEditorState()
     g_WaypointEditPlaceArmed = false;
     g_WaypointEditHasTargetWorldPos = false;
     g_WaypointDragActive = false;
+}
+
+// New: Reset helper for Entity Outliner naming state
+void ResetEntityOutlinerState()
+{
+    CancelNameDialog();
 }

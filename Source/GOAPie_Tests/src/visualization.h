@@ -126,3 +126,6 @@ void drawDiscoveredRoomsWalls( const gie::World& world, const gie::Planner& plan
 // Waypoint editor
 void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner );
 void ResetWaypointEditorState();
+
+// Entity outliner helpers
+void ResetEntityOutlinerState();
