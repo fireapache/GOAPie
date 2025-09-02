@@ -482,8 +482,6 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
 
 void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner& planner, ImVec2 pos, float windowWidth, float windowHeight )
 {
-    if( !g_ShowWaypointGuidSuffix ) return;
-
     const gie::Blackboard* worldContext = &world.context();
     if( const auto* sim = planner.simulation( selectedSimulationGuid ) )
     {
@@ -501,68 +499,74 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
-        for( auto guid : *waypointSet )
+        for( auto waypointGuid : *waypointSet )
         {
-            if( const auto* e = world.entity( guid ) )
+            const bool isSelectedWaypoint = waypointGuid == g_WaypointEditSelectedGuid;
+
+            if( !g_ShowWaypointGuidSuffix && !isSelectedWaypoint ) continue; // only show for selected waypoint if editor active
+
+			const auto* e = world.entity( waypointGuid );
+			if( !e ) continue;
+            const auto* loc = e->property( "Location" );
+            if( !loc ) continue;
+
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
+            // Map NDC [-1,1] to image pixels [0,w]x[0,h] and account for flipped Y in image UVs
+            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+
+            // Position in screen space (base position for suffix)
+            ImVec2 suffixPos{ pos.x + x_px, pos.y + y_px - 12.0f };
+
+            // last 4 decimal digits
+            unsigned long long id = static_cast< unsigned long long >( waypointGuid );
+            unsigned int last4 = static_cast< unsigned int >( id % 10000ULL );
+            char buf[8];
+            snprintf( buf, sizeof( buf ), "%04u", last4 );
+
+            // center align suffix
+            const ImVec2 suffixSize = ImGui::CalcTextSize( buf );
+            suffixPos.x -= suffixSize.x * 0.5f;
+			suffixPos.y += isSelectedWaypoint ? 30.0f : 20.0f;
+
+            // draw suffix with slight shadow for readability
+            ImGui::GetWindowDrawList()->AddText( ImVec2( suffixPos.x + 1, suffixPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
+            ImGui::GetWindowDrawList()->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
+
+            // Derive waypoint index from entity name, expected to be "waypoint<number>"
+            std::string idxLabel = "wp?";
+            auto nameHash = e->nameHash();
+            if( nameHash != gie::InvalidStringHash )
             {
-                if( const auto* loc = e->property( "Location" ) )
+                std::string name( gie::stringRegister().get( nameHash ) );
+                size_t j = name.size();
+                if( name.find( "waypoint" ) == 0 )
                 {
-                    glm::vec3 p = ( *loc->getVec3() + offset ) * scale; // NDC
-                    // Map NDC [-1,1] to image pixels [0,w]x[0,h] and account for flipped Y in image UVs
-                    float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
-                    float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
-
-                    // Position in screen space (base position for suffix)
-                    ImVec2 suffixPos{ pos.x + x_px, pos.y + y_px - 12.0f };
-
-                    // last 4 decimal digits
-                    unsigned long long id = static_cast< unsigned long long >( guid );
-                    unsigned int last4 = static_cast< unsigned int >( id % 10000ULL );
-                    char buf[8];
-                    snprintf( buf, sizeof( buf ), "%04u", last4 );
-
-                    // center align suffix
-                    ImVec2 suffixSize = ImGui::CalcTextSize( buf );
-                    suffixPos.x -= suffixSize.x * 0.5f;
-
-                    // draw suffix with slight shadow for readability
-                    ImGui::GetWindowDrawList()->AddText( ImVec2( suffixPos.x + 1, suffixPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
-                    ImGui::GetWindowDrawList()->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
-
-                    // Derive waypoint index from entity name, expected to be "waypoint<number>"
-                    std::string idxLabel = "wp?";
-                    auto nameHash = e->nameHash();
-                    if( nameHash != gie::InvalidStringHash )
-                    {
-                        std::string name( gie::stringRegister().get( nameHash ) );
-                        size_t j = name.size();
-                        if( name.find( "waypoint" ) == 0 )
-                        {
-						while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
-						{
-							--j;
-						}
-						if( j < name.size() )
-						{
-							idxLabel = std::string( "wp" ) + name.substr( j );
-						}
-                        }
-                        else
-                        {
-						idxLabel = name; // fallback to full name if not matching expected pattern
-                        }
-                        
-                    }
-
-                    // Position index label above the suffix and center align
-                    ImVec2 idxSize = ImGui::CalcTextSize( idxLabel.c_str() );
-                    ImVec2 idxPos{ pos.x + x_px - idxSize.x * 0.5f, suffixPos.y - ( idxSize.y + 2.0f ) };
-
-                    // draw index label (white) with shadow
-                    ImGui::GetWindowDrawList()->AddText( ImVec2( idxPos.x + 1, idxPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), idxLabel.c_str() );
-                    ImGui::GetWindowDrawList()->AddText( idxPos, IM_COL32( 255, 255, 255, 255 ), idxLabel.c_str() );
+                    // extracting waypoint number
+					while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
+					{
+						--j;
+					}
+					if( j < name.size() )
+					{
+						idxLabel = std::string( "wp" ) + name.substr( j );
+					}
                 }
+                else
+                {
+					idxLabel = name; // fallback to full name if not matching expected pattern
+                }
+                        
             }
+
+            // Position index label above the suffix and center align
+            const ImVec2 idxSize = ImGui::CalcTextSize( idxLabel.c_str() );
+            const float idxPosYOffset = isSelectedWaypoint ? 35.0f : 15.0f;
+			const ImVec2 idxPos{ pos.x + x_px - idxSize.x * 0.5f, suffixPos.y - ( idxSize.y + idxPosYOffset ) };
+
+            // draw index label (white) with shadow
+            ImGui::GetWindowDrawList()->AddText( ImVec2( idxPos.x + 1, idxPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), idxLabel.c_str() );
+            ImGui::GetWindowDrawList()->AddText( idxPos, IM_COL32( 255, 255, 255, 255 ), idxLabel.c_str() );
         }
     }
 }
