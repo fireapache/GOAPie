@@ -21,8 +21,15 @@ namespace {
     static gie::StringHash s_SelectedPropHash = gie::InvalidStringHash;
     static gie::Guid s_SelectedPropGuid = gie::NullGuid;
 
+    // Tag selection/edit state
+    static gie::StringHash s_SelectedTag = gie::InvalidStringHash;
+    static bool s_TagAddActive = false;
+    static char s_TagAddNameBuf[256] = { 0 };
+    static bool s_TagAddNameFocus = false;
+
     // Edit state
     static bool s_EditActive = false;
+    static bool s_EditJustActivated = false;
     static gie::StringHash s_EditPropHash = gie::InvalidStringHash;
     static gie::Property::Type s_EditPropType = gie::Property::Unknow;
     static bool s_EditBool = false;
@@ -56,6 +63,23 @@ namespace {
         }
     }
 
+    // Draw a gray bar header with the given title
+    inline void drawSectionBar( const char* title )
+    {
+        ImGuiStyle& st = ImGui::GetStyle();
+		float h = ImGui::GetTextLineHeight() * 1.35f + st.FramePadding.y;
+        ImGui::PushStyleColor( ImGuiCol_ChildBg, ImVec4( 0.18f, 0.18f, 0.38f, 1.0f ) );
+        ImGui::PushStyleVar( ImGuiStyleVar_ChildRounding, 3.0f );
+        std::string id = std::string( "##hdr_" ) + title;
+        ImGui::BeginChild( id.c_str(), ImVec2( 0, h ), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse );
+        ImGui::SetCursorPosX( ImGui::GetCursorPosX() + 6.0f );
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted( title );
+        ImGui::EndChild();
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor();
+    }
+
     inline void resetAddPropDialog()
     {
         s_AddPropMode = AddPropMode::None;
@@ -64,15 +88,28 @@ namespace {
         s_AddPropNameFocus = false;
     }
 
+    inline void resetTagAddDialog()
+    {
+        s_TagAddActive = false;
+        s_TagAddNameBuf[0] = '\0';
+        s_TagAddNameFocus = false;
+    }
+
     inline void resetSelection()
     {
         s_SelectedPropHash = gie::InvalidStringHash;
         s_SelectedPropGuid = gie::NullGuid;
     }
 
+    inline void resetTagSelection()
+    {
+        s_SelectedTag = gie::InvalidStringHash;
+    }
+
     inline void resetEdit()
     {
         s_EditActive = false;
+        s_EditJustActivated = false;
         s_EditPropHash = gie::InvalidStringHash;
         s_EditPropType = gie::Property::Unknow;
         s_EditBool = false;
@@ -90,13 +127,14 @@ namespace {
 
     inline void cancelTransientUIsIfClickedOutside()
     {
-        if( s_AddPropMode == AddPropMode::None && !s_EditActive ) return;
+        if( s_AddPropMode == AddPropMode::None && !s_EditActive && !s_TagAddActive ) return;
         if( ImGui::IsWindowFocused( ImGuiFocusedFlags_RootAndChildWindows ) ) return;
         ImGuiIO& io = ImGui::GetIO();
         if( io.MouseClicked[0] || io.MouseClicked[1] || io.MouseClicked[2] || io.MouseWheel != 0.0f )
         {
             resetAddPropDialog();
             resetEdit();
+            resetTagAddDialog();
         }
     }
 
@@ -104,6 +142,7 @@ namespace {
     {
         if( !prop ) return;
         s_EditActive = true;
+        s_EditJustActivated = true;
         s_EditPropHash = propHash;
         s_EditPropType = prop->type();
         using T = gie::Property::Type;
@@ -207,6 +246,8 @@ void drawDetailsPanelWindow( gie::World& world )
             resetSelection();
             resetAddPropDialog();
             resetEdit();
+            resetTagSelection();
+            resetTagAddDialog();
         }
 
         const bool hasSelection = ( g_SelectedEntityGuid != gie::NullGuid );
@@ -216,29 +257,124 @@ void drawDetailsPanelWindow( gie::World& world )
             ImGui::TextDisabled( "No entity selected." );
             resetAddPropDialog();
             resetEdit();
+            resetTagSelection();
+            resetTagAddDialog();
             ImGui::End();
             return;
         }
 
         drawEntityHeader( entity, g_SelectedEntityGuid );
-        ImGui::Separator();
 
-        // New: show tags of selected entity
-        if( !entity->tags().empty() )
+        // Section: Tags header bar
+        drawSectionBar( "Tags" );
+
+        // Tags of selected entity (editable)
         {
-            ImGui::TextUnformatted( "Tags:" );
-            ImGui::SameLine();
-            bool first = true;
+            // Render tag buttons with subtle gray background and selection highlight
+            ImGuiStyle& style = ImGui::GetStyle();
+            float spacing = 6.f;
+            bool onSameLine = false;
+
+            const auto& stringregister = gie::stringRegister();
             for( auto tag : entity->tags() )
             {
-                auto sv = gie::stringRegister().get( tag );
+                auto sv = stringregister.get( tag );
                 std::string label = sv.empty() ? std::to_string( static_cast<unsigned long long>( tag ) ) : std::string( sv );
-                if( !first ) ImGui::SameLine( 0.f, 6.f );
-                ImGui::TextWrapped( "%s", label.c_str() );
-                first = false;
+
+                // compute button width and wrap if needed
+                ImVec2 textSize = ImGui::CalcTextSize( label.c_str() );
+                float btnW = textSize.x + style.FramePadding.x * 2.0f;
+                float avail = ImGui::GetContentRegionAvail().x;
+                if( onSameLine && btnW + 1.0f > avail )
+                {
+                    // let it wrap to next line by not calling SameLine
+                    onSameLine = false;
+                }
+                if( onSameLine ) ImGui::SameLine( 0.f, spacing );
+
+                bool selected = ( s_SelectedTag == tag );
+                ImVec4 baseN = selected ? ImVec4(0.35f,0.35f,0.35f,1.0f) : ImVec4(0.25f,0.25f,0.25f,1.0f);
+                ImVec4 baseH = selected ? ImVec4(0.45f,0.45f,0.45f,1.0f) : ImVec4(0.35f,0.35f,0.35f,1.0f);
+                ImVec4 baseA = selected ? ImVec4(0.50f,0.50f,0.50f,1.0f) : ImVec4(0.40f,0.40f,0.40f,1.0f);
+                ImGui::PushStyleColor( ImGuiCol_Button, baseN );
+                ImGui::PushStyleColor( ImGuiCol_ButtonHovered, baseH );
+                ImGui::PushStyleColor( ImGuiCol_ButtonActive, baseA );
+                if( ImGui::Button( label.c_str() ) )
+                {
+                    s_SelectedTag = tag;
+                }
+                ImGui::PopStyleColor( 3 );
+
+                onSameLine = true;
             }
-            ImGui::Separator();
+
+            // Add/Delete controls under the tags
+
+            if( !s_TagAddActive )
+            {
+                if( ImGui::Button( "+ Add Tag##tag" ) )
+                {
+                    s_TagAddActive = true;
+                    s_TagAddNameBuf[0] = '\0';
+                    s_TagAddNameFocus = true;
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled( s_SelectedTag == gie::InvalidStringHash );
+                if( ImGui::Button( "Delete##tag" ) )
+                {
+                    if( s_SelectedTag != gie::InvalidStringHash )
+                    {
+                        std::vector<gie::Tag> toRemove{ s_SelectedTag };
+                        world.context().entityTagRegister().untag( entity, toRemove );
+                        resetTagSelection();
+                    }
+                }
+                ImGui::EndDisabled();
+            }
+            else
+            {
+                // Add Tag dialog: name input + Create/Cancel
+                ImGui::BeginGroup();
+                ImGui::TextUnformatted( "New Tag:" );
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth( 240.0f );
+                if( s_TagAddNameFocus ) { ImGui::SetKeyboardFocusHere(); s_TagAddNameFocus = false; }
+                bool applyTag = ImGui::InputText( "##new_tag_name", s_TagAddNameBuf, IM_ARRAYSIZE( s_TagAddNameBuf ), ImGuiInputTextFlags_EnterReturnsTrue );
+                ImGui::SameLine();
+                if( ImGui::Button( "Create##tag" ) ) applyTag = true;
+                ImGui::SameLine();
+                bool cancelClicked = ImGui::Button( "Cancel##tag" );
+                ImGui::EndGroup();
+
+                // If user clicks anywhere outside the dialog group, cancel
+                ImGuiIO& io = ImGui::GetIO();
+                bool dialogHovered = ImGui::IsItemHovered( ImGuiHoveredFlags_RectOnly );
+                if( io.MouseClicked[0] && !dialogHovered )
+                {
+                    resetTagAddDialog();
+                }
+
+                if( cancelClicked )
+                {
+                    resetTagAddDialog();
+                }
+                else if( applyTag )
+                {
+                    const char* tagName = s_TagAddNameBuf;
+                    if( tagName && tagName[0] )
+                    {
+                        gie::Tag tagId = gie::stringHasher( tagName );
+                        std::vector<gie::Tag> toAdd{ tagId };
+                        world.context().entityTagRegister().tag( entity, toAdd );
+                        s_SelectedTag = tagId; // select newly added
+                    }
+                    resetTagAddDialog();
+                }
+            }
         }
+
+        // Section: Properties header bar
+        drawSectionBar( "Properties" );
 
         bool didDelete = false;
 
@@ -251,7 +387,7 @@ void drawDetailsPanelWindow( gie::World& world )
         ImGui::SameLine();
         const bool hasPropSelected = ( s_SelectedPropHash != gie::InvalidStringHash && s_SelectedPropGuid != gie::NullGuid );
         ImGui::BeginDisabled( !hasPropSelected );
-        if( ImGui::Button( "Edit" ) )
+        if( ImGui::Button( "Edit##prop" ) )
         {
             if( auto* prop = world.property( s_SelectedPropGuid ) )
             {
@@ -260,7 +396,7 @@ void drawDetailsPanelWindow( gie::World& world )
             }
         }
         ImGui::SameLine();
-        if( ImGui::Button( "Delete" ) )
+        if( ImGui::Button( "Delete##prop" ) )
         {
             // Re-validate selected mapping before deletion
             auto it = entity->properties().find( s_SelectedPropHash );
@@ -303,28 +439,37 @@ void drawDetailsPanelWindow( gie::World& world )
             return;
         }
 
-        ImGui::Separator();
-
         // List existing properties with selection
         if( ImGui::BeginTable( "##entity_props_table", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp ) )
         {
-            ImGui::TableSetupColumn( "Property" );
+            ImGui::TableSetupColumn( "Name" );
             ImGui::TableSetupColumn( "Value" );
             ImGui::TableHeadersRow();
 
-            const auto& stringregister = gie::stringRegister();
+            const auto& stringregister2 = gie::stringRegister();
             for( const auto& [ propNameHash, propGuid ] : entity->properties() )
             {
                 const bool rowSelected = ( propNameHash == s_SelectedPropHash );
                 ImGui::TableNextRow();
 
                 ImGui::TableSetColumnIndex( 0 );
-                auto propName = stringregister.get( propNameHash );
+                auto propName = stringregister2.get( propNameHash );
                 std::string label = std::string( propName ) + "##sel" + std::to_string( static_cast<unsigned long long>( propGuid ) );
                 if( ImGui::Selectable( label.c_str(), rowSelected, ImGuiSelectableFlags_SpanAllColumns ) )
                 {
                     s_SelectedPropHash = propNameHash;
                     s_SelectedPropGuid = propGuid;
+                }
+                // Start editing on double-click
+                if( ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked( ImGuiMouseButton_Left ) )
+                {
+                    s_SelectedPropHash = propNameHash;
+                    s_SelectedPropGuid = propGuid;
+                    if( auto* prop = world.property( propGuid ) )
+                    {
+                        beginEditForProperty( prop, propNameHash );
+                        resetAddPropDialog();
+                    }
                 }
 
                 ImGui::TableSetColumnIndex( 1 );
@@ -349,7 +494,7 @@ void drawDetailsPanelWindow( gie::World& world )
             // Dropdown for type selection
             ImGui::TextUnformatted( "Choose type:" );
             ImGui::SameLine();
-            if( ImGui::Button( "Cancel" ) ) { resetAddPropDialog(); }
+            if( ImGui::Button( "Cancel##addprop" ) ) { resetAddPropDialog(); }
 
             static int s_TypeIndex = 0;
             const gie::Property::Type typeList[] = {
@@ -380,7 +525,7 @@ void drawDetailsPanelWindow( gie::World& world )
                 ImGui::EndCombo();
             }
             ImGui::SameLine();
-            if( ImGui::Button( "Next" ) )
+            if( ImGui::Button( "Next##addprop" ) )
             {
                 s_AddPropChosenType = typeList[ s_TypeIndex ];
                 s_AddPropMode = AddPropMode::EnteringName;
@@ -393,7 +538,7 @@ void drawDetailsPanelWindow( gie::World& world )
             ImGui::AlignTextToFramePadding();
             ImGui::Text( "Type: %s", typeToLabel( s_AddPropChosenType ) );
             ImGui::SameLine();
-            if( ImGui::Button( "Change" ) )
+            if( ImGui::Button( "Change##addprop" ) )
             {
                 s_AddPropMode = AddPropMode::ChoosingType;
             }
@@ -405,9 +550,9 @@ void drawDetailsPanelWindow( gie::World& world )
             if( s_AddPropNameFocus ) { ImGui::SetKeyboardFocusHere(); s_AddPropNameFocus = false; }
             bool apply = ImGui::InputText( "##prop_name_dialog", s_AddPropNameBuf, IM_ARRAYSIZE( s_AddPropNameBuf ), ImGuiInputTextFlags_EnterReturnsTrue );
             ImGui::SameLine();
-            if( ImGui::Button( "Create" ) ) apply = true;
+            if( ImGui::Button( "Create##addprop" ) ) apply = true;
             ImGui::SameLine();
-            if( ImGui::Button( "Cancel" ) ) { resetAddPropDialog(); }
+            if( ImGui::Button( "Cancel##addprop" ) ) { resetAddPropDialog(); }
 
             if( apply )
             {
@@ -439,6 +584,7 @@ void drawDetailsPanelWindow( gie::World& world )
         if( s_EditActive )
         {
             ImGui::Separator();
+            ImGui::BeginGroup();
             ImGui::Text( "Editing: %s", gie::stringRegister().get( s_EditPropHash ).data() );
             ImGui::Text( "Type: %s", typeToLabel( s_EditPropType ) );
 
@@ -565,7 +711,7 @@ void drawDetailsPanelWindow( gie::World& world )
 
             // Apply/Cancel row
             ImGui::Separator();
-            if( ImGui::Button( "Apply" ) )
+            if( ImGui::Button( "Apply##editprop" ) )
             {
                 // Special parsing for GUID scalar text buffer before apply
                 if( s_EditPropType == T::GUID )
@@ -593,9 +739,23 @@ void drawDetailsPanelWindow( gie::World& world )
                 resetEdit();
             }
             ImGui::SameLine();
-            if( ImGui::Button( "Cancel" ) )
+            if( ImGui::Button( "Cancel##editprop" ) )
             {
                 resetEdit();
+            }
+            ImGui::EndGroup();
+
+            // Click outside edit area cancels editing
+            if( s_EditActive )
+            {
+                ImGuiIO& io = ImGui::GetIO();
+                bool editHovered = ImGui::IsItemHovered( ImGuiHoveredFlags_RectOnly );
+                if( (io.MouseClicked[0] || io.MouseClicked[1] || io.MouseClicked[2]) && !editHovered && !s_EditJustActivated )
+                {
+                    resetEdit();
+                }
+                // clear activation guard after first frame
+                s_EditJustActivated = false;
             }
         }
 
