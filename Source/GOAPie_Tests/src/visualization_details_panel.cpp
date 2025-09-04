@@ -763,3 +763,24 @@ void drawDetailsPanelWindow( gie::World& world )
     }
     ImGui::End();
 }
+
+bool CancelDetailsPanelOngoingOperation()
+{
+    bool cancelled = false;
+    if( s_AddPropMode != AddPropMode::None )
+    {
+        resetAddPropDialog();
+        cancelled = true;
+    }
+    if( s_TagAddActive )
+    {
+        resetTagAddDialog();
+        cancelled = true;
+    }
+    if( s_EditActive )
+    {
+        resetEdit();
+        cancelled = true;
+    }
+    return cancelled;
+}

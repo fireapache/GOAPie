@@ -191,3 +191,13 @@ void ResetEntityOutlinerState()
 {
     CancelNameDialog();
 }
+
+bool CancelEntityOutlinerOngoingOperation()
+{
+    if( s_NameDialogMode != NameDialogMode::None )
+    {
+        CancelNameDialog();
+        return true;
+    }
+    return false;
+}

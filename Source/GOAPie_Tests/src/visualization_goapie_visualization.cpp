@@ -147,12 +147,6 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 
             ImGui::Separator();
 
-            if( params.imGuiDrawFunc )
-            {
-                params.imGuiDrawFunc( world, planner, params.goal, selectedSimulationGuid );
-                ImGui::Separator();
-            }
-
             auto rootNode = planner.rootSimulation();
             if( rootNode )
             {

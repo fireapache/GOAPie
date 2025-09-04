@@ -27,4 +27,5 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
     drawWaypointEditorWindow( params.world, params.planner );
     drawEntityOutlinerWindow( params.world ); // New
     drawDetailsPanelWindow( params.world );   // New
+    drawWorldSettingsWindow( params );        // New: host example-specific ImGui funcs
 }

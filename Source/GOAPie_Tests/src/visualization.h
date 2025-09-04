@@ -67,6 +67,7 @@ extern bool g_ShowMorePlannerOptions;
 extern bool g_ShowWaypointEditorWindow;
 extern bool g_ShowEntityOutlinerWindow; // New: Entity Outliner visibility
 extern bool g_ShowDetailsPanelWindow;   // New: Details Panel visibility
+extern bool g_ShowWorldSettingsWindow;  // New: World Settings visibility
 
 // Global selection shared across tools
 extern gie::Guid g_SelectedEntityGuid; // New: selected entity shared state
@@ -110,6 +111,7 @@ void drawSimulationTreeView( const gie::Planner& planner, const gie::Simulation*
 void drawBlackboardPropertiesWindow( const gie::Simulation* simulation );
 void drawEntityOutlinerWindow( gie::World& world ); // New: Entity Outliner
 void drawDetailsPanelWindow( gie::World& world );   // New: Details Panel
+void drawWorldSettingsWindow( ExampleParameters& params ); // New: World Settings
 
 // World View and overlays
 void drawWorldViewWindow( gie::World& world, const gie::Planner& planner );
@@ -128,6 +130,14 @@ void drawDiscoveredRoomsWalls( const gie::World& world, const gie::Planner& plan
 // Waypoint editor
 void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner );
 void ResetWaypointEditorState();
+// Cancel only active waypoint-edit transient operations (move/drag), keep selection
+bool CancelWaypointEditorOngoingOperation();
 
 // Entity outliner helpers
 void ResetEntityOutlinerState();
+// Cancel only active outliner transient operations (name dialogs)
+bool CancelEntityOutlinerOngoingOperation();
+
+// Details panel helpers
+// Cancel only active details transient operations (add/edit/tag dialogs)
+bool CancelDetailsPanelOngoingOperation();

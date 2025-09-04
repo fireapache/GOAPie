@@ -305,3 +305,12 @@ void ResetWaypointEditorState()
     g_WaypointEditHasTargetWorldPos = false;
     g_WaypointDragActive = false;
 }
+
+bool CancelWaypointEditorOngoingOperation()
+{
+    bool cancelled = false;
+    if( g_WaypointEditPlaceArmed ) { g_WaypointEditPlaceArmed = false; cancelled = true; }
+    if( g_WaypointDragActive ) { g_WaypointDragActive = false; g_WaypointDragMoving = false; cancelled = true; }
+    // Do not clear selection here; only transient ops
+    return cancelled;
+}

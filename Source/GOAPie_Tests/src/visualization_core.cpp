@@ -42,6 +42,7 @@ bool g_ShowMorePlannerOptions = false;
 bool g_ShowWaypointEditorWindow = false;
 bool g_ShowEntityOutlinerWindow = false; // New: Entity Outliner visibility
 bool g_ShowDetailsPanelWindow = false;   // New: Details Panel visibility
+bool g_ShowWorldSettingsWindow = false;  // New: World Settings visibility
 
 // Shared selection
 gie::Guid g_SelectedEntityGuid = gie::NullGuid; // New: selected entity shared state
@@ -89,6 +90,7 @@ static void LoadWindowVisibilitySettings()
         else if( key == "ShowWaypointEditorWindow" ) g_ShowWaypointEditorWindow = parseBool(val);
         else if( key == "ShowEntityOutlinerWindow" ) g_ShowEntityOutlinerWindow = parseBool(val); // New
         else if( key == "ShowDetailsPanelWindow" ) g_ShowDetailsPanelWindow = parseBool(val);     // New
+        else if( key == "ShowWorldSettingsWindow" ) g_ShowWorldSettingsWindow = parseBool(val);   // New
     }
 }
 static void SaveWindowVisibilitySettings()
@@ -106,6 +108,7 @@ static void SaveWindowVisibilitySettings()
     out << "ShowWaypointEditorWindow=" << ( g_ShowWaypointEditorWindow ? 1 : 0 ) << '\n';
     out << "ShowEntityOutlinerWindow=" << ( g_ShowEntityOutlinerWindow ? 1 : 0 ) << '\n'; // New
     out << "ShowDetailsPanelWindow=" << ( g_ShowDetailsPanelWindow ? 1 : 0 ) << '\n';     // New
+    out << "ShowWorldSettingsWindow=" << ( g_ShowWorldSettingsWindow ? 1 : 0 ) << '\n';   // New
 }
 
 int visualization( ExampleParameters& params )
@@ -241,11 +244,25 @@ int visualization( ExampleParameters& params )
     return 0;
 }
 
-// Process input (close window on ESC)
+// Process input (ESC cancels ongoing operations, otherwise clears selection)
 void processInput( GLFWwindow* window )
 {
-    if( glfwGetKey( window, GLFW_KEY_ESCAPE ) == GLFW_PRESS )
-        glfwSetWindowShouldClose( window, true );
+    static bool s_EscapeWasDown = false;
+    bool escDown = ( glfwGetKey( window, GLFW_KEY_ESCAPE ) == GLFW_PRESS );
+    if( escDown && !s_EscapeWasDown )
+    {
+        bool cancelled = false;
+        if( g_ShowEntityOutlinerWindow ) cancelled |= CancelEntityOutlinerOngoingOperation();
+        if( g_ShowDetailsPanelWindow ) cancelled |= CancelDetailsPanelOngoingOperation();
+        if( g_ShowWaypointEditorWindow ) cancelled |= CancelWaypointEditorOngoingOperation();
+
+        if( !cancelled )
+        {
+            g_SelectedEntityGuid = gie::NullGuid;
+            g_WaypointEditSelectedGuid = gie::NullGuid;
+        }
+    }
+    s_EscapeWasDown = escDown;
 }
 
 // Callback for resizing the window
@@ -383,6 +400,7 @@ void ShowExampleAppDockSpace( bool* p_open )
             ImGui::MenuItem( "Waypoint Editor", NULL, &g_ShowWaypointEditorWindow );
             ImGui::MenuItem( "Entity Outliner", NULL, &g_ShowEntityOutlinerWindow ); // New
             ImGui::MenuItem( "Details Panel", NULL, &g_ShowDetailsPanelWindow );     // New
+            ImGui::MenuItem( "World Settings", NULL, &g_ShowWorldSettingsWindow );   // New
             ImGui::EndMenu();
         }
 
