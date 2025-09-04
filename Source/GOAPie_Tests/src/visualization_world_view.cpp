@@ -75,6 +75,14 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
 
     if( ImGui::Begin( "World View", &g_ShowWorldViewWindow ) )
     {
+        // If loading, show overlay and skip content interactions
+        if( g_IsLoading )
+        {
+            DrawWindowLoadingOverlay();
+            ImGui::End();
+            return;
+        }
+
         const float windowWidth = ImGui::GetContentRegionAvail().x;
         const float windowHeight = ImGui::GetContentRegionAvail().y;
 
@@ -118,11 +126,13 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
             ImGui::SameLine();
             if( ImGui::Button( "Load" ) )
             {
+                g_IsLoading = true;
                 if( gie::persistency::LoadWorldFromJson( world, "world.json" ) )
                 {
                     g_DrawingLimitsInitialized = false;
                     s_LoadMsgTimer = 2.0f;
                 }
+                g_IsLoading = false;
             }
             if( s_SaveMsgTimer > 0.0f )
             {

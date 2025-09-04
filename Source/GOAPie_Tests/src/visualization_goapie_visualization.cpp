@@ -72,6 +72,13 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
 
     if( ImGui::Begin( "GOAPie Visualization", &g_ShowGoapieVisualizationWindow ) )
     {
+        if( g_IsLoading )
+        {
+            DrawWindowLoadingOverlay();
+            ImGui::End();
+            return;
+        }
+
         ImGui::Checkbox( "Use Heuristics", &useHeuristics );
         ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
         ImGui::SliderInt( "Depth Limit", &simultationDepth, 10, 50 );

@@ -21,6 +21,29 @@ bool g_BoundsEditorVisible = false;
 float g_BoundsInputX[2] = { 0.0f, 0.0f };
 float g_BoundsInputY[2] = { 0.0f, 0.0f };
 
+// Loading state and overlay
+bool g_IsLoading = false;
+void DrawWindowLoadingOverlay( const char* text )
+{
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 winPos = ImGui::GetWindowPos();
+    ImVec2 winSize = ImGui::GetWindowSize();
+    ImVec2 winEnd{ winPos.x + winSize.x, winPos.y + winSize.y };
+
+    // Semi-transparent dark backdrop
+    dl->AddRectFilled( winPos, winEnd, IM_COL32( 0, 0, 0, 160 ) );
+
+    // Label centered
+    const char* label = text ? text : "Loading";
+    ImVec2 textSize = ImGui::CalcTextSize( label );
+    ImVec2 center{ winPos.x + winSize.x * 0.5f, winPos.y + winSize.y * 0.5f };
+    ImVec2 textPos{ center.x - textSize.x * 0.5f, center.y - textSize.y * 0.5f };
+
+    // Slight shadow for readability
+    dl->AddText( ImVec2( textPos.x + 1, textPos.y + 1 ), IM_COL32( 0, 0, 0, 220 ), label );
+    dl->AddText( textPos, IM_COL32( 255, 255, 255, 255 ), label );
+}
+
 gie::Guid selectedSimulationGuid = gie::NullGuid;
 bool g_ShowWaypointGuidSuffix = false;
 bool g_ShowWaypointArrows = false;
@@ -215,14 +238,17 @@ int visualization( ExampleParameters& params )
         glClearColor( 0.2f, 0.3f, 0.3f, 1.0f );
         glClear( GL_COLOR_BUFFER_BIT );
 
-        // rendering elements
-        updateDrawingBounds( world );
-        drawDiscoveredRoomsWalls( world, planner );
-        drawWaypointsAndLinks( world, planner );
-        drawHeistOverlays( world, planner );
-        drawTrees( world, planner );
-        drawSelectedSimulationPath( world, planner );
-        drawAgentCrosshair( world, planner );
+        // rendering elements (skip while loading to avoid race conditions)
+        if( !g_IsLoading )
+        {
+            updateDrawingBounds( world );
+            drawDiscoveredRoomsWalls( world, planner );
+            drawWaypointsAndLinks( world, planner );
+            drawHeistOverlays( world, planner );
+            drawTrees( world, planner );
+            drawSelectedSimulationPath( world, planner );
+            drawAgentCrosshair( world, planner );
+        }
 
         // and unbind it again
         unbind_framebuffer();

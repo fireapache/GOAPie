@@ -9,6 +9,7 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
 
     if( ImGui::Begin( "Waypoint Editor", &g_ShowWaypointEditorWindow ) )
     {
+        if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         ImGui::TextUnformatted( "Single-click a waypoint to select it." );
         ImGui::TextUnformatted( "Double-click a waypoint to arm repositioning, then click to place." );
         ImGui::SliderFloat( "Pick Radius (px)", &g_WaypointPickRadiusPx, 4.0f, 30.0f );

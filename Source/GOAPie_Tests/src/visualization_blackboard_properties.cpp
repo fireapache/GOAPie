@@ -49,6 +49,7 @@ void drawBlackboardPropertiesWindow( const gie::Simulation* simulation )
 
     if( ImGui::Begin( "Blackboard Properties", &g_ShowBlackboardPropertiesWindow ) )
     {
+        if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         currentContext = &simulation->context();
         ImGui::Checkbox( "Multi-Level", &multiLevel );
 

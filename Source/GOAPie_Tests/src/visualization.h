@@ -50,6 +50,11 @@ extern gie::Guid selectedSimulationGuid;
 extern bool g_ShowWaypointGuidSuffix;
 extern bool g_ShowWaypointArrows;
 
+// Global loading state
+extern bool g_IsLoading;
+// Draw a semi-transparent overlay saying "Loading" over the current window bounds
+void DrawWindowLoadingOverlay( const char* text = "Loading" );
+
 // Path-stepping visualization state
 extern bool g_PathStepMode;
 extern int g_PathStepIndex;

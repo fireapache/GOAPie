@@ -236,6 +236,7 @@ void drawDetailsPanelWindow( gie::World& world )
 
     if( ImGui::Begin( "Details", &g_ShowDetailsPanelWindow ) )
     {
+        if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         // Cancel add/edit if user clicks outside the Details window
         cancelTransientUIsIfClickedOutside();
 

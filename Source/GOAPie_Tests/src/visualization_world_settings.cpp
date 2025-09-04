@@ -6,6 +6,7 @@ void drawWorldSettingsWindow( ExampleParameters& params )
 
     if( ImGui::Begin( "World Settings", &g_ShowWorldSettingsWindow ) )
     {
+        if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         // If the example provided a draw function, render it here
         if( params.imGuiDrawFunc )
         {

@@ -26,6 +26,12 @@ void drawEntityOutlinerWindow( gie::World& world )
 
     if( ImGui::Begin( "Entity Outliner", &g_ShowEntityOutlinerWindow ) )
     {
+        if( g_IsLoading )
+        {
+            DrawWindowLoadingOverlay();
+            ImGui::End();
+            return;
+        }
         // If name dialog is open and user interacts/focuses elsewhere, cancel it
         if( s_NameDialogMode != NameDialogMode::None )
         {

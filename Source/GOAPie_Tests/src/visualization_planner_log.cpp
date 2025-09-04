@@ -10,6 +10,7 @@ void drawPlannerLogWindow( ExampleParameters& params )
 
     if( ImGui::Begin( "Planner Log", &g_ShowPlannerLogWindow ) )
     {
+        if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         const std::string& logContent = planner.logContent();
 
         if( logContent.empty() )

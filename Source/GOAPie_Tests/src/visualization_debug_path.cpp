@@ -9,6 +9,7 @@ void drawDebugPathWindow( ExampleParameters& params )
 
     if( ImGui::Begin( "Debug Path", &g_ShowDebugPathWindow ) )
     {
+        if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         if( !selectedSim )
         {
             ImGui::TextUnformatted( "No simulation selected. Select a node in 'Simulation Nodes'." );

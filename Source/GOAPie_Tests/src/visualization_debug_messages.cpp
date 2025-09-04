@@ -12,6 +12,7 @@ void drawDebugMessagesWindow( ExampleParameters& params )
     {
         if( ImGui::Begin( "Debug Messages", &g_ShowDebugMessagesWindow ) )
         {
+            if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
             ImGui::TextUnformatted( "No simulation selected." );
         }
         ImGui::End();
@@ -22,6 +23,7 @@ void drawDebugMessagesWindow( ExampleParameters& params )
 
     if( ImGui::Begin( "Debug Messages", &g_ShowDebugMessagesWindow ) )
     {
+        if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         if( !debugMessages.messages() || debugMessages.messages()->empty() )
         {
             ImGui::Text( "No debug messages available." );

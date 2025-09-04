@@ -12,6 +12,7 @@ void drawSimulationArgumentsWindow( ExampleParameters& params )
     {
         if( ImGui::Begin( "Simulation Arguments", &g_ShowSimulationArgumentsWindow ) )
         {
+            if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
             ImGui::TextUnformatted( "No simulation selected." );
         }
         ImGui::End();
@@ -22,6 +23,7 @@ void drawSimulationArgumentsWindow( ExampleParameters& params )
 
     if( ImGui::Begin( "Simulation Arguments", &g_ShowSimulationArgumentsWindow ) )
     {
+        if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         if( arguments.empty() )
         {
             ImGui::Text( "No arguments available." );
