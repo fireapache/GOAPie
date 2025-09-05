@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <algorithm>
 
 // our window dimensions
 static const GLuint WIDTH = 1280;
@@ -134,6 +135,57 @@ static void SaveWindowVisibilitySettings()
     out << "ShowWorldSettingsWindow=" << ( g_ShowWorldSettingsWindow ? 1 : 0 ) << '\n';   // New
 }
 
+// --- DPI-aware ImGui scaling ---
+static ImGuiStyle g_BaseImGuiStyle{};     // saved unscaled style
+static float      g_BaseFontSize = 13.0f; // default ImGui font size in pixels
+static float      g_UIScale      = 1.0f;  // current applied UI scale
+
+static float QuantizeScale( float s )
+{
+    // Optional: map to common steps for consistency
+    if( s < 1.0f ) return 1.0f;
+    if( s < 1.125f ) return 1.0f;
+    if( s < 1.375f ) return 1.25f;
+    if( s < 1.75f )  return 1.5f;
+    if( s < 2.25f )  return 2.0f;
+    if( s < 3.0f )   return 2.5f;
+    return 3.0f;
+}
+
+static void ApplyImGuiDPIScale( float scale )
+{
+    scale = QuantizeScale( scale );
+
+    if( scale == g_UIScale )
+        return;
+
+    g_UIScale = scale;
+
+    // Reset style to base and scale all widget sizes
+    ImGuiStyle& style = ImGui::GetStyle();
+    style = g_BaseImGuiStyle;            // restore base
+    style.ScaleAllSizes( g_UIScale );    // scale widgets/paddings
+
+    // Rebuild fonts at scaled size for crisp rendering
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->Clear();
+    ImFontConfig cfg;
+    cfg.SizePixels = g_BaseFontSize * g_UIScale;
+    io.Fonts->AddFontDefault( &cfg );
+    // Make sure backend recreates font texture next frame
+    ImGui_ImplOpenGL3_DestroyDeviceObjects();
+
+    // Adjust interaction radii that are in pixels
+    g_WaypointPickRadiusPx = 14.0f * g_UIScale;
+}
+
+static void WindowContentScaleCallback( GLFWwindow* window, float xscale, float yscale )
+{
+    (void)window;
+    const float s = std::max( 1.0f, std::max( xscale, yscale ) );
+    ApplyImGuiDPIScale( s );
+}
+
 int visualization( ExampleParameters& params )
 {
     gie::World& world = params.world;
@@ -145,6 +197,8 @@ int visualization( ExampleParameters& params )
     glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 3 );
     glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );
     glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE );
+    // Let GLFW account for monitor scaling and notify us on changes
+    glfwWindowHint( GLFW_SCALE_TO_MONITOR, GLFW_TRUE );
 
     // Create a window
     GLFWwindow* window = glfwCreateWindow( WIDTH, HEIGHT, "OpenGL Window", NULL, NULL );
@@ -190,8 +244,23 @@ int visualization( ExampleParameters& params )
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Enable multi-viewport support
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;   // Enable docking support
     ImGui::StyleColorsDark();
+
+    // Save base style (unscaled) and base font size for DPI scaling
+    g_BaseImGuiStyle = ImGui::GetStyle();
+    g_BaseFontSize = 13.0f; // default ImGui font size
+
+    // Init backends
     ImGui_ImplGlfw_InitForOpenGL( window, true );
     ImGui_ImplOpenGL3_Init( "#version 130" );
+
+    // Install content scale callback and apply initial DPI scale
+    glfwSetWindowContentScaleCallback( window, WindowContentScaleCallback );
+    {
+        float xscale = 1.0f, yscale = 1.0f;
+        glfwGetWindowContentScale( window, &xscale, &yscale );
+        const float s = std::max( 1.0f, std::max( xscale, yscale ) );
+        ApplyImGuiDPIScale( s );
+    }
 
     // Load persistent UI windows visibility
     LoadWindowVisibilitySettings();
