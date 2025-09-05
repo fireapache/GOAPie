@@ -34,5 +34,3 @@ IF EXIST "premake5.exe" (
 	ECHO Could not run premake5.exe, please get it manually from https://github.com/premake/premake-core/releases/
 	ECHO.
 )
-
-PAUSE
