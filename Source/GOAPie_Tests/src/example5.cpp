@@ -72,6 +72,27 @@ int survivalOnHill( ExampleParameters& params )
     // property telling if agent has a wood house
     auto agentWoodHousePpt = agentEntity->createProperty( "WoodHouse", false );
 
+    // Define archetypes used in this example (only once per world)
+	if( world.archetypes().empty() )
+	{
+		// Waypoint
+		if( auto* a = world.createArchetype( "Waypoint" ) )
+		{
+			a->addTag( "Waypoint" );
+			a->addTag( "Draw" );
+			a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+			a->addProperty( "Links", gie::Property::GuidVector{} );
+		}
+		// Tree
+		if( auto* a = world.createArchetype( "Tree" ) )
+		{
+			a->addTag( "Tree" );
+			a->addTag( "TreeUp" );
+			a->addTag( "Draw" );
+			a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+		}
+	}
+
     // creating agent properties for this tutorial
 
     // total money npc carries

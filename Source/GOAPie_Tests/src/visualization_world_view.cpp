@@ -12,6 +12,17 @@
 static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
 static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
 
+// Helper: translate mouse local coords to world coordinates
+static glm::vec3 MouseToWorld( float lx, float ly, float windowWidth, float windowHeight )
+{
+    float u = lx / windowWidth;
+    float v = ly / windowHeight;
+    float ndcX = u * 2.0f - 1.0f;
+    float ndcY = ( 1.0f - v ) * 2.0f - 1.0f;
+    glm::vec3 ndc{ ndcX, ndcY, 0.0f };
+    return ndc / g_DrawingLimits.scale + g_DrawingLimits.center;
+}
+
 // New: generic entity selection from World View (agnostic to tools)
 static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
 {
@@ -21,7 +32,55 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
     const float localX = io.MousePos.x - pos.x;
     const float localY = io.MousePos.y - pos.y;
     const bool mouseOverWindow = ( localX >= 0.0f && localX <= windowWidth && localY >= 0.0f && localY <= windowHeight );
+    g_WorldViewWindowHovered = mouseOverWindow; // track hover for archetype click-outside rule
+
+    // Allow canceling archetype placement with Escape or Right Mouse Button while hovering World View
+    if( mouseOverWindow && g_SelectedArchetypeGuid != gie::NullGuid )
+    {
+#if defined(IMGUI_VERSION_NUM) && IMGUI_VERSION_NUM >= 18700
+        bool esc = ImGui::IsKeyPressed( ImGuiKey_Escape );
+#else
+        bool esc = ImGui::IsKeyPressed( ImGui::GetKeyIndex( ImGuiKey_Escape ) );
+#endif
+        if( esc || ImGui::IsMouseClicked( ImGuiMouseButton_Right ) )
+        {
+            CancelEntityFactory();
+            return;
+        }
+    }
+
     if( !mouseOverWindow ) return;
+
+    // If an archetype is selected, left-click creates an entity instance at the clicked position
+    if( g_SelectedArchetypeGuid != gie::NullGuid && ImGui::IsMouseClicked( 0 ) )
+    {
+        // Instantiate from archetype
+        const gie::Archetype* arch = g_WorldPtr->archetype( g_SelectedArchetypeGuid );
+        if( arch )
+        {
+            gie::Entity* e = arch->instantiate( *g_WorldPtr );
+            if( e )
+            {
+                // Set default Location property if available or create it
+                glm::vec3 wp = MouseToWorld( localX, localY, windowWidth, windowHeight );
+                if( auto* loc = e->property( "Location" ) )
+                {
+                    loc->value = wp;
+                }
+                else
+                {
+                    e->createProperty( "Location", wp );
+                }
+
+                // Tag as Draw by convenience so it shows up
+                std::vector<gie::Tag> tags{ gie::stringHasher( "Draw" ) };
+                g_WorldPtr->context().entityTagRegister().tag( e, tags );
+
+                g_SelectedEntityGuid = e->guid();
+            }
+        }
+        return; // avoid also doing selection
+    }
 
     // Only react on fresh left click when Waypoint Editor is not handling interactions
     if( g_ShowWaypointEditorWindow ) return; // let the waypoint tool handle selection when active
@@ -136,7 +195,7 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
             if( ImGui::Button( "Save" ) )
             {
                 // Use a local filename to avoid mutating g_exampleName
-				if( gie::persistency::SaveWorldToJson( world, getSaveFileName() ) )
+                if( gie::persistency::SaveWorldToJson( world, getSaveFileName() ) )
                 {
                     s_SaveMsgTimer = 2.0f;
                 }
@@ -151,14 +210,14 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
             {
                 // Use a local filename to avoid mutating g_exampleName
                 g_IsLoading = true;
-				if( gie::persistency::LoadWorldFromJson( world, getSaveFileName() ) )
+                if( gie::persistency::LoadWorldFromJson( world, getSaveFileName() ) )
                 {
                     g_DrawingLimitsInitialized = false;
                     s_LoadMsgTimer = 2.0f;
                 }
                 else
                 {
-					s_LoadErrText = std::string( "Load failed: " ) + getSaveFileName().c_str();
+                    s_LoadErrText = std::string( "Load failed: " ) + getSaveFileName().c_str();
                     s_LoadErrTimer = 4.0f;
                 }
                 g_IsLoading = false;
@@ -166,7 +225,7 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
             if( s_SaveMsgTimer > 0.0f )
             {
                 ImGui::SameLine();
-				ImGui::TextColored( ImVec4( 0.2f, 1.0f, 0.2f, 1.0f ), "Saved at %s", getSaveFileName().c_str() );
+                ImGui::TextColored( ImVec4( 0.2f, 1.0f, 0.2f, 1.0f ), "Saved at %s", getSaveFileName().c_str() );
                 s_SaveMsgTimer -= ImGui::GetIO().DeltaTime;
             }
             if( s_LoadMsgTimer > 0.0f )
@@ -252,7 +311,7 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
         drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
         drawRoomNamesOverlay( world, planner, pos, windowWidth, windowHeight );
 
-        // New: generic selection (when Waypoint Editor is inactive)
+        // New: generic selection and archetype placement
         handleEntitySelectionOnWorldView( pos, windowWidth, windowHeight );
 
         if( g_ShowWaypointEditorWindow )
@@ -286,8 +345,8 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
 
             if( !g_ShowWaypointGuidSuffix && !isSelectedWaypoint ) continue;
 
-			const auto* e = world.entity( waypointGuid );
-			if( !e ) continue;
+            const auto* e = world.entity( waypointGuid );
+            if( !e ) continue;
             const auto* loc = e->property( "Location" );
             if( !loc ) continue;
 
@@ -304,7 +363,7 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
 
             const ImVec2 suffixSize = ImGui::CalcTextSize( buf );
             suffixPos.x -= suffixSize.x * 0.5f;
-			suffixPos.y += isSelectedWaypoint ? 30.0f : 20.0f;
+            suffixPos.y += isSelectedWaypoint ? 30.0f : 20.0f;
 
             ImGui::GetWindowDrawList()->AddText( ImVec2( suffixPos.x + 1, suffixPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), buf );
             ImGui::GetWindowDrawList()->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
@@ -317,25 +376,25 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
                 size_t j = name.size();
                 if( name.find( "waypoint" ) == 0 )
                 {
-					while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
-					{
-						--j;
-					}
-					if( j < name.size() )
-					{
-						idxLabel = std::string( "wp" ) + name.substr( j );
-					}
+                    while( j > 0 && std::isdigit( static_cast< unsigned char >( name[ j - 1 ] ) ) )
+                    {
+                        --j;
+                    }
+                    if( j < name.size() )
+                    {
+                        idxLabel = std::string( "wp" ) + name.substr( j );
+                    }
                 }
                 else
                 {
-					idxLabel = name;
+                    idxLabel = name;
                 }
                         
             }
 
             const ImVec2 idxSize = ImGui::CalcTextSize( idxLabel.c_str() );
             const float idxPosYOffset = isSelectedWaypoint ? 35.0f : 15.0f;
-			const ImVec2 idxPos{ pos.x + x_px - idxSize.x * 0.5f, suffixPos.y - ( idxSize.y + idxPosYOffset ) };
+            const ImVec2 idxPos{ pos.x + x_px - idxSize.x * 0.5f, suffixPos.y - ( idxSize.y + idxPosYOffset ) };
 
             ImGui::GetWindowDrawList()->AddText( ImVec2( idxPos.x + 1, idxPos.y + 1 ), IM_COL32( 0, 0, 0, 200 ), idxLabel.c_str() );
             ImGui::GetWindowDrawList()->AddText( idxPos, IM_COL32( 255, 255, 255, 255 ), idxLabel.c_str() );
@@ -399,16 +458,6 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
     const float localY = io.MousePos.y - pos.y;
     const bool mouseOverWindow = ( localX >= 0.0f && localX <= windowWidth && localY >= 0.0f && localY <= windowHeight );
 
-    auto MouseToWorld = [&]( float lx, float ly ) -> glm::vec3
-    {
-        float u = lx / windowWidth;
-        float v = ly / windowHeight;
-        float ndcX = u * 2.0f - 1.0f;
-        float ndcY = ( 1.0f - v ) * 2.0f - 1.0f;
-        glm::vec3 ndc{ ndcX, ndcY, 0.0f };
-        return ndc / g_DrawingLimits.scale + g_DrawingLimits.center;
-    };
-
     auto FindNearestWaypointUnderMouse = [&]() -> gie::Guid
     {
         const auto* set = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
@@ -458,7 +507,6 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
         {
             g_WaypointEditSelectedGuid = nearest;
             g_SelectedEntityGuid = nearest; // sync selection to outliner
-            g_WaypointEditPlaceArmed = false;
             if( auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid ) )
             {
                 if( auto loc = e->property( "Location" ) )
@@ -487,7 +535,7 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
         }
         if( g_WaypointDragMoving )
         {
-            glm::vec3 worldPos = MouseToWorld( localX, localY );
+            glm::vec3 worldPos = MouseToWorld( localX, localY, windowWidth, windowHeight );
             if( auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid ) )
             {
                 if( auto loc = e->property( "Location" ) )
@@ -502,47 +550,6 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
     {
         g_WaypointDragActive = false;
         g_WaypointDragMoving = false;
-    }
-
-    if( ImGui::IsMouseDoubleClicked( 0 ) )
-    {
-        gie::Guid nearest = FindNearestWaypointUnderMouse();
-        if( nearest != gie::NullGuid )
-        {
-            g_WaypointEditSelectedGuid = nearest;
-            g_SelectedEntityGuid = nearest; // sync selection to outliner
-            g_WaypointEditPlaceArmed = true;
-        }
-    }
-
-    if( g_WaypointEditPlaceArmed )
-    {
-        glm::vec3 wp = MouseToWorld( localX, localY );
-        g_WaypointEditTargetWorldPos = wp;
-        g_WaypointEditHasTargetWorldPos = true;
-    }
-
-    if( ImGui::IsMouseClicked( ImGuiMouseButton_Right ) && g_WaypointEditSelectedGuid != gie::NullGuid )
-    {
-        gie::Guid hit = FindNearestWaypointUnderMouse();
-        if( hit != gie::NullGuid && hit != g_WaypointEditSelectedGuid )
-        {
-            if( auto selectedE = g_WorldPtr->entity( g_WaypointEditSelectedGuid ) )
-            {
-                auto linksPpt = selectedE->property( "Links" );
-                if( linksPpt )
-                {
-                    if( auto arr = linksPpt->getGuidArray() )
-                    {
-                        auto it = std::find( arr->begin(), arr->end(), hit );
-                        if( it != arr->end() )
-                        {
-                            arr->erase( it );
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -571,9 +578,4 @@ static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth,
     float r = g_WaypointPickRadiusPx;
     dl->AddCircleFilled( c, r + 2.0f, colBg, 24 );
     dl->AddCircle( c, r, col, 24, 2.0f );
-
-    if( g_WaypointEditPlaceArmed )
-    {
-        dl->AddCircle( c, r * 0.6f, IM_COL32( 255, 120, 0, 220 ), 24, 2.0f );
-    }
 }

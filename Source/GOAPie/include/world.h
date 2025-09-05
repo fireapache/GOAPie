@@ -1,12 +1,16 @@
 #pragma once
 
 #include "blackboard.h"
+#include "archetype.h"
+#include <unordered_map>
 
 namespace gie
 {
 	class World : public IDataEntityManager
 	{
 		Blackboard _context{ this };
+        // New: Hold a dictionary of archetypes by Guid
+        std::unordered_map<Guid, Archetype> _archetypes;
 
     public:
 		World() = default;
@@ -16,6 +20,32 @@ namespace gie
 		const auto& context() const { return _context; };
 		auto& properties() { return _context.properties(); };
 		const auto& properties() const { return _context.properties(); };
+
+        // Archetype API
+        const std::unordered_map<Guid, Archetype>& archetypes() const { return _archetypes; }
+        std::unordered_map<Guid, Archetype>& archetypes() { return _archetypes; }
+
+        // Create a new archetype and return reference to it
+        Archetype* createArchetype( std::string_view name )
+        {
+            Archetype a{ name };
+            Guid id = a.guid();
+            auto [it, ok] = _archetypes.emplace( id, std::move( a ) );
+            return ok ? &it->second : nullptr;
+        }
+        // Remove archetype by guid
+        void removeArchetype( Guid guid ) { _archetypes.erase( guid ); }
+        // Find archetype by guid
+        Archetype* archetype( Guid guid )
+        {
+            auto it = _archetypes.find( guid );
+            return it == _archetypes.end() ? nullptr : &it->second;
+        }
+        const Archetype* archetype( Guid guid ) const
+        {
+            auto it = _archetypes.find( guid );
+            return it == _archetypes.end() ? nullptr : &it->second;
+        }
 
 		// IDataEntityManager interface
 		class Agent* createAgent( std::string_view name = "" )	override { return _context.createAgent( name ); };

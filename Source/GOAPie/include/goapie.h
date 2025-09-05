@@ -13,6 +13,7 @@
 #include "entity.h"
 #include "blackboard.h"
 #include "agent.h"
+#include "archetype.h"
 #include "world.h"
 
 // Simulation system first (defines DebugMessages)
@@ -22,5 +23,8 @@
 #include "goal.h"
 #include "action.h"
 #include "planner.h"
+
+// Inline implementations (header-only)
+#include "archetype.inl"
 
 #endif

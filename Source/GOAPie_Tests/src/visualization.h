@@ -75,18 +75,21 @@ extern bool g_ShowWaypointEditorWindow;
 extern bool g_ShowEntityOutlinerWindow; // New: Entity Outliner visibility
 extern bool g_ShowDetailsPanelWindow;   // New: Details Panel visibility
 extern bool g_ShowWorldSettingsWindow;  // New: World Settings visibility
+extern bool g_ShowEntityFactoryWindow;  // New: Entity Factory visibility
 
 // Global selection shared across tools
 extern gie::Guid g_SelectedEntityGuid; // New: selected entity shared state
+
+// Archetype selection
+extern gie::Guid g_SelectedArchetypeGuid;          // Selected archetype for placement
+extern bool g_EntityFactoryWindowHovered;          // Hover state for click-outside behavior
+extern bool g_WorldViewWindowHovered;              // Hover state for click-outside behavior
 
 // Waypoint editor state
 extern gie::Guid g_WaypointEditSelectedGuid;
 extern float g_WaypointPickRadiusPx;
 extern gie::World* g_WorldPtr;
 extern gie::Planner* g_PlannerPtr;
-extern bool g_WaypointEditPlaceArmed;
-extern glm::vec3 g_WaypointEditTargetWorldPos;
-extern bool g_WaypointEditHasTargetWorldPos;
 extern bool g_WaypointDragActive;
 extern float g_WaypointDragZ;
 extern bool g_WaypointDragMoving;
@@ -119,6 +122,7 @@ void drawBlackboardPropertiesWindow( const gie::Simulation* simulation );
 void drawEntityOutlinerWindow( gie::World& world ); // New: Entity Outliner
 void drawDetailsPanelWindow( gie::World& world );   // New: Details Panel
 void drawWorldSettingsWindow( ExampleParameters& params ); // New: World Settings
+void drawEntityFactoryWindow( gie::World& world );  // New: Entity Factory
 
 // World View and overlays
 void drawWorldViewWindow( gie::World& world, const gie::Planner& planner );
@@ -148,3 +152,7 @@ bool CancelEntityOutlinerOngoingOperation();
 // Details panel helpers
 // Cancel only active details transient operations (add/edit/tag dialogs)
 bool CancelDetailsPanelOngoingOperation();
+
+// Entity factory helpers
+// Cancel current archetype placement selection
+bool CancelEntityFactory();

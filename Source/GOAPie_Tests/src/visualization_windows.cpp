@@ -28,4 +28,19 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
     drawEntityOutlinerWindow( params.world ); // New
     drawDetailsPanelWindow( params.world );   // New
     drawWorldSettingsWindow( params );        // New: host example-specific ImGui funcs
+    drawEntityFactoryWindow( params.world );  // New: Entity Factory
+
+    // Clicking anywhere else than the archetype window tool and the world view should unselect archetype
+    if( g_SelectedArchetypeGuid != gie::NullGuid )
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        if( ImGui::IsMouseClicked( 0 ) )
+        {
+            // If the click was not over the Entity Factory or the World View windows content
+            if( !g_EntityFactoryWindowHovered && !g_WorldViewWindowHovered )
+            {
+                g_SelectedArchetypeGuid = gie::NullGuid;
+            }
+        }
+    }
 }

@@ -11,7 +11,6 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
     {
         if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
         ImGui::TextUnformatted( "Single-click a waypoint to select it." );
-        ImGui::TextUnformatted( "Double-click a waypoint to arm repositioning, then click to place." );
         ImGui::SliderFloat( "Pick Radius (px)", &g_WaypointPickRadiusPx, 4.0f, 30.0f );
         if( g_WaypointEditSelectedGuid != gie::NullGuid )
         {
@@ -25,22 +24,6 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
                     glm::vec3 p = *loc->getVec3();
                     ImGui::Text( "Location: (%.2f, %.2f, %.2f)", p.x, p.y, p.z );
                 }
-            }
-            if( g_WaypointEditPlaceArmed )
-            {
-                ImGui::Text( "Move armed: Yes" );
-                if( g_WaypointEditHasTargetWorldPos )
-                {
-                    ImGui::Text( "Target: (%.2f, %.2f, %.2f)", g_WaypointEditTargetWorldPos.x, g_WaypointEditTargetWorldPos.y, g_WaypointEditTargetWorldPos.z );
-                }
-                else
-                {
-                    ImGui::TextUnformatted( "Target: <move mouse over World View>" );
-                }
-            }
-            else
-            {
-                ImGui::Text( "Move armed: No" );
             }
             if( ImGui::Button( "Clear Selection" ) )
             {
@@ -302,15 +285,12 @@ void drawWaypointEditorWindow( gie::World& world, gie::Planner& planner )
 void ResetWaypointEditorState()
 {
     g_WaypointEditSelectedGuid = gie::NullGuid;
-    g_WaypointEditPlaceArmed = false;
-    g_WaypointEditHasTargetWorldPos = false;
     g_WaypointDragActive = false;
 }
 
 bool CancelWaypointEditorOngoingOperation()
 {
     bool cancelled = false;
-    if( g_WaypointEditPlaceArmed ) { g_WaypointEditPlaceArmed = false; cancelled = true; }
     if( g_WaypointDragActive ) { g_WaypointDragActive = false; g_WaypointDragMoving = false; cancelled = true; }
     // Do not clear selection here; only transient ops
     return cancelled;

@@ -158,6 +158,88 @@ int heistOpenSafe( ExampleParameters& params )
     agent->createProperty( "CurrentRoom", gie::NullGuid );
     agent->createProperty( "Inventory", gie::Property::GuidVector{} );
 
+    // Define archetypes used in this example (only once per world)
+    if( world.archetypes().empty() )
+    {
+        // Waypoint archetype
+        if( auto* a = world.createArchetype( "Waypoint" ) )
+        {
+            a->addTag( "Waypoint" );
+            a->addTag( "Draw" );
+            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+            a->addProperty( "Links", gie::Property::GuidVector{} );
+        }
+        // Room archetype
+        if( auto* a = world.createArchetype( "Room" ) )
+        {
+            a->addTag( "Room" );
+            a->addTag( "Draw" );
+            a->addProperty( "Vertices", std::vector< glm::vec3 >{} );
+            a->addProperty( "Discovered", true );
+            a->addProperty( "DisplayName", true );
+            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+        }
+        // Connector archetype (doors/windows entries)
+        if( auto* a = world.createArchetype( "Connector" ) )
+        {
+            a->addTag( "Connector" );
+            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+            a->addProperty( "From", gie::NullGuid );
+            a->addProperty( "To", gie::NullGuid );
+            a->addProperty( "Locked", false );
+            a->addProperty( "Blocked", false );
+            a->addProperty( "Barred", false );
+            a->addProperty( "Alarmed", false );
+            a->addProperty( "RequiredKey", gie::NullGuid );
+        }
+        // Item archetype (carryable items)
+        if( auto* a = world.createArchetype( "Item" ) )
+        {
+            a->addTag( "Item" );
+            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+            a->addProperty( "Info", gie::NullGuid );
+        }
+        // Info archetype (descriptor entities)
+        if( auto* a = world.createArchetype( "Info" ) )
+        {
+            a->addTag( "Info" );
+            a->addProperty( "Name", gie::NullGuid );
+        }
+        // Safe archetype
+        if( auto* a = world.createArchetype( "Safe" ) )
+        {
+            a->addProperty( "Open", false );
+            a->addProperty( "InRoom", gie::NullGuid );
+            a->addProperty( "LockMode", 0.f );
+            a->addProperty( "RequiredCodePieces", 0.f );
+        }
+        // Alarm system and panels
+        if( auto* a = world.createArchetype( "AlarmSystem" ) )
+        {
+            a->addProperty( "Armed", false );
+        }
+        if( auto* a = world.createArchetype( "AlarmPanelEntity" ) )
+        {
+            a->addTag( "AlarmPanel" );
+            a->addTag( "Item" );
+            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+        }
+        if( auto* a = world.createArchetype( "FuseBoxEntity" ) )
+        {
+            a->addTag( "FuseBox" );
+            a->addTag( "Item" );
+            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+        }
+        // Agent archetype (thief)
+        if( auto* a = world.createArchetype( "Agent" ) )
+        {
+            a->addTag( "Agent" );
+            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+            a->addProperty( "CurrentRoom", gie::NullGuid );
+            a->addProperty( "Inventory", gie::Property::GuidVector{} );
+        }
+    }
+
     // Room and POI names
     const gie::StringHash AlarmPanelHash    = H( "AlarmPanel" );
     const gie::StringHash BackDoorHash      = H( "BackDoor" );

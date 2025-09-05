@@ -67,9 +67,15 @@ bool g_ShowWaypointEditorWindow = false;
 bool g_ShowEntityOutlinerWindow = false; // New: Entity Outliner visibility
 bool g_ShowDetailsPanelWindow = false;   // New: Details Panel visibility
 bool g_ShowWorldSettingsWindow = false;  // New: World Settings visibility
+bool g_ShowEntityFactoryWindow = false;  // New: Entity Factory visibility
 
 // Shared selection
 gie::Guid g_SelectedEntityGuid = gie::NullGuid; // New: selected entity shared state
+
+// Archetype selection state
+gie::Guid g_SelectedArchetypeGuid = gie::NullGuid;
+bool g_EntityFactoryWindowHovered = false;
+bool g_WorldViewWindowHovered = false;
 
 // Waypoint editor globals
 // bool g_ShowWaypointEditorWindow = false; // moved above with other flags
@@ -77,9 +83,6 @@ gie::Guid g_WaypointEditSelectedGuid = gie::NullGuid;
 float g_WaypointPickRadiusPx = 14.0f;
 gie::World* g_WorldPtr = nullptr;
 gie::Planner* g_PlannerPtr = nullptr;
-bool g_WaypointEditPlaceArmed = false;
-glm::vec3 g_WaypointEditTargetWorldPos{ 0.f, 0.f, 0.f };
-bool g_WaypointEditHasTargetWorldPos = false;
 bool g_WaypointDragActive = false;
 float g_WaypointDragZ = 0.0f;
 bool g_WaypointDragMoving = false;
@@ -115,6 +118,7 @@ static void LoadWindowVisibilitySettings()
         else if( key == "ShowEntityOutlinerWindow" ) g_ShowEntityOutlinerWindow = parseBool(val); // New
         else if( key == "ShowDetailsPanelWindow" ) g_ShowDetailsPanelWindow = parseBool(val);     // New
         else if( key == "ShowWorldSettingsWindow" ) g_ShowWorldSettingsWindow = parseBool(val);   // New
+        else if( key == "ShowEntityFactoryWindow" ) g_ShowEntityFactoryWindow = parseBool(val);   // New
     }
 }
 static void SaveWindowVisibilitySettings()
@@ -133,6 +137,7 @@ static void SaveWindowVisibilitySettings()
     out << "ShowEntityOutlinerWindow=" << ( g_ShowEntityOutlinerWindow ? 1 : 0 ) << '\n'; // New
     out << "ShowDetailsPanelWindow=" << ( g_ShowDetailsPanelWindow ? 1 : 0 ) << '\n';     // New
     out << "ShowWorldSettingsWindow=" << ( g_ShowWorldSettingsWindow ? 1 : 0 ) << '\n';   // New
+    out << "ShowEntityFactoryWindow=" << ( g_ShowEntityFactoryWindow ? 1 : 0 ) << '\n';   // New
 }
 
 // --- DPI-aware ImGui scaling ---
@@ -355,6 +360,7 @@ void processInput( GLFWwindow* window )
         {
             g_SelectedEntityGuid = gie::NullGuid;
             g_WaypointEditSelectedGuid = gie::NullGuid;
+            g_SelectedArchetypeGuid = gie::NullGuid; // clear archetype selection
         }
     }
     s_EscapeWasDown = escDown;
@@ -496,6 +502,7 @@ void ShowExampleAppDockSpace( bool* p_open )
             ImGui::MenuItem( "Entity Outliner", NULL, &g_ShowEntityOutlinerWindow ); // New
             ImGui::MenuItem( "Details Panel", NULL, &g_ShowDetailsPanelWindow );     // New
             ImGui::MenuItem( "World Settings", NULL, &g_ShowWorldSettingsWindow );   // New
+            ImGui::MenuItem( "Entity Factory", NULL, &g_ShowEntityFactoryWindow );   // New
             ImGui::EndMenu();
         }
 

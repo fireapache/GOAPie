@@ -19,6 +19,28 @@ int cutDownTrees( ExampleParameters& params )
 	// property telling if agent has a wood house
 	auto agentWoodHousePpt = agentEntity->createProperty( "WoodHouse", false );
 
+	// Define archetypes used in this example (only once per world)
+	if( world.archetypes().empty() )
+	{
+		// Tree archetype
+		if( auto* a = world.createArchetype( "Tree" ) )
+		{
+			a->addTag( "Tree" );
+			a->addTag( "TreeUp" );
+			a->addTag( "Draw" );
+			a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+		}
+
+		// Waypoint archetype (not used here but useful in editor)
+		if( auto* a = world.createArchetype( "Waypoint" ) )
+		{
+			a->addTag( "Waypoint" );
+			a->addTag( "Draw" );
+			a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+			a->addProperty( "Links", gie::Property::GuidVector{} );
+		}
+	}
+
 	// creating agent properties for this tutorial
 
 	// total money npc carries
