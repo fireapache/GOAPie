@@ -136,8 +136,57 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
         return; // avoid also doing selection
     }
 
-    // Mouse press: checking if clicking on an entity for single selection
-	if( ImGui::IsMouseClicked( 0 ) && g_MultiSelectedGuids.empty() )
+    // CTRL-click: toggle entity in multi-selection
+    if( ImGui::IsMouseClicked( 0 ) && ( ImGui::GetIO().KeyCtrl ) )
+    {
+        gie::Guid nearGuid = nearestDrawEntityUnderMouse();
+        if( nearGuid != gie::NullGuid )
+        {
+            if( g_MultiSelectedGuids.empty() )
+            {
+                if( g_SelectedEntityGuid == gie::NullGuid )
+                {
+                    // No selection yet, select this as single
+                    g_SelectedEntityGuid = nearGuid;
+                }
+                else if( g_SelectedEntityGuid == nearGuid )
+                {
+                    // Toggle off the single selection
+                    g_SelectedEntityGuid = gie::NullGuid;
+                }
+                else
+                {
+                    // Start multi-selection with previous single and the new one
+                    g_MultiSelectedGuids.insert( g_SelectedEntityGuid );
+                    g_MultiSelectedGuids.insert( nearGuid );
+                    g_SelectedEntityGuid = gie::NullGuid;
+                }
+            }
+            else
+            {
+                // Already in multi-selection mode, toggle membership
+                auto it = g_MultiSelectedGuids.find( nearGuid );
+                if( it != g_MultiSelectedGuids.end() )
+                {
+                    g_MultiSelectedGuids.erase( it );
+                    if( g_MultiSelectedGuids.size() == 1 )
+                    {
+                        // Collapse back to single selection
+                        g_SelectedEntityGuid = *g_MultiSelectedGuids.begin();
+                        g_MultiSelectedGuids.clear();
+                    }
+                }
+                else
+                {
+                    g_MultiSelectedGuids.insert( nearGuid );
+                }
+            }
+        }
+        return;
+    }
+
+    // Mouse press: checking if clicking on an entity for single selection (no Ctrl, not in multi mode)
+    if( ImGui::IsMouseClicked( 0 ) && !ImGui::GetIO().KeyCtrl && g_MultiSelectedGuids.empty() )
     {
         // Single-click select the entity under the mouse
         gie::Guid nearGuid = nearestDrawEntityUnderMouse();
@@ -282,10 +331,11 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
             if( g_MultiSelectedGuids.size() == 1 )
             {
                 g_SelectedEntityGuid = *g_MultiSelectedGuids.begin();
+                g_MultiSelectedGuids.clear();
             }
             else if( g_MultiSelectedGuids.size() > 1 )
             {
-                // Multiple selected: clear single selection to hide details panel
+                // Multiple selected: keep multi-selection and clear single selection
                 g_SelectedEntityGuid = gie::NullGuid;
             }
             return;
