@@ -69,6 +69,17 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
     }
 }
 
+std::string getSaveFileName()
+{
+    std::string saveFile = g_exampleName;
+    // Remove invalid filename characters
+    saveFile.erase( std::remove_if( saveFile.begin(), saveFile.end(),
+        []( char c ) { return !( std::isalnum( c ) || c == '_' || c == '-' ); } ), saveFile.end() );
+    if( saveFile.empty() ) saveFile = "world";
+    saveFile += "_world.json";
+    return saveFile;
+}
+
 void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
 {
     if( !g_ShowWorldViewWindow ) return;
@@ -101,6 +112,12 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
         ImGui::SetCursorScreenPos( ImVec2( pos.x + 8.0f, pos.y + 8.0f ) );
         static float s_SaveMsgTimer = 0.0f;
         static float s_LoadMsgTimer = 0.0f;
+        // New: error message timers and texts
+        static float s_SaveErrTimer = 0.0f;
+        static float s_LoadErrTimer = 0.0f;
+        static std::string s_SaveErrText;
+        static std::string s_LoadErrText;
+
         if( !g_BoundsEditorVisible )
         {
             if( ImGui::Button( "Update Bounds" ) )
@@ -118,26 +135,38 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
             ImGui::SameLine();
             if( ImGui::Button( "Save" ) )
             {
-                if( gie::persistency::SaveWorldToJson( world, "world.json" ) )
+                // Use a local filename to avoid mutating g_exampleName
+				if( gie::persistency::SaveWorldToJson( world, getSaveFileName() ) )
                 {
                     s_SaveMsgTimer = 2.0f;
+                }
+                else
+                {
+                    s_SaveErrText = std::string( "Save failed: " ) + getSaveFileName();
+                    s_SaveErrTimer = 4.0f;
                 }
             }
             ImGui::SameLine();
             if( ImGui::Button( "Load" ) )
             {
+                // Use a local filename to avoid mutating g_exampleName
                 g_IsLoading = true;
-                if( gie::persistency::LoadWorldFromJson( world, "world.json" ) )
+				if( gie::persistency::LoadWorldFromJson( world, getSaveFileName() ) )
                 {
                     g_DrawingLimitsInitialized = false;
                     s_LoadMsgTimer = 2.0f;
+                }
+                else
+                {
+					s_LoadErrText = std::string( "Load failed: " ) + getSaveFileName().c_str();
+                    s_LoadErrTimer = 4.0f;
                 }
                 g_IsLoading = false;
             }
             if( s_SaveMsgTimer > 0.0f )
             {
                 ImGui::SameLine();
-                ImGui::TextColored( ImVec4( 0.2f, 1.0f, 0.2f, 1.0f ), "Saved" );
+				ImGui::TextColored( ImVec4( 0.2f, 1.0f, 0.2f, 1.0f ), "Saved at %s", getSaveFileName().c_str() );
                 s_SaveMsgTimer -= ImGui::GetIO().DeltaTime;
             }
             if( s_LoadMsgTimer > 0.0f )
@@ -145,6 +174,19 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
                 ImGui::SameLine();
                 ImGui::TextColored( ImVec4( 0.2f, 0.6f, 1.0f, 1.0f ), "Loaded" );
                 s_LoadMsgTimer -= ImGui::GetIO().DeltaTime;
+            }
+            // New: show transient error messages
+            if( s_SaveErrTimer > 0.0f )
+            {
+                ImGui::SameLine();
+                ImGui::TextColored( ImVec4( 1.0f, 0.3f, 0.3f, 1.0f ), "%s", s_SaveErrText.empty() ? "Save failed" : s_SaveErrText.c_str() );
+                s_SaveErrTimer -= ImGui::GetIO().DeltaTime;
+            }
+            if( s_LoadErrTimer > 0.0f )
+            {
+                ImGui::SameLine();
+                ImGui::TextColored( ImVec4( 1.0f, 0.3f, 0.3f, 1.0f ), "%s", s_LoadErrText.empty() ? "Load failed" : s_LoadErrText.c_str() );
+                s_LoadErrTimer -= ImGui::GetIO().DeltaTime;
             }
         }
         else
@@ -188,7 +230,7 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
                 g_DrawingLimitsInitialized = true;
                 g_BoundsEditorVisible = false;
             }
-			ImGui::EndDisabled();
+            ImGui::EndDisabled();
             ImGui::SameLine();
             if( ImGui::Button( "Cancel" ) )
             {

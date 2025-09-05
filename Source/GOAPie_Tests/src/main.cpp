@@ -6,18 +6,33 @@
 
 #include "example.h"
 
+// found in visualization.h
+std::string g_exampleName;
+
+#define EXAMPLE_FUNCTION( x ) \
+extern int x( ExampleParameters& params ); \
+const char* x##Name = #x; \
+
 // example 1
-extern int fundamentals( ExampleParameters& params );
+EXAMPLE_FUNCTION( fundamentals )
 // example 2
-extern int openDoor( ExampleParameters& params );
+EXAMPLE_FUNCTION( openDoor )
 // example 3
-extern int cutDownTrees( ExampleParameters& params );
+EXAMPLE_FUNCTION( cutDownTrees )
 // example 4
-extern int treesOnHill( ExampleParameters& params );
+EXAMPLE_FUNCTION( treesOnHill )
 // example 5
-extern int survivalOnHill( ExampleParameters& params );
+EXAMPLE_FUNCTION( survivalOnHill )
 // example 6
-extern int heistOpenSafe( ExampleParameters& params );
+EXAMPLE_FUNCTION( heistOpenSafe )
+
+typedef int ( *ExampleFunc )( ExampleParameters& );
+
+struct ExampleFunctionEntry
+{
+	ExampleFunc func;
+	const char* name;
+};
 
 // used to draw elements using OpenGL
 extern int visualization( ExampleParameters& params );
@@ -27,16 +42,14 @@ extern void printSimulatedActions( const gie::Planner& planner );
 
 int main( int argc, char** argv )
 {
-	typedef int ( *ExampleFunc )( ExampleParameters& );
-
-	std::vector< ExampleFunc > funcs
+	std::vector< ExampleFunctionEntry > exampleFunctions
 	{
-		fundamentals,
-		openDoor,
-		cutDownTrees,
-		treesOnHill,
-		survivalOnHill,
-		heistOpenSafe
+		{ fundamentals, fundamentalsName },
+		{ openDoor, openDoorName },
+		{ cutDownTrees, cutDownTreesName },
+		{ treesOnHill, treesOnHillName },
+		{ survivalOnHill, survivalOnHillName },
+		{ heistOpenSafe, heistOpenSafeName }
 	};
 
 	int ex = -1;
@@ -46,14 +59,14 @@ int main( int argc, char** argv )
 		ex = std::atoi( argv[ 1 ] );
 	}
 	
-	if( ex < 1 || ex > funcs.size() )
+	if( ex < 1 || ex > exampleFunctions.size() )
 	{
 		while( true )
 		{
-			std::printf( "Enter valid example number [1..%d]: ", static_cast< int >( funcs.size() ) );
+			std::printf( "Enter valid example number [1..%d]: ", static_cast< int >( exampleFunctions.size() ) );
 			std::scanf( "%d", &ex );
 
-			if( ex < 1 || ex > funcs.size() )
+			if( ex < 1 || ex > exampleFunctions.size() )
 			{
 				std::printf( "Wrong example number!\n" );
 			}
@@ -82,7 +95,8 @@ int main( int argc, char** argv )
 
 	// running example function
 	ExampleParameters exampleParams{ world, planner, goal };
-	int exResult = funcs[ ex - 1 ]( exampleParams );
+	int exResult = exampleFunctions[ ex - 1 ].func( exampleParams );
+	g_exampleName = exampleFunctions[ ex - 1 ].name;
 
 	// example code set up the world, planner and goal,
 	// and now we can run the planner.

@@ -50,6 +50,8 @@ extern gie::Guid selectedSimulationGuid;
 extern bool g_ShowWaypointGuidSuffix;
 extern bool g_ShowWaypointArrows;
 
+extern std::string g_exampleName;
+
 // Global loading state
 extern bool g_IsLoading;
 // Draw a semi-transparent overlay saying "Loading" over the current window bounds
