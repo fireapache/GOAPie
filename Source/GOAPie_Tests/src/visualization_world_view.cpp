@@ -369,6 +369,7 @@ void drawWaypointGuidSuffixOverlay( const gie::World& world, const gie::Planner&
             ImGui::GetWindowDrawList()->AddText( suffixPos, IM_COL32( 255, 255, 0, 255 ), buf );
 
             std::string idxLabel = "wp?";
+
             auto nameHash = e->nameHash();
             if( nameHash != gie::InvalidStringHash )
             {
@@ -516,6 +517,45 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
                     g_WaypointDragMoving = false;
                     g_WaypointDragStartLocalX = localX;
                     g_WaypointDragStartLocalY = localY;
+                }
+            }
+        }
+    }
+
+    // New: Right-click to link selected waypoint A to waypoint B under mouse (bidirectional)
+    if( ImGui::IsMouseClicked( ImGuiMouseButton_Right ) )
+    {
+        if( g_WaypointEditSelectedGuid != gie::NullGuid )
+        {
+            gie::Guid target = FindNearestWaypointUnderMouse();
+            if( target != gie::NullGuid && target != g_WaypointEditSelectedGuid )
+            {
+                auto a = g_WorldPtr->entity( g_WaypointEditSelectedGuid );
+                auto b = g_WorldPtr->entity( target );
+                if( a && b )
+                {
+                    // Ensure Links on A includes B
+                    auto aLinks = a->property( "Links" );
+                    if( !aLinks ) aLinks = a->createProperty( "Links", gie::Property::GuidVector{} );
+                    if( aLinks )
+                    {
+                        auto arr = aLinks->getGuidArray();
+                        if( arr && std::find( arr->begin(), arr->end(), target ) == arr->end() )
+                        {
+                            arr->push_back( target );
+                        }
+                    }
+                    // Ensure Links on B includes A (bidirectional)
+                    auto bLinks = b->property( "Links" );
+                    if( !bLinks ) bLinks = b->createProperty( "Links", gie::Property::GuidVector{} );
+                    if( bLinks )
+                    {
+                        auto arr = bLinks->getGuidArray();
+                        if( arr && std::find( arr->begin(), arr->end(), g_WaypointEditSelectedGuid ) == arr->end() )
+                        {
+                            arr->push_back( g_WaypointEditSelectedGuid );
+                        }
+                    }
                 }
             }
         }
