@@ -534,26 +534,115 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
                 auto b = g_WorldPtr->entity( target );
                 if( a && b )
                 {
-                    // Ensure Links on A includes B
+                    // Check if bidirectional link already exists
                     auto aLinks = a->property( "Links" );
-                    if( !aLinks ) aLinks = a->createProperty( "Links", gie::Property::GuidVector{} );
+                    auto bLinks = b->property( "Links" );
+                    bool hasAtoB = false;
+                    bool hasBtoA = false;
                     if( aLinks )
                     {
                         auto arr = aLinks->getGuidArray();
-                        if( arr && std::find( arr->begin(), arr->end(), target ) == arr->end() )
-                        {
-                            arr->push_back( target );
-                        }
+                        if( arr && std::find( arr->begin(), arr->end(), target ) != arr->end() )
+                            hasAtoB = true;
                     }
-                    // Ensure Links on B includes A (bidirectional)
-                    auto bLinks = b->property( "Links" );
-                    if( !bLinks ) bLinks = b->createProperty( "Links", gie::Property::GuidVector{} );
                     if( bLinks )
                     {
                         auto arr = bLinks->getGuidArray();
-                        if( arr && std::find( arr->begin(), arr->end(), g_WaypointEditSelectedGuid ) == arr->end() )
+                        if( arr && std::find( arr->begin(), arr->end(), g_WaypointEditSelectedGuid ) != arr->end() )
+                            hasBtoA = true;
+                    }
+                    bool bidirectionalExists = hasAtoB && hasBtoA;
+
+                    if( bidirectionalExists )
+                    {
+                        // Remove bidirectional link
+                        if( aLinks )
                         {
-                            arr->push_back( g_WaypointEditSelectedGuid );
+                            auto arr = aLinks->getGuidArray();
+                            if( arr )
+                            {
+                                arr->erase( std::remove( arr->begin(), arr->end(), target ), arr->end() );
+                            }
+                        }
+                        if( bLinks )
+                        {
+                            auto arr = bLinks->getGuidArray();
+                            if( arr )
+                            {
+                                arr->erase( std::remove( arr->begin(), arr->end(), g_WaypointEditSelectedGuid ), arr->end() );
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Add bidirectional link
+                        if( !aLinks ) aLinks = a->createProperty( "Links", gie::Property::GuidVector{} );
+                        if( aLinks )
+                        {
+                            auto arr = aLinks->getGuidArray();
+                            if( arr && std::find( arr->begin(), arr->end(), target ) == arr->end() )
+                            {
+                                arr->push_back( target );
+                            }
+                        }
+                        if( !bLinks ) bLinks = b->createProperty( "Links", gie::Property::GuidVector{} );
+                        if( bLinks )
+                        {
+                            auto arr = bLinks->getGuidArray();
+                            if( arr && std::find( arr->begin(), arr->end(), g_WaypointEditSelectedGuid ) == arr->end() )
+                            {
+                                arr->push_back( g_WaypointEditSelectedGuid );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Middle-click to add/remove outgoing link from selected to target waypoint
+    if( ImGui::IsMouseClicked( ImGuiMouseButton_Middle ) )
+    {
+        if( g_WaypointEditSelectedGuid != gie::NullGuid )
+        {
+            gie::Guid target = FindNearestWaypointUnderMouse();
+            if( target != gie::NullGuid && target != g_WaypointEditSelectedGuid )
+            {
+                auto a = g_WorldPtr->entity( g_WaypointEditSelectedGuid );
+                if( a )
+                {
+                    auto aLinks = a->property( "Links" );
+                    bool hasAtoB = false;
+                    if( aLinks )
+                    {
+                        auto arr = aLinks->getGuidArray();
+                        if( arr && std::find( arr->begin(), arr->end(), target ) != arr->end() )
+                            hasAtoB = true;
+                    }
+
+                    if( hasAtoB )
+                    {
+                        // Remove outgoing link
+                        if( aLinks )
+                        {
+                            auto arr = aLinks->getGuidArray();
+                            if( arr )
+                            {
+                                arr->erase( std::remove( arr->begin(), arr->end(), target ), arr->end() );
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Add outgoing link
+                        if( !aLinks ) aLinks = a->createProperty( "Links", gie::Property::GuidVector{} );
+                        if( aLinks )
+                        {
+                            auto arr = aLinks->getGuidArray();
+                            if( arr && std::find( arr->begin(), arr->end(), target ) == arr->end() )
+                            {
+                                arr->push_back( target );
+                            }
                         }
                     }
                 }
