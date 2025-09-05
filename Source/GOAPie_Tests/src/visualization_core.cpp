@@ -69,8 +69,7 @@ bool g_ShowDetailsPanelWindow = false;   // New: Details Panel visibility
 bool g_ShowWorldSettingsWindow = false;  // New: World Settings visibility
 bool g_ShowEntityFactoryWindow = false;  // New: Entity Factory visibility
 
-// Shared selection
-gie::Guid g_SelectedEntityGuid = gie::NullGuid; // New: selected entity shared state
+// Shared selection (unified set) — defined in visualization_selection_state.cpp
 
 // Archetype selection state
 gie::Guid g_SelectedArchetypeGuid = gie::NullGuid;
@@ -358,7 +357,7 @@ void processInput( GLFWwindow* window )
 
         if( !cancelled )
         {
-            g_SelectedEntityGuid = gie::NullGuid;
+            g_selectedEntityGuids.clear();
             g_WaypointEditSelectedGuid = gie::NullGuid;
             g_SelectedArchetypeGuid = gie::NullGuid; // clear archetype selection
         }

@@ -79,7 +79,8 @@ extern bool g_ShowWorldSettingsWindow;  // New: World Settings visibility
 extern bool g_ShowEntityFactoryWindow;  // New: Entity Factory visibility
 
 // Global selection shared across tools
-extern gie::Guid g_SelectedEntityGuid; // New: selected entity shared state
+// Unified selection set: empty = no selection, size==1 = single selection, size>1 = multi-selection
+extern std::set<gie::Guid> g_selectedEntityGuids; // unified selection set
 
 // Archetype selection
 extern gie::Guid g_SelectedArchetypeGuid;          // Selected archetype for placement
@@ -101,7 +102,7 @@ extern float g_WaypointDragStartLocalY;
 extern bool g_RectSelectionActive;                 // true while dragging a rectangle
 extern ImVec2 g_RectSelectionStartLocal;           // start corner (local to world view content)
 extern ImVec2 g_RectSelectionEndLocal;             // current/end corner (local)
-extern std::set<gie::Guid> g_MultiSelectedGuids;   // current multi-selection (empty means none)
+// (multi-selection moved into unified `g_selectedEntityGuids`)
 // Multi-dragging state (move all selected entities)
 extern bool g_MultiDragActive;                     // true while moving multiple entities
 extern glm::vec3 g_MultiDragMouseStartWorld;       // mouse world pos at drag start

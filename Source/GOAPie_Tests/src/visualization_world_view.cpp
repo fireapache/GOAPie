@@ -129,8 +129,8 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
                 std::vector<gie::Tag> tags{ gie::stringHasher( "Draw" ) };
                 g_WorldPtr->context().entityTagRegister().tag( e, tags );
 
-                g_SelectedEntityGuid = e->guid();
-                g_MultiSelectedGuids.clear();
+                g_selectedEntityGuids.clear();
+                g_selectedEntityGuids.insert( e->guid() );
             }
         }
         return; // avoid also doing selection
@@ -142,43 +142,34 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
         gie::Guid nearGuid = nearestDrawEntityUnderMouse();
         if( nearGuid != gie::NullGuid )
         {
-            if( g_MultiSelectedGuids.empty() )
+            // No selection yet: select this as single
+            if( g_selectedEntityGuids.empty() )
             {
-                if( g_SelectedEntityGuid == gie::NullGuid )
+                g_selectedEntityGuids.insert( nearGuid );
+            }
+            else if( g_selectedEntityGuids.size() == 1 )
+            {
+                // size==1: either toggle off if same, or start multi by inserting
+                if( g_selectedEntityGuids.find( nearGuid ) != g_selectedEntityGuids.end() )
                 {
-                    // No selection yet, select this as single
-                    g_SelectedEntityGuid = nearGuid;
-                }
-                else if( g_SelectedEntityGuid == nearGuid )
-                {
-                    // Toggle off the single selection
-                    g_SelectedEntityGuid = gie::NullGuid;
+                    g_selectedEntityGuids.clear();
                 }
                 else
                 {
-                    // Start multi-selection with previous single and the new one
-                    g_MultiSelectedGuids.insert( g_SelectedEntityGuid );
-                    g_MultiSelectedGuids.insert( nearGuid );
-                    g_SelectedEntityGuid = gie::NullGuid;
+                    g_selectedEntityGuids.insert( nearGuid );
                 }
             }
             else
             {
-                // Already in multi-selection mode, toggle membership
-                auto it = g_MultiSelectedGuids.find( nearGuid );
-                if( it != g_MultiSelectedGuids.end() )
+                // Already multi-selection: toggle membership
+                auto it = g_selectedEntityGuids.find( nearGuid );
+                if( it != g_selectedEntityGuids.end() )
                 {
-                    g_MultiSelectedGuids.erase( it );
-                    if( g_MultiSelectedGuids.size() == 1 )
-                    {
-                        // Collapse back to single selection
-                        g_SelectedEntityGuid = *g_MultiSelectedGuids.begin();
-                        g_MultiSelectedGuids.clear();
-                    }
+                    g_selectedEntityGuids.erase( it );
                 }
                 else
                 {
-                    g_MultiSelectedGuids.insert( nearGuid );
+                    g_selectedEntityGuids.insert( nearGuid );
                 }
             }
         }
@@ -186,14 +177,14 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
     }
 
     // Mouse press: checking if clicking on an entity for single selection (no Ctrl, not in multi mode)
-    if( ImGui::IsMouseClicked( 0 ) && !ImGui::GetIO().KeyCtrl && g_MultiSelectedGuids.empty() )
+    if( ImGui::IsMouseClicked( 0 ) && !ImGui::GetIO().KeyCtrl && g_selectedEntityGuids.size() <= 1 )
     {
         // Single-click select the entity under the mouse
         gie::Guid nearGuid = nearestDrawEntityUnderMouse();
         if( nearGuid != gie::NullGuid )
         {
-            g_SelectedEntityGuid = nearGuid;
-            g_MultiSelectedGuids.clear();
+            g_selectedEntityGuids.clear();
+            g_selectedEntityGuids.insert( nearGuid );
             return;
         }
     }
@@ -206,15 +197,15 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
         g_RectSelectionStartLocal = s_ClickStartLocal;
         g_RectSelectionEndLocal = s_ClickStartLocal;
 
-        // If clicking on an already selected entity, start multi-drag
+        // If clicking on an already selected entity that's part of a multi-selection, start multi-drag
         gie::Guid nearGuid = nearestDrawEntityUnderMouse();
-        if( nearGuid != gie::NullGuid && g_MultiSelectedGuids.find( nearGuid ) != g_MultiSelectedGuids.end() )
+        if( nearGuid != gie::NullGuid && g_selectedEntityGuids.find( nearGuid ) != g_selectedEntityGuids.end() && g_selectedEntityGuids.size() > 1 )
         {
             // Initialize multi-drag state
             g_MultiDragActive = true;
             g_MultiDragInitialPositions.clear();
             g_MultiDragMouseStartWorld = MouseToWorld( localX, localY, windowWidth, windowHeight );
-            for( auto guid : g_MultiSelectedGuids )
+            for( auto guid : g_selectedEntityGuids )
             {
                 if( auto* e = g_WorldPtr->entity( guid ) )
                 {
@@ -270,8 +261,7 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
             {
                 // Begin rectangular selection; cancel previous selections
                 g_RectSelectionActive = true;
-                g_MultiSelectedGuids.clear();
-                g_SelectedEntityGuid = gie::NullGuid;
+                g_selectedEntityGuids.clear();
                 g_WaypointEditSelectedGuid = gie::NullGuid;
             }
         }
@@ -289,7 +279,7 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
             const auto* drawSet = getDrawSet();
             if( drawSet && !drawSet->empty() )
             {
-                g_MultiSelectedGuids.clear();
+                g_selectedEntityGuids.clear();
                 glm::vec3 offset = -g_DrawingLimits.center;
                 glm::vec3 scale = g_DrawingLimits.scale;
                 for( auto guid : *drawSet )
@@ -305,7 +295,7 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 
                     if( x_px >= x0 && x_px <= x1 && y_px >= y0 && y_px <= y1 )
                     {
-                        g_MultiSelectedGuids.insert( guid );
+                        g_selectedEntityGuids.insert( guid );
                     }
                 }
             }
@@ -328,16 +318,7 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
             // Finalize rectangle selection. If only one entity selected, set it as single selection
             s_RectPrimed = false;
             g_RectSelectionActive = false;
-            if( g_MultiSelectedGuids.size() == 1 )
-            {
-                g_SelectedEntityGuid = *g_MultiSelectedGuids.begin();
-                g_MultiSelectedGuids.clear();
-            }
-            else if( g_MultiSelectedGuids.size() > 1 )
-            {
-                // Multiple selected: keep multi-selection and clear single selection
-                g_SelectedEntityGuid = gie::NullGuid;
-            }
+            // unified set already represents single vs multi (size==1 => single)
             return;
         }
 
@@ -375,10 +356,10 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
                 }
             }
 
-            g_MultiSelectedGuids.clear();
+            g_selectedEntityGuids.clear();
             if( best != gie::NullGuid )
             {
-                g_SelectedEntityGuid = best;
+                g_selectedEntityGuids.insert( best );
                 // Sync waypoint editor selection if it's a waypoint when tool opens later
                 const auto* waypointSet = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
                 if( waypointSet && waypointSet->find( best ) != waypointSet->end() )
@@ -776,7 +757,9 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
         if( nearest != gie::NullGuid )
         {
             g_WaypointEditSelectedGuid = nearest;
-            g_SelectedEntityGuid = nearest; // sync selection to outliner
+            // sync into unified selection set
+            g_selectedEntityGuids.clear();
+            g_selectedEntityGuids.insert( nearest );
             if( auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid ) )
             {
                 if( auto loc = e->property( "Location" ) )
@@ -955,6 +938,9 @@ static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth,
 {
     if( !g_ShowWaypointEditorWindow ) return;
     if( !g_WorldPtr ) return;
+    // Selection is now drawn globally in drawRectSelectionOverlayOnWorldView.
+    // If a unified single selection exists, skip drawing here to avoid duplicate markers.
+    if( g_selectedEntityGuids.size() == 1 ) return;
     if( g_WaypointEditSelectedGuid == gie::NullGuid ) return;
 
     auto e = g_WorldPtr->entity( g_WaypointEditSelectedGuid );
@@ -997,28 +983,55 @@ static void drawRectSelectionOverlayOnWorldView( ImVec2 pos, float windowWidth, 
         dl->AddRect( a, b, colBorder, 0.0f, 0, 1.5f );
     }
 
-    // Highlight multi-selected entities
-    if( !g_MultiSelectedGuids.empty() && g_WorldPtr )
+    // Highlight multi-selected entities (unified set represents multi-selection when size>1)
+    if( !g_selectedEntityGuids.empty() && g_WorldPtr )
     {
         glm::vec3 offset = -g_DrawingLimits.center;
         glm::vec3 scale = g_DrawingLimits.scale;
-        for( auto guid : g_MultiSelectedGuids )
+
+        // Single selection: draw yellow marker
+        if( g_selectedEntityGuids.size() == 1 )
         {
+            auto guid = *g_selectedEntityGuids.begin();
             const auto* e = g_WorldPtr->entity( guid );
-            if( !e ) continue;
-            const auto* loc = e->property( "Location" );
-            if( !loc || !loc->getVec3() ) continue;
+            if( e )
+            {
+                const auto* loc = e->property( "Location" );
+                if( loc && loc->getVec3() )
+                {
+                    glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+                    float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+                    float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+                    ImVec2 c{ pos.x + x_px, pos.y + y_px };
+                    ImU32 col = IM_COL32( 255, 255, 0, 220 );
+                    ImU32 colBg = IM_COL32( 0, 0, 0, 120 );
+                    float r = g_WaypointPickRadiusPx * 0.9f;
+                    dl->AddCircleFilled( c, r + 2.0f, colBg, 24 );
+                    dl->AddCircle( c, r, col, 24, 2.0f );
+                }
+            }
+        }
+        else
+        {
+            // Multi-selection: draw blue markers for each selected entity
+            for( auto guid : g_selectedEntityGuids )
+            {
+                const auto* e = g_WorldPtr->entity( guid );
+                if( !e ) continue;
+                const auto* loc = e->property( "Location" );
+                if( !loc || !loc->getVec3() ) continue;
 
-            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
-            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
-            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+                glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+                float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+                float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
 
-            ImVec2 c{ pos.x + x_px, pos.y + y_px };
-            ImU32 col = IM_COL32( 80, 200, 255, 230 );
-            ImU32 colBg = IM_COL32( 0, 0, 0, 120 );
-            float r = g_WaypointPickRadiusPx * 0.9f;
-            dl->AddCircleFilled( c, r + 2.0f, colBg, 24 );
-            dl->AddCircle( c, r, col, 24, 2.0f );
+                ImVec2 c{ pos.x + x_px, pos.y + y_px };
+                ImU32 col = IM_COL32( 80, 200, 255, 230 );
+                ImU32 colBg = IM_COL32( 0, 0, 0, 120 );
+                float r = g_WaypointPickRadiusPx * 0.9f;
+                dl->AddCircleFilled( c, r + 2.0f, colBg, 24 );
+                dl->AddCircle( c, r, col, 24, 2.0f );
+            }
         }
     }
 }

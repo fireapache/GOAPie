@@ -241,9 +241,13 @@ void drawDetailsPanelWindow( gie::World& world )
         cancelTransientUIsIfClickedOutside();
 
         // Reset selection/edit when entity changes
-        if( s_LastEntityGuid != g_SelectedEntityGuid )
+        // Determine current single-selected guid (if any)
+        gie::Guid currentSelected = gie::NullGuid;
+        if( g_selectedEntityGuids.size() == 1 ) currentSelected = *g_selectedEntityGuids.begin();
+
+        if( s_LastEntityGuid != currentSelected )
         {
-            s_LastEntityGuid = g_SelectedEntityGuid;
+            s_LastEntityGuid = currentSelected;
             resetSelection();
             resetAddPropDialog();
             resetEdit();
@@ -252,15 +256,15 @@ void drawDetailsPanelWindow( gie::World& world )
         }
 
         // Multi-selection notice (no properties displayed)
-        if( !g_MultiSelectedGuids.empty() )
+        if( g_selectedEntityGuids.size() > 1 )
         {
-            ImGui::Text( "%d entities selected.", static_cast<int>( g_MultiSelectedGuids.size() ) );
+            ImGui::Text( "%d entities selected.", static_cast<int>( g_selectedEntityGuids.size() ) );
             ImGui::End();
             return;
         }
 
-        const bool hasSelection = ( g_SelectedEntityGuid != gie::NullGuid );
-        gie::Entity* entity = hasSelection ? world.entity( g_SelectedEntityGuid ) : nullptr;
+    const bool hasSelection = ( currentSelected != gie::NullGuid );
+    gie::Entity* entity = hasSelection ? world.entity( currentSelected ) : nullptr;
         if( !entity )
         {
             ImGui::TextDisabled( "No entity selected." );
@@ -272,7 +276,7 @@ void drawDetailsPanelWindow( gie::World& world )
             return;
         }
 
-        drawEntityHeader( entity, g_SelectedEntityGuid );
+    drawEntityHeader( entity, currentSelected );
 
         // Section: Tags header bar
         drawSectionBar( "Tags" );

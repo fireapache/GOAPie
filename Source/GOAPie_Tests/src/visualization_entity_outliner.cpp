@@ -46,13 +46,20 @@ void drawEntityOutlinerWindow( gie::World& world )
         }
 
         // Sync selection from other tools -> outliner
-        if( g_WaypointEditSelectedGuid != gie::NullGuid && g_SelectedEntityGuid != g_WaypointEditSelectedGuid )
+        if( g_WaypointEditSelectedGuid != gie::NullGuid )
         {
-            g_SelectedEntityGuid = g_WaypointEditSelectedGuid;
+            // Sync waypoint edit selection into unified set as single selection
+            g_selectedEntityGuids.clear();
+            g_selectedEntityGuids.insert( g_WaypointEditSelectedGuid );
         }
 
         // Controls
-        bool hasSelection = ( g_SelectedEntityGuid != gie::NullGuid && world.entity( g_SelectedEntityGuid ) != nullptr );
+        bool hasSelection = false;
+        if( g_selectedEntityGuids.size() == 1 )
+        {
+            gie::Guid g = *g_selectedEntityGuids.begin();
+            hasSelection = ( g != gie::NullGuid && world.entity( g ) != nullptr );
+        }
 
         ImGui::BeginDisabled( s_NameDialogMode != NameDialogMode::None );
         if( ImGui::Button( "+ Add" ) )
@@ -69,26 +76,28 @@ void drawEntityOutlinerWindow( gie::World& world )
         {
             if( hasSelection )
             {
-                world.removeEntity( g_SelectedEntityGuid );
-                if( g_WaypointEditSelectedGuid == g_SelectedEntityGuid )
+                gie::Guid g = *g_selectedEntityGuids.begin();
+                world.removeEntity( g );
+                if( g_WaypointEditSelectedGuid == g )
                 {
                     g_WaypointEditSelectedGuid = gie::NullGuid;
                 }
-                g_SelectedEntityGuid = gie::NullGuid;
+                g_selectedEntityGuids.clear();
             }
         }
         ImGui::SameLine();
         if( ImGui::Button( "Rename" ) )
         {
-            if( hasSelection )
-            {
-                s_NameDialogMode = NameDialogMode::Rename;
-                auto* e = world.entity( g_SelectedEntityGuid );
-                std::string curName = ( e && e->nameHash() != gie::InvalidStringHash ) ? std::string( gie::stringRegister().get( e->nameHash() ) ) : std::string{};
-                std::strncpy( s_NameDialogBuf, curName.c_str(), sizeof( s_NameDialogBuf ) - 1 );
-                s_NameDialogBuf[ sizeof( s_NameDialogBuf ) - 1 ] = '\0';
-                s_NameDialogFocus = true;
-            }
+                if( hasSelection )
+                {
+                    s_NameDialogMode = NameDialogMode::Rename;
+                    gie::Guid g = *g_selectedEntityGuids.begin();
+                    auto* e = world.entity( g );
+                    std::string curName = ( e && e->nameHash() != gie::InvalidStringHash ) ? std::string( gie::stringRegister().get( e->nameHash() ) ) : std::string{};
+                    std::strncpy( s_NameDialogBuf, curName.c_str(), sizeof( s_NameDialogBuf ) - 1 );
+                    s_NameDialogBuf[ sizeof( s_NameDialogBuf ) - 1 ] = '\0';
+                    s_NameDialogFocus = true;
+                }
         }
         ImGui::EndDisabled();
         ImGui::EndDisabled();
@@ -114,18 +123,23 @@ void drawEntityOutlinerWindow( gie::World& world )
             {
                 if( s_NameDialogMode == NameDialogMode::Rename )
                 {
-                    auto* e = world.entity( g_SelectedEntityGuid );
-                    if( e )
+                    if( g_selectedEntityGuids.size() == 1 )
                     {
-                        e->setName( s_NameDialogBuf );
+                        gie::Guid g = *g_selectedEntityGuids.begin();
+                        auto* e = world.entity( g );
+                        if( e )
+                        {
+                            e->setName( s_NameDialogBuf );
+                        }
                     }
                 }
                 else if( s_NameDialogMode == NameDialogMode::Add )
                 {
                     if( auto* e = world.createEntity( s_NameDialogBuf[0] ? s_NameDialogBuf : "entity" ) )
                     {
-                        g_SelectedEntityGuid = e->guid();
-                        g_WaypointEditSelectedGuid = g_SelectedEntityGuid; // sync
+                        g_selectedEntityGuids.clear();
+                        g_selectedEntityGuids.insert( e->guid() );
+                        g_WaypointEditSelectedGuid = e->guid(); // sync
                     }
                 }
                 CancelNameDialog();
@@ -172,11 +186,13 @@ void drawEntityOutlinerWindow( gie::World& world )
                 ImGui::TableSetColumnIndex( 0 );
                 std::string displayName = nameOf( ent );
                 if( displayName.empty() ) displayName = "<unnamed>";
-                bool selected = ( g_SelectedEntityGuid == guid );
+                        bool selected = false;
+                        if( g_selectedEntityGuids.size() == 1 && *g_selectedEntityGuids.begin() == guid ) selected = true;
                 std::string selLabel = displayName + "##" + std::to_string( static_cast<unsigned long long>( guid ) );
                 if( ImGui::Selectable( selLabel.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns ) )
                 {
-                    g_SelectedEntityGuid = guid;
+                    g_selectedEntityGuids.clear();
+                    g_selectedEntityGuids.insert( guid );
                     g_WaypointEditSelectedGuid = guid; // sync to other tools
                 }
 
