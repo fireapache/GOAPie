@@ -251,6 +251,14 @@ void drawDetailsPanelWindow( gie::World& world )
             resetTagAddDialog();
         }
 
+        // Multi-selection notice (no properties displayed)
+        if( !g_MultiSelectedGuids.empty() )
+        {
+            ImGui::Text( "%d entities selected.", static_cast<int>( g_MultiSelectedGuids.size() ) );
+            ImGui::End();
+            return;
+        }
+
         const bool hasSelection = ( g_SelectedEntityGuid != gie::NullGuid );
         gie::Entity* entity = hasSelection ? world.entity( g_SelectedEntityGuid ) : nullptr;
         if( !entity )

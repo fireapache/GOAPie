@@ -136,8 +136,18 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
         return; // avoid also doing selection
     }
 
-    // Ignore generic selection while Waypoint Editor is active; it owns interactions
-    if( g_ShowWaypointEditorWindow ) return;
+    // Mouse press: checking if clicking on an entity for single selection
+	if( ImGui::IsMouseClicked( 0 ) && g_MultiSelectedGuids.empty() )
+    {
+        // Single-click select the entity under the mouse
+        gie::Guid nearGuid = nearestDrawEntityUnderMouse();
+        if( nearGuid != gie::NullGuid )
+        {
+            g_SelectedEntityGuid = nearGuid;
+            g_MultiSelectedGuids.clear();
+            return;
+        }
+    }
 
     // Mouse press: decide between multi-drag or priming rectangle
     if( ImGui::IsMouseClicked( 0 ) )
@@ -659,6 +669,9 @@ static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, floa
 {
     if( !g_ShowWaypointEditorWindow ) return;
     if( !g_WorldPtr ) return;
+
+    // If group multi-drag or rectangle selection is active, let it handle input exclusively
+    if( g_MultiDragActive || g_RectSelectionActive ) return;
 
     ImGuiIO& io = ImGui::GetIO();
     const float localX = io.MousePos.x - pos.x;
