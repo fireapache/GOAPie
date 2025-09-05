@@ -21,6 +21,7 @@
 #include <set>
 #include <string>
 #include <limits>
+#include <unordered_map>
 
 #include "example.h"
 
@@ -95,6 +96,16 @@ extern float g_WaypointDragZ;
 extern bool g_WaypointDragMoving;
 extern float g_WaypointDragStartLocalX;
 extern float g_WaypointDragStartLocalY;
+
+// Rectangular selection (World View)
+extern bool g_RectSelectionActive;                 // true while dragging a rectangle
+extern ImVec2 g_RectSelectionStartLocal;           // start corner (local to world view content)
+extern ImVec2 g_RectSelectionEndLocal;             // current/end corner (local)
+extern std::set<gie::Guid> g_MultiSelectedGuids;   // current multi-selection (empty means none)
+// Multi-dragging state (move all selected entities)
+extern bool g_MultiDragActive;                     // true while moving multiple entities
+extern glm::vec3 g_MultiDragMouseStartWorld;       // mouse world pos at drag start
+extern std::unordered_map<gie::Guid, glm::vec3> g_MultiDragInitialPositions; // entity -> original position
 
 // Lifecycle
 int visualization( ExampleParameters& params );

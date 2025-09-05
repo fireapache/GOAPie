@@ -12,6 +12,9 @@
 static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
 static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
 
+// New: overlays for rectangle and multi-selection highlight
+static void drawRectSelectionOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
+
 // Helper: translate mouse local coords to world coordinates
 static glm::vec3 MouseToWorld( float lx, float ly, float windowWidth, float windowHeight )
 {
@@ -22,6 +25,10 @@ static glm::vec3 MouseToWorld( float lx, float ly, float windowWidth, float wind
     glm::vec3 ndc{ ndcX, ndcY, 0.0f };
     return ndc / g_DrawingLimits.scale + g_DrawingLimits.center;
 }
+
+// Internal state for rectangle activation threshold
+static bool s_RectPrimed = false;          // true after mouse down until either drag threshold or release
+static ImVec2 s_ClickStartLocal{ 0, 0 };   // cached click start
 
 // New: generic entity selection from World View (agnostic to tools)
 static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
@@ -49,7 +56,53 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
         }
     }
 
-    if( !mouseOverWindow ) return;
+    if( !mouseOverWindow )
+    {
+        // finalize drags if mouse leaves window and button released
+        if( !ImGui::IsMouseDown( 0 ) )
+        {
+            g_MultiDragActive = false;
+            g_RectSelectionActive = false;
+            s_RectPrimed = false;
+        }
+        return;
+    }
+
+    // Helper lambdas
+    auto getDrawSet = [&]() -> const std::set< gie::Guid >*
+    {
+        return g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Draw" ) } );
+    };
+
+    auto nearestDrawEntityUnderMouse = [&]() -> gie::Guid
+    {
+        const auto* drawSet = getDrawSet();
+        if( !drawSet || drawSet->empty() ) return gie::NullGuid;
+        float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx; // reuse pick radius
+        gie::Guid best = gie::NullGuid;
+        glm::vec3 offset = -g_DrawingLimits.center;
+        glm::vec3 scale = g_DrawingLimits.scale;
+        for( auto guid : *drawSet )
+        {
+            const auto* e = g_WorldPtr->entity( guid );
+            if( !e ) continue;
+            const auto* loc = e->property( "Location" );
+            if( !loc || !loc->getVec3() ) continue;
+
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+            float dx = x_px - localX;
+            float dy = y_px - localY;
+            float d2 = dx * dx + dy * dy;
+            if( d2 <= bestDist2 )
+            {
+                bestDist2 = d2;
+                best = guid;
+            }
+        }
+        return best;
+    };
 
     // If an archetype is selected, left-click creates an entity instance at the clicked position
     if( g_SelectedArchetypeGuid != gie::NullGuid && ImGui::IsMouseClicked( 0 ) )
@@ -77,53 +130,203 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
                 g_WorldPtr->context().entityTagRegister().tag( e, tags );
 
                 g_SelectedEntityGuid = e->guid();
+                g_MultiSelectedGuids.clear();
             }
         }
         return; // avoid also doing selection
     }
 
-    // Only react on fresh left click when Waypoint Editor is not handling interactions
-    if( g_ShowWaypointEditorWindow ) return; // let the waypoint tool handle selection when active
-    if( !ImGui::IsMouseClicked( 0 ) ) return;
+    // Ignore generic selection while Waypoint Editor is active; it owns interactions
+    if( g_ShowWaypointEditorWindow ) return;
 
-    // Pick nearest entity among those tagged for drawing and having a Location
-    const auto* drawSet = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Draw" ) } );
-    if( !drawSet || drawSet->empty() ) return;
-
-    float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx; // reuse pick radius
-    gie::Guid best = gie::NullGuid;
-
-    glm::vec3 offset = -g_DrawingLimits.center;
-    glm::vec3 scale = g_DrawingLimits.scale;
-
-    for( auto guid : *drawSet )
+    // Mouse press: decide between multi-drag or priming rectangle
+    if( ImGui::IsMouseClicked( 0 ) )
     {
-        const auto* e = g_WorldPtr->entity( guid );
-        if( !e ) continue;
-        const auto* loc = e->property( "Location" );
-        if( !loc || !loc->getVec3() ) continue;
+        s_ClickStartLocal = ImVec2( localX, localY );
+        s_RectPrimed = true;
+        g_RectSelectionStartLocal = s_ClickStartLocal;
+        g_RectSelectionEndLocal = s_ClickStartLocal;
 
-        glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
-        float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
-        float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
-        float dx = x_px - localX;
-        float dy = y_px - localY;
-        float d2 = dx * dx + dy * dy;
-        if( d2 <= bestDist2 )
+        // If clicking on an already selected entity, start multi-drag
+        gie::Guid nearGuid = nearestDrawEntityUnderMouse();
+        if( nearGuid != gie::NullGuid && g_MultiSelectedGuids.find( nearGuid ) != g_MultiSelectedGuids.end() )
         {
-            bestDist2 = d2;
-            best = guid;
+            // Initialize multi-drag state
+            g_MultiDragActive = true;
+            g_MultiDragInitialPositions.clear();
+            g_MultiDragMouseStartWorld = MouseToWorld( localX, localY, windowWidth, windowHeight );
+            for( auto guid : g_MultiSelectedGuids )
+            {
+                if( auto* e = g_WorldPtr->entity( guid ) )
+                {
+                    if( auto* loc = e->property( "Location" ) )
+                    {
+                        if( auto* v = loc->getVec3() )
+                        {
+                            g_MultiDragInitialPositions[ guid ] = *v;
+                        }
+                    }
+                }
+            }
+            // Not a rectangle selection in this case
+            s_RectPrimed = false;
+            g_RectSelectionActive = false;
+            return;
+        }
+
+        // Clicking elsewhere: we will either do a rectangle selection on drag, or a single-click select if released quickly
+        g_MultiDragActive = false;
+    }
+
+    // While holding left button
+    if( ImGui::IsMouseDown( 0 ) )
+    {
+        if( g_MultiDragActive )
+        {
+            // Move all selected entities by mouse delta (world space)
+            glm::vec3 mouseWorld = MouseToWorld( localX, localY, windowWidth, windowHeight );
+            glm::vec3 delta = mouseWorld - g_MultiDragMouseStartWorld;
+            for( const auto& kv : g_MultiDragInitialPositions )
+            {
+                if( auto* e = g_WorldPtr->entity( kv.first ) )
+                {
+                    if( auto* loc = e->property( "Location" ) )
+                    {
+                        glm::vec3 base = kv.second;
+                        loc->value = glm::vec3{ base.x + delta.x, base.y + delta.y, base.z };
+                    }
+                }
+            }
+            return;
+        }
+
+        if( s_RectPrimed )
+        {
+            // Detect drag threshold to begin rectangle selection
+            float dx = localX - s_ClickStartLocal.x;
+            float dy = localY - s_ClickStartLocal.y;
+            float dist2 = dx * dx + dy * dy;
+            const float threshold2 = 3.0f * 3.0f; // a few pixels
+            if( dist2 >= threshold2 )
+            {
+                // Begin rectangular selection; cancel previous selections
+                g_RectSelectionActive = true;
+                g_MultiSelectedGuids.clear();
+                g_SelectedEntityGuid = gie::NullGuid;
+                g_WaypointEditSelectedGuid = gie::NullGuid;
+            }
+        }
+
+        if( g_RectSelectionActive )
+        {
+            // Update rectangle end and recompute selection preview
+            g_RectSelectionEndLocal = ImVec2( localX, localY );
+
+            const float x0 = std::min( g_RectSelectionStartLocal.x, g_RectSelectionEndLocal.x );
+            const float x1 = std::max( g_RectSelectionStartLocal.x, g_RectSelectionEndLocal.x );
+            const float y0 = std::min( g_RectSelectionStartLocal.y, g_RectSelectionEndLocal.y );
+            const float y1 = std::max( g_RectSelectionStartLocal.y, g_RectSelectionEndLocal.y );
+
+            const auto* drawSet = getDrawSet();
+            if( drawSet && !drawSet->empty() )
+            {
+                g_MultiSelectedGuids.clear();
+                glm::vec3 offset = -g_DrawingLimits.center;
+                glm::vec3 scale = g_DrawingLimits.scale;
+                for( auto guid : *drawSet )
+                {
+                    const auto* e = g_WorldPtr->entity( guid );
+                    if( !e ) continue;
+                    const auto* loc = e->property( "Location" );
+                    if( !loc || !loc->getVec3() ) continue;
+
+                    glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+                    float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+                    float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+
+                    if( x_px >= x0 && x_px <= x1 && y_px >= y0 && y_px <= y1 )
+                    {
+                        g_MultiSelectedGuids.insert( guid );
+                    }
+                }
+            }
+            return;
         }
     }
 
-    if( best != gie::NullGuid )
+    // Mouse release finalizes operations
+    if( ImGui::IsMouseReleased( 0 ) )
     {
-        g_SelectedEntityGuid = best;
-        // Sync waypoint editor selection if it's a waypoint when tool opens later
-        const auto* waypointSet = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
-        if( waypointSet && waypointSet->find( best ) != waypointSet->end() )
+        if( g_MultiDragActive )
         {
-            g_WaypointEditSelectedGuid = best;
+            g_MultiDragActive = false;
+            g_MultiDragInitialPositions.clear();
+            return;
+        }
+
+        if( g_RectSelectionActive )
+        {
+            // Finalize rectangle selection. If only one entity selected, set it as single selection
+            s_RectPrimed = false;
+            g_RectSelectionActive = false;
+            if( g_MultiSelectedGuids.size() == 1 )
+            {
+                g_SelectedEntityGuid = *g_MultiSelectedGuids.begin();
+            }
+            else if( g_MultiSelectedGuids.size() > 1 )
+            {
+                // Multiple selected: clear single selection to hide details panel
+                g_SelectedEntityGuid = gie::NullGuid;
+            }
+            return;
+        }
+
+        // No drag happened: treat as simple click selection (nearest entity)
+        if( s_RectPrimed )
+        {
+            s_RectPrimed = false;
+            // Pick nearest entity among those tagged for drawing and having a Location
+            const auto* drawSet = getDrawSet();
+            if( !drawSet || drawSet->empty() ) return;
+
+            float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx; // reuse pick radius
+            gie::Guid best = gie::NullGuid;
+
+            glm::vec3 offset = -g_DrawingLimits.center;
+            glm::vec3 scale = g_DrawingLimits.scale;
+
+            for( auto guid : *drawSet )
+            {
+                const auto* e = g_WorldPtr->entity( guid );
+                if( !e ) continue;
+                const auto* loc = e->property( "Location" );
+                if( !loc || !loc->getVec3() ) continue;
+
+                glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+                float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+                float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+                float dx = x_px - localX;
+                float dy = y_px - localY;
+                float d2 = dx * dx + dy * dy;
+                if( d2 <= bestDist2 )
+                {
+                    bestDist2 = d2;
+                    best = guid;
+                }
+            }
+
+            g_MultiSelectedGuids.clear();
+            if( best != gie::NullGuid )
+            {
+                g_SelectedEntityGuid = best;
+                // Sync waypoint editor selection if it's a waypoint when tool opens later
+                const auto* waypointSet = g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Waypoint" ) } );
+                if( waypointSet && waypointSet->find( best ) != waypointSet->end() )
+                {
+                    g_WaypointEditSelectedGuid = best;
+                }
+            }
+            return;
         }
     }
 }
@@ -311,7 +514,10 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
         drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
         drawRoomNamesOverlay( world, planner, pos, windowWidth, windowHeight );
 
-        // New: generic selection and archetype placement
+        // New: rectangle visualization + highlight of multi-selected entities
+        drawRectSelectionOverlayOnWorldView( pos, windowWidth, windowHeight );
+
+        // New: generic selection and archetype placement + rectangle and multi-drag
         handleEntitySelectionOnWorldView( pos, windowWidth, windowHeight );
 
         if( g_ShowWaypointEditorWindow )
@@ -707,4 +913,49 @@ static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth,
     float r = g_WaypointPickRadiusPx;
     dl->AddCircleFilled( c, r + 2.0f, colBg, 24 );
     dl->AddCircle( c, r, col, 24, 2.0f );
+}
+
+static void drawRectSelectionOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight )
+{
+    // Draw selection rectangle if active
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if( g_RectSelectionActive )
+    {
+        const float x0 = std::min( g_RectSelectionStartLocal.x, g_RectSelectionEndLocal.x );
+        const float x1 = std::max( g_RectSelectionStartLocal.x, g_RectSelectionEndLocal.x );
+        const float y0 = std::min( g_RectSelectionStartLocal.y, g_RectSelectionEndLocal.y );
+        const float y1 = std::max( g_RectSelectionStartLocal.y, g_RectSelectionEndLocal.y );
+
+        ImVec2 a{ pos.x + x0, pos.y + y0 };
+        ImVec2 b{ pos.x + x1, pos.y + y1 };
+        ImU32 colFill = IM_COL32( 80, 160, 255, 40 );
+        ImU32 colBorder = IM_COL32( 80, 160, 255, 160 );
+        dl->AddRectFilled( a, b, colFill, 0.0f );
+        dl->AddRect( a, b, colBorder, 0.0f, 0, 1.5f );
+    }
+
+    // Highlight multi-selected entities
+    if( !g_MultiSelectedGuids.empty() && g_WorldPtr )
+    {
+        glm::vec3 offset = -g_DrawingLimits.center;
+        glm::vec3 scale = g_DrawingLimits.scale;
+        for( auto guid : g_MultiSelectedGuids )
+        {
+            const auto* e = g_WorldPtr->entity( guid );
+            if( !e ) continue;
+            const auto* loc = e->property( "Location" );
+            if( !loc || !loc->getVec3() ) continue;
+
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            float x_px = ( p.x * 0.5f + 0.5f ) * windowWidth;
+            float y_px = ( 1.0f - ( p.y * 0.5f + 0.5f ) ) * windowHeight;
+
+            ImVec2 c{ pos.x + x_px, pos.y + y_px };
+            ImU32 col = IM_COL32( 80, 200, 255, 230 );
+            ImU32 colBg = IM_COL32( 0, 0, 0, 120 );
+            float r = g_WaypointPickRadiusPx * 0.9f;
+            dl->AddCircleFilled( c, r + 2.0f, colBg, 24 );
+            dl->AddCircle( c, r, col, 24, 2.0f );
+        }
+    }
 }
