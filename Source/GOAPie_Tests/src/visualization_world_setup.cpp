@@ -12,8 +12,6 @@
 #include <string>
 #include <cstring>
 
-namespace goapie_tests
-{
 
 struct SimpleActionEntry
 {
@@ -533,5 +531,3 @@ void drawWorldSetupWindow( ExampleParameters& params )
 
     drawTargetsModal();
 }
-
-} // namespace goapie_tests
