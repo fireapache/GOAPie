@@ -223,6 +223,8 @@ files
 "%{prj.location}/**.h",
 "%{prj.location}/**.c"
 }
+-- Exclude Lua sources that define a program entry point (main) or test mains.
+removefiles { "%{prj.location}/lua.c", "%{prj.location}/onelua.c", "%{prj.location}/ltests.c", "%{prj.location}/ltests/**.c" }
 
 filter "system:windows"
 staticruntime "On"
@@ -272,13 +274,14 @@ project "GOAPie"
 
 project "Tests"
 
-	location "Source/GOAPie_Tests/"
-	kind "ConsoleApp"
-	language "C++"
-	targetdir ("Binaries/%{prj.name}-" .. outputdir)
-	objdir ("Intermediate/%{prj.name}-" .. outputdir)
-	
+location "Source/GOAPie_Tests/"
+kind "ConsoleApp"
+language "C++"
+targetdir ("Binaries/%{prj.name}-" .. outputdir)
+objdir ("Intermediate/%{prj.name}-" .. outputdir)
+
 dependson { "GOAPie", "LUA" }
+defines { "GIE_WITH_LUA=1" }
 includedirs
 {
 "Source/GOAPie/include/",
