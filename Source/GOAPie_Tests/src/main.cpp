@@ -23,9 +23,9 @@ EXAMPLE_FUNCTION( cutDownTrees )
 EXAMPLE_FUNCTION( treesOnHill )
 // example 5
 EXAMPLE_FUNCTION( survivalOnHill )
-// example 6
+ // example 6
 EXAMPLE_FUNCTION( heistOpenSafe )
-
+EXAMPLE_FUNCTION( heistOpenSafe_Lua )
 typedef int ( *ExampleFunc )( ExampleParameters& );
 
 struct ExampleFunctionEntry
@@ -42,15 +42,16 @@ extern void printSimulatedActions( const gie::Planner& planner );
 
 int main( int argc, char** argv )
 {
-	std::vector< ExampleFunctionEntry > exampleFunctions
-	{
-		{ fundamentals, fundamentalsName },
-		{ openDoor, openDoorName },
-		{ cutDownTrees, cutDownTreesName },
-		{ treesOnHill, treesOnHillName },
-		{ survivalOnHill, survivalOnHillName },
-		{ heistOpenSafe, heistOpenSafeName }
-	};
+std::vector< ExampleFunctionEntry > exampleFunctions
+{
+{ fundamentals, fundamentalsName },
+{ openDoor, openDoorName },
+{ cutDownTrees, cutDownTreesName },
+{ treesOnHill, treesOnHillName },
+{ survivalOnHill, survivalOnHillName },
+{ heistOpenSafe, heistOpenSafeName },
+{ heistOpenSafe_Lua, heistOpenSafe_LuaName }
+};
 
 	int ex = -1;
 

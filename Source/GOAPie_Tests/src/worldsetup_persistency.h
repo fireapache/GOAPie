@@ -198,7 +198,7 @@ inline std::vector< std::shared_ptr< ActionSetEntry > > BuildLuaActionEntriesFro
     {
         // Only include active actions
         if( !a.active ) continue;
-        out.emplace_back( std::make_shared< LuaActionSetEntry >( a.name, a.evaluateSource, a.simulateSource, a.heuristicSource ) );
+        out.emplace_back( std::make_shared< LuaActionSetEntry >( std::make_shared< LuaSandbox >(), a.name, a.evaluateSource, a.simulateSource, a.heuristicSource ) );
     }
     return out;
 }
