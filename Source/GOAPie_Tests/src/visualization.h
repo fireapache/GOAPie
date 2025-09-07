@@ -76,6 +76,7 @@ extern bool g_ShowWaypointEditorWindow;
 extern bool g_ShowEntityOutlinerWindow; // New: Entity Outliner visibility
 extern bool g_ShowDetailsPanelWindow;   // New: Details Panel visibility
 extern bool g_ShowWorldSettingsWindow;  // New: World Settings visibility
+extern bool g_ShowWorldSetupWindow;     // New: World Setup visibility
 extern bool g_ShowEntityFactoryWindow;  // New: Entity Factory visibility
 
 // Global selection shared across tools
@@ -134,6 +135,7 @@ void drawBlackboardPropertiesWindow( const gie::Simulation* simulation );
 void drawEntityOutlinerWindow( gie::World& world ); // New: Entity Outliner
 void drawDetailsPanelWindow( gie::World& world );   // New: Details Panel
 void drawWorldSettingsWindow( ExampleParameters& params ); // New: World Settings
+void drawWorldSetupWindow( ExampleParameters& params );    // New: World Setup
 void drawEntityFactoryWindow( gie::World& world );  // New: Entity Factory
 
 // World View and overlays

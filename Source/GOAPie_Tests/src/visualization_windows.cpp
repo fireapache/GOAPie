@@ -28,6 +28,7 @@ void drawImGuiWindows( bool& useHeuristics, ExampleParameters& params )
     drawEntityOutlinerWindow( params.world ); // New
     drawDetailsPanelWindow( params.world );   // New
     drawWorldSettingsWindow( params );        // New: host example-specific ImGui funcs
+    drawWorldSetupWindow( params );           // New: World Setup
     drawEntityFactoryWindow( params.world );  // New: Entity Factory
 
     // Clicking anywhere else than the archetype window tool and the world view should unselect archetype

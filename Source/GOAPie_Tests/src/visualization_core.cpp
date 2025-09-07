@@ -67,6 +67,7 @@ bool g_ShowWaypointEditorWindow = false;
 bool g_ShowEntityOutlinerWindow = false; // New: Entity Outliner visibility
 bool g_ShowDetailsPanelWindow = false;   // New: Details Panel visibility
 bool g_ShowWorldSettingsWindow = false;  // New: World Settings visibility
+bool g_ShowWorldSetupWindow = false;     // New: World Setup visibility
 bool g_ShowEntityFactoryWindow = false;  // New: Entity Factory visibility
 
 // Shared selection (unified set) — defined in visualization_selection_state.cpp
@@ -117,6 +118,7 @@ static void LoadWindowVisibilitySettings()
         else if( key == "ShowEntityOutlinerWindow" ) g_ShowEntityOutlinerWindow = parseBool(val); // New
         else if( key == "ShowDetailsPanelWindow" ) g_ShowDetailsPanelWindow = parseBool(val);     // New
         else if( key == "ShowWorldSettingsWindow" ) g_ShowWorldSettingsWindow = parseBool(val);   // New
+        else if( key == "ShowWorldSetupWindow" ) g_ShowWorldSetupWindow = parseBool(val);         // New
         else if( key == "ShowEntityFactoryWindow" ) g_ShowEntityFactoryWindow = parseBool(val);   // New
     }
 }
@@ -136,6 +138,7 @@ static void SaveWindowVisibilitySettings()
     out << "ShowEntityOutlinerWindow=" << ( g_ShowEntityOutlinerWindow ? 1 : 0 ) << '\n'; // New
     out << "ShowDetailsPanelWindow=" << ( g_ShowDetailsPanelWindow ? 1 : 0 ) << '\n';     // New
     out << "ShowWorldSettingsWindow=" << ( g_ShowWorldSettingsWindow ? 1 : 0 ) << '\n';   // New
+    out << "ShowWorldSetupWindow=" << ( g_ShowWorldSetupWindow ? 1 : 0 ) << '\n';         // New
     out << "ShowEntityFactoryWindow=" << ( g_ShowEntityFactoryWindow ? 1 : 0 ) << '\n';   // New
 }
 
@@ -501,6 +504,7 @@ void ShowExampleAppDockSpace( bool* p_open )
             ImGui::MenuItem( "Entity Outliner", NULL, &g_ShowEntityOutlinerWindow ); // New
             ImGui::MenuItem( "Details Panel", NULL, &g_ShowDetailsPanelWindow );     // New
             ImGui::MenuItem( "World Settings", NULL, &g_ShowWorldSettingsWindow );   // New
+            ImGui::MenuItem( "World Setup", NULL, &g_ShowWorldSetupWindow );
             ImGui::MenuItem( "Entity Factory", NULL, &g_ShowEntityFactoryWindow );   // New
             ImGui::EndMenu();
         }

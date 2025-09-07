@@ -204,6 +204,38 @@ project "IMGUI"
 		optimize "On"
 		runtime "Release"
 
+-- Lua 5.4 static library (sources to be vendored under Source/LUA/)
+project "LUA"
+
+location "Source/LUA/"
+kind "StaticLib"
+language "C"
+targetdir ("Intermediate/%{prj.name}-" .. outputdir)
+objdir ("Intermediate/%{prj.name}-" .. outputdir)
+
+includedirs
+{
+"%{prj.location}/"
+}
+
+files
+{
+"%{prj.location}/**.h",
+"%{prj.location}/**.c"
+}
+
+filter "system:windows"
+staticruntime "On"
+systemversion "latest"
+
+filter "configurations:Debug"
+symbols "On"
+runtime "Debug"
+
+filter "configurations:Release"
+optimize "On"
+runtime "Release"
+
 group ""
 
 project "GOAPie"
@@ -246,32 +278,35 @@ project "Tests"
 	targetdir ("Binaries/%{prj.name}-" .. outputdir)
 	objdir ("Intermediate/%{prj.name}-" .. outputdir)
 	
-	dependson { "GOAPie" }
-	includedirs
-	{
-		"Source/GOAPie/include/",
-		"Source/GLFW/include/",
-		"Source/GLAD/include/",
-		"Source/GLM/",
-		"Source/IMGUI/",
-		"Source/IMGUI/backends/",
-		"Source/UUID_V4/"
-	}
+dependson { "GOAPie", "LUA" }
+includedirs
+{
+"Source/GOAPie/include/",
+"Source/GLFW/include/",
+"Source/GLAD/include/",
+"Source/GLM/",
+"Source/IMGUI/",
+"Source/IMGUI/backends/",
+"Source/UUID_V4/",
+"Source/LUA/"
+}
 	
-	links
-	{
-		"GLAD.lib",
-		"GLFW.lib",
-		"IMGUI.lib",
-		"opengl32.lib"
-	}
+links
+{
+"GLAD.lib",
+"GLFW.lib",
+"IMGUI.lib",
+"LUA.lib",
+"opengl32.lib"
+}
 
-	libdirs
-	{
-		("Intermediate/GLAD-" .. outputdir),
-		("Intermediate/GLFW-" .. outputdir),
-		("Intermediate/IMGUI-" .. outputdir)
-	}
+libdirs
+{
+("Intermediate/GLAD-" .. outputdir),
+("Intermediate/GLFW-" .. outputdir),
+("Intermediate/IMGUI-" .. outputdir),
+("Intermediate/LUA-" .. outputdir)
+}
 
 	files
 	{
