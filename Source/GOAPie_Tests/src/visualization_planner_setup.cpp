@@ -7,6 +7,7 @@
 #include "persistency.h"
 
 #include <imgui.h>
+#include "thirdparty/ImGuiColorTextEdit/TextEditor.h"
 #include <vector>
 #include <string>
 #include <cstring>
@@ -133,15 +134,30 @@ void drawPlannerSetupWindow( ExampleParameters& params )
         if (s_showLogicModal)
         {
             ImGui::OpenPopup("Edit Action Logic");
-            if (ImGui::BeginPopupModal("Edit Action Logic", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(800, 600), ImGuiCond_Appearing);
+            if (ImGui::BeginPopupModal("Edit Action Logic", nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings))
             {
+                static TextEditor s_logicEditor;
+                static bool s_logicEditorInit = false;
+
+                if (ImGui::IsWindowAppearing() || !s_logicEditorInit)
+                {
+                    s_logicEditor.SetLanguageDefinition(TextEditor::LanguageDefinition::Lua());
+                    s_logicEditor.SetPalette(TextEditor::GetDarkPalette());
+                    s_logicEditor.SetText(s_modalEditEntry.sourceLua);
+                    s_logicEditorInit = true;
+                }
+
                 ImGui::Text("Editing: %s", s_modalEditEntry.name.c_str());
                 ImGui::Separator();
 
-                char srcBuf[8192] = {0};
-                strncpy(srcBuf, s_modalEditEntry.sourceLua.c_str(), sizeof(srcBuf)-1);
-                if (ImGui::InputTextMultiline("Action Source", srcBuf, sizeof(srcBuf), ImVec2(600,300)))
-                    s_modalEditEntry.sourceLua = std::string(srcBuf);
+                ImVec2 editorSize = ImGui::GetContentRegionAvail() - ImVec2{ 0, 64 };
+                s_logicEditor.Render("##lua_editor", editorSize, true);
+                if (s_logicEditor.IsTextChanged())
+                {
+                    s_modalEditEntry.sourceLua = s_logicEditor.GetText();
+                }
 
                 ImGui::Separator();
 
@@ -251,6 +267,11 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                     s_showLogicModal = false;
                     s_editPlannerActionIndex = -1;
                     s_modalCompileError.clear();
+                    // reset editor init so it re-initializes next time modal opens
+                    /* if TextEditor is present it will be a static in this scope; reset its init flag */
+                    // Note: s_logicEditorInit is static inside this modal scope; reset via a second static variable trick
+                    // (we declared s_logicEditorInit above in this scope; set it to false to force re-init)
+                    s_logicEditorInit = false;
                     ImGui::CloseCurrentPopup();
                 }
 

@@ -39,7 +39,6 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
     const float localX = io.MousePos.x - pos.x;
     const float localY = io.MousePos.y - pos.y;
     const bool mouseOverWindow = ( localX >= 0.0f && localX <= windowWidth && localY >= 0.0f && localY <= windowHeight );
-    g_WorldViewWindowHovered = mouseOverWindow; // track hover for archetype click-outside rule
 
     // Allow canceling archetype placement with Escape or Right Mouse Button while hovering World View
     if( mouseOverWindow && g_SelectedArchetypeGuid != gie::NullGuid )
@@ -551,7 +550,13 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
             ImGui::PopStyleVar();
         }
 
-        // overlays and interactions
+ // overlays and interactions
+        // Determine hover and whether ImGui wants to capture mouse (when interacting with other UI)
+        ImGuiIO& io = ImGui::GetIO();
+        bool worldHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_None);
+        g_WorldViewWindowHovered = worldHovered;
+        bool allowWorldInput = worldHovered && !io.WantCaptureMouse;
+
         drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
         drawRoomNamesOverlay( world, planner, pos, windowWidth, windowHeight );
 
@@ -559,11 +564,13 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
         drawRectSelectionOverlayOnWorldView( pos, windowWidth, windowHeight );
 
         // New: generic selection and archetype placement + rectangle and multi-drag
-        handleEntitySelectionOnWorldView( pos, windowWidth, windowHeight );
+        if (allowWorldInput)
+            handleEntitySelectionOnWorldView( pos, windowWidth, windowHeight );
 
         if( g_ShowWaypointEditorWindow )
         {
-            handleWaypointEditorOnWorldView( pos, windowWidth, windowHeight );
+            if (allowWorldInput)
+                handleWaypointEditorOnWorldView( pos, windowWidth, windowHeight );
             drawWaypointEditorOverlayOnWorldView( pos, windowWidth, windowHeight );
         }
     }
