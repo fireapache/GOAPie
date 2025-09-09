@@ -200,6 +200,37 @@ project "IMGUI"
 		symbols "On"
 		runtime "Debug"
 
+filter "configurations:Release"
+	optimize "On"
+	runtime "Release"
+
+project "ImGuiColorTextEdit"
+
+	location "Source/ImGuiColorTextEdit/"
+	kind "StaticLib"
+	language "C++"
+	targetdir ("Intermediate/%{prj.name}-" .. outputdir)
+	objdir ("Intermediate/%{prj.name}-" .. outputdir)
+
+	includedirs {
+		"%{prj.location}/",
+		"Source/IMGUI/"
+	}
+
+	files {
+		"%{prj.location}/TextEditor.h",
+		"%{prj.location}/TextEditor.cpp"
+	}
+
+	filter "system:windows"
+		cppdialect "C++17"
+		staticruntime "On"
+		systemversion "latest"
+
+	filter "configurations:Debug"
+		symbols "On"
+		runtime "Debug"
+
 	filter "configurations:Release"
 		optimize "On"
 		runtime "Release"
@@ -280,7 +311,7 @@ language "C++"
 targetdir ("Binaries/%{prj.name}-" .. outputdir)
 objdir ("Intermediate/%{prj.name}-" .. outputdir)
 
-dependson { "GOAPie", "LUA" }
+dependson { "GOAPie", "LUA", "ImGuiColorTextEdit" }
 defines { "GIE_WITH_LUA=1" }
 includedirs
 {
@@ -291,15 +322,17 @@ includedirs
 "Source/IMGUI/",
 "Source/IMGUI/backends/",
 "Source/UUID_V4/",
-"Source/LUA/"
+"Source/LUA/",
+"Source/ImGuiColorTextEdit/"
 }
-	
+
 links
 {
 "GLAD.lib",
 "GLFW.lib",
 "IMGUI.lib",
 "LUA.lib",
+"ImGuiColorTextEdit.lib",
 "opengl32.lib"
 }
 
@@ -308,7 +341,14 @@ libdirs
 ("Intermediate/GLAD-" .. outputdir),
 ("Intermediate/GLFW-" .. outputdir),
 ("Intermediate/IMGUI-" .. outputdir),
-("Intermediate/LUA-" .. outputdir)
+("Intermediate/LUA-" .. outputdir),
+("Intermediate/ImGuiColorTextEdit-" .. outputdir)
+}
+
+-- Exclude embedded stub sources so only submodule implementation is built
+removefiles {
+"%{prj.location}/src/thirdparty/ImGuiColorTextEdit/**.cpp",
+"%{prj.location}/src/thirdparty/ImGuiColorTextEdit/**.h"
 }
 
 	files
