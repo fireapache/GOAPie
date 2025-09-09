@@ -1,34 +1,45 @@
 -- DisableAlarm.lua
--- Minimal starter Lua action for Example6 (Lua variant).
--- NOTE: this is a permissive placeholder. Prefer calling provided C helpers (debug, get_property, set_property,
--- move_agent_to_entity, estimate_heuristic) once they are bound by the C++ bridge.
+-- Minimal starter Lua action chunk for example6.
+-- Exposes: evaluate(params), simulate(params), heuristic(params)
+-- Uses helper functions injected into the chunk env: debug(), get_property(guid, name), set_property(guid, name, value), entity_by_name(name)
+
+local function safe_tostring(v)
+    if v == nil then return "nil" end
+    return tostring(v)
+end
 
 function evaluate(params)
-  -- permissive: return true so planner will consider this action.
-  -- Replace with world-aware checks using get_property(...) when bindings are available.
-  return true
+    -- Return true if the alarm is currently enabled (so action is applicable).
+    -- If property is absent, be permissive and allow the planner to consider the action.
+    local alarmGuid = entity_by_name("Alarm")
+    if not alarmGuid then
+        debug("DisableAlarm.evaluate: no Alarm entity found; permissive=true")
+        return true
+    end
+
+    local enabled = get_property(alarmGuid, "Enabled")
+    debug("DisableAlarm.evaluate: Alarm Enabled = " .. safe_tostring(enabled))
+    if enabled == nil then
+        return true
+    end
+
+    return enabled == true
 end
 
 function simulate(params)
-  -- permissive simulate: attempt to call debug() if available, otherwise just succeed.
-  if debug ~= nil then
-    debug("DisableAlarm: simulate called")
-  end
-  -- If set_property is available, try clearing an "Armed" property on the AlarmSystem by name.
-  if entity_by_name ~= nil and set_property ~= nil then
-    local a = entity_by_name("AlarmSystem")
-    if a then
-      set_property(a, "Armed", false)
-      if debug ~= nil then debug("DisableAlarm: set AlarmSystem.Armed = false") end
+    -- Attempt to disable the alarm by setting its Enabled property to false.
+    local alarmGuid = entity_by_name("Alarm")
+    if not alarmGuid then
+        debug("DisableAlarm.simulate: no Alarm entity found -> fail")
+        return false
     end
-  end
-  return true
+
+    local ok = set_property(alarmGuid, "Enabled", false)
+    debug("DisableAlarm.simulate: set Enabled=false -> " .. safe_tostring(ok))
+    return ok == true
 end
 
 function heuristic(params)
-  -- Return neutral heuristic; once estimate_heuristic() is bound, prefer calling it for parity.
-  if estimate_heuristic ~= nil then
-    return estimate_heuristic()
-  end
-  return 0
+    -- Simple heuristic: zero cost for this action.
+    return 0
 end

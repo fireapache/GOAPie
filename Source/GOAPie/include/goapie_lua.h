@@ -1,5 +1,3 @@
-#pragma once
-
 // Lightweight header-only scaffolding for Lua-backed actions.
 // NOTE:
 // - This header provides a safe, compileable placeholder implementation so the
@@ -14,6 +12,8 @@
 //                       to user-provided Lua snippets (stored as strings).
 // - LuaActionSetEntry : ActionSetEntry factory producing LuaActionSimulator instances.
 // - helpers           : small utility to append Lua entries into a Planner.
+
+#pragma once
 
 #include <string>
 #include <vector>
@@ -48,9 +48,6 @@ namespace gie
 
 #if GIE_WITH_LUA
 
-// Suppress Lua's abort/message-box on a panic by installing a custom panic
-// handler that logs the error and returns instead of calling abort.
-// Use 'static' for internal linkage so the header remains safe across TUs.
 static int goapie_lua_panic_handler(lua_State* L)
 {
     const char* msg = lua_tostring(L, -1);
@@ -62,13 +59,9 @@ static int goapie_lua_panic_handler(lua_State* L)
     {
         std::cerr << "[LuaSandbox] PANIC: (no message on stack)\n";
     }
-    /* Do not call abort or show a message box; return to C.
-       Returning from a panic handler is allowed (Lua treats it as last-resort)
-       and avoids platform dialogs. */
     return 0;
 }
 
-// Helper C functions exposed to Lua (minimal placeholders).
 static int goapie_lua_debug_func(lua_State* L)
 {
     const char* msg = lua_tostring(L, 1);
@@ -78,8 +71,6 @@ static int goapie_lua_debug_func(lua_State* L)
 
 static int goapie_lua_get_property_func(lua_State* L)
 {
-    // Args: (guid, propName) -> returns property value or nil.
-    // Retrieve current Simulation pointer stored in registry.
     lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
     void* ud = lua_touserdata(L, -1);
     lua_pop(L, 1);
@@ -166,7 +157,6 @@ static int goapie_lua_get_property_func(lua_State* L)
 
 static int goapie_lua_set_property_func(lua_State* L)
 {
-    // Args: (guid, propName, value) -> returns boolean success.
     lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
     void* ud = lua_touserdata(L, -1);
     lua_pop(L, 1);
@@ -190,7 +180,6 @@ static int goapie_lua_set_property_func(lua_State* L)
         return 1;
     }
 
-    // Determine Lua value type and set property accordingly.
     if( lua_isboolean( L, 3 ) )
     {
         bool v = lua_toboolean( L, 3 ) != 0;
@@ -215,14 +204,11 @@ static int goapie_lua_set_property_func(lua_State* L)
     }
     else if( lua_istable( L, 3 ) )
     {
-        // try vec3 (three numeric entries) or array of guids/numbers
-        // check length
         lua_len( L, 3 );
         int len = static_cast<int>( lua_tointeger( L, -1 ) );
         lua_pop( L, 1 );
         if( len == 3 )
         {
-            // attempt vec3
             double x, y, z;
             lua_rawgeti( L, 3, 1 ); x = lua_tonumber( L, -1 ); lua_pop( L, 1 );
             lua_rawgeti( L, 3, 2 ); y = lua_tonumber( L, -1 ); lua_pop( L, 1 );
@@ -233,7 +219,6 @@ static int goapie_lua_set_property_func(lua_State* L)
         }
         else
         {
-            // assume array of guids/numbers -> GUIDArray
             Property::GuidVector vec;
             for( int i = 1; i <= len; ++i )
             {
@@ -256,7 +241,6 @@ static int goapie_lua_set_property_func(lua_State* L)
 
 static int goapie_lua_entity_by_name_func(lua_State* L)
 {
-    // Args: (name) -> guid or nil
     lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
     void* ud = lua_touserdata(L, -1);
     lua_pop(L, 1);
@@ -272,7 +256,6 @@ static int goapie_lua_entity_by_name_func(lua_State* L)
     const char* name = lua_tostring( L, 1 );
     StringHash targetHash = stringHasher( name );
 
-    // Search simulation context first, then world context.
     for( const auto& kv : sim->context().entities() )
     {
         const Entity& e = kv.second;
@@ -299,7 +282,6 @@ static int goapie_lua_entity_by_name_func(lua_State* L)
 
 static int goapie_lua_tag_set_func(lua_State* L)
 {
-    // Args: (tagName) -> array table of GUIDs or nil
     lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
     void* ud = lua_touserdata(L, -1);
     lua_pop(L, 1);
@@ -328,7 +310,6 @@ static int goapie_lua_tag_set_func(lua_State* L)
 
 static int goapie_lua_move_agent_to_entity_func(lua_State* L)
 {
-    // Args: (targetEntityGuid) -> return path length (number) or nil on failure.
     lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
     void* ud = lua_touserdata(L, -1);
     lua_pop(L, 1);
@@ -369,8 +350,57 @@ static int goapie_lua_move_agent_to_entity_func(lua_State* L)
     const float dz = agentPos.z - targetPos.z;
     const float dist = std::sqrt( dx*dx + dy*dy + dz*dz );
 
-    // Move agent location inside simulation context (simulate movement)
     agentEnt->createProperty( "Location", targetPos );
+
+    lua_pushnumber( L, static_cast< lua_Number >( dist ) );
+    return 1;
+}
+
+static int goapie_lua_estimate_heuristic_real_func(lua_State* L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
+    void* ud = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if(!ud) { lua_pushnumber(L, 0.0); return 1; }
+    Simulation* sim = static_cast< Simulation* >( ud );
+
+    Guid agentGuid = sim->agent().guid();
+    const Entity* agentEnt = sim->context().entity( agentGuid );
+    if( !agentEnt ) agentEnt = sim->world()->entity( agentGuid );
+    if( !agentEnt ) { lua_pushnumber( L, 0.0 ); return 1; }
+
+    StringHash safeHash = stringHasher( "Safe" );
+    const Entity* safeEnt = nullptr;
+    for( const auto& kv : sim->context().entities() )
+    {
+        const Entity& e = kv.second;
+        if( e.nameHash() == safeHash ) { safeEnt = &e; break; }
+    }
+    if( !safeEnt )
+    {
+        for( const auto& kv : sim->world()->context().entities() )
+        {
+            const Entity& e = kv.second;
+            if( e.nameHash() == safeHash ) { safeEnt = &e; break; }
+        }
+    }
+
+    if( !safeEnt ) { lua_pushnumber( L, 0.0 ); return 1; }
+
+    const Property* agentLocP = agentEnt->property( "Location" );
+    const Property* safeLocP = safeEnt->property( "Location" );
+    if( !agentLocP || !safeLocP || !agentLocP->getVec3() || !safeLocP->getVec3() )
+    {
+        lua_pushnumber( L, 0.0 );
+        return 1;
+    }
+
+    const glm::vec3& a = *agentLocP->getVec3();
+    const glm::vec3& s = *safeLocP->getVec3();
+    const float dx = a.x - s.x;
+    const float dy = a.y - s.y;
+    const float dz = a.z - s.z;
+    const float dist = std::sqrt( dx*dx + dy*dy + dz*dz );
 
     lua_pushnumber( L, static_cast< lua_Number >( dist ) );
     return 1;
@@ -378,21 +408,17 @@ static int goapie_lua_move_agent_to_entity_func(lua_State* L)
 
 static int goapie_lua_estimate_heuristic_func(lua_State* L)
 {
-    // Retrieve sim pointer from registry; if unavailable return 0.
     lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
     void* ud = lua_touserdata(L, -1);
     lua_pop(L, 1);
     if(!ud) { lua_pushnumber(L, 0.0); return 1; }
     Simulation* sim = static_cast< Simulation* >( ud );
 
-    // Try to approximate the example6 heuristic by returning straight-line distance
-    // from agent to the Safe entity's Location property (if available).
     Guid agentGuid = sim->agent().guid();
     const Entity* agentEnt = sim->context().entity( agentGuid );
     if( !agentEnt ) agentEnt = sim->world()->entity( agentGuid );
     if( !agentEnt ) { lua_pushnumber( L, 0.0 ); return 1; }
 
-    // Find Safe entity by name hash "Safe"
     StringHash safeHash = stringHasher( "Safe" );
     const Entity* safeEnt = nullptr;
     for( const auto& kv : sim->context().entities() )
@@ -440,8 +466,6 @@ public:
         L = luaL_newstate();
         if( L )
         {
-            // Install custom panic handler immediately to avoid platform message boxes / abort
-            // if any code in luaL_openlibs (or later initialization) triggers a panic.
             lua_atpanic( L, goapie_lua_panic_handler );
             luaL_openlibs( L );
             std::cout << "[LuaSandbox] luaL_newstate succeeded (panic handler installed)\n";
@@ -458,9 +482,6 @@ public:
         L = nullptr;
     }
 
-    // Load a chunk (source) into a named table environment. Functions defined in
-    // the source (e.g. evaluate, simulate, heuristic) will be stored under a
-    // private environment table that falls back to the global environment.
     bool loadChunk( const std::string& name, const std::string& source )
     {
         if( !L )
@@ -469,7 +490,7 @@ public:
             return false;
         }
         std::cout << "[LuaSandbox] loadChunk: " << name << " (source size=" << source.size() << ")\n";
-        // Runtime capability probe: query Lua version and whether 'load' and 'loadstring' are available.
+
         if( luaL_loadstring( L, "return _VERSION, type(load), type(loadstring)" ) != LUA_OK )
         {
             const char* msg = lua_tostring( L, -1 );
@@ -482,7 +503,6 @@ public:
             {
                 const char* msg = lua_tostring( L, -1 );
                 if( msg ) std::cout << "[LuaSandbox] probe lua_pcall error: " << msg << "\n";
-                // attempt traceback if available
 #ifdef LUA_VERSION_NUM
                 std::cout << "[LuaSandbox] compiled LUA_VERSION_NUM=" << LUA_VERSION_NUM << "\n";
 #endif
@@ -500,16 +520,20 @@ public:
             }
         }
 
-        // Use a safe wrapper that leverages Lua's load() with an explicit environment.
-        // The wrapper creates an env table with fallback to _G, loads the provided source into that env,
-        // executes it and returns the env table to C++ where we'll store it in the registry.
-        //
-        // This avoids fiddly upvalue manipulation and is compatible with Lua 5.2+.
+        std::string src = source;
+        if( src.size() >= 3 &&
+            static_cast<unsigned char>( src[0] ) == 0xEF &&
+            static_cast<unsigned char>( src[1] ) == 0xBB &&
+            static_cast<unsigned char>( src[2] ) == 0xBF )
+        {
+            src.erase( 0, 3 );
+        }
+
         std::string wrapper;
-        wrapper.reserve( source.size() + name.size() + 128 );
+        wrapper.reserve( src.size() + name.size() + 128 );
         wrapper += "local env = {} setmetatable(env, { __index = _G })\n";
         wrapper += "local f, err = load([=[\n";
-        wrapper += source;
+        wrapper += src;
         wrapper += "\n]=], '";
         wrapper += name;
         wrapper += "', 't', env)\n";
@@ -521,26 +545,25 @@ public:
         {
             const char* msg = lua_tostring( L, -1 );
             if( msg ) std::cout << "[LuaSandbox] loadChunk wrapper luaL_loadstring error: " << msg << "\n";
+            m_lastError = msg ? msg : std::string("luaL_loadstring error");
             lua_pop( L, 1 );
             return false;
         }
 
-        // Execute wrapper; it returns env on success.
         if( lua_pcall( L, 0, 1, 0 ) != LUA_OK )
         {
             const char* msg = lua_tostring( L, -1 );
             if( msg ) std::cout << "[LuaSandbox] loadChunk wrapper lua_pcall error: " << msg << "\n";
-            // Capture a full traceback for improved diagnostics (lauxlib provides luaL_traceback).
-            // Push a traceback string onto the stack and print it.
             luaL_traceback( L, L, msg ? msg : "nil", 1 );
             const char* trace = lua_tostring( L, -1 );
             if( trace ) std::cout << "[LuaSandbox] loadChunk wrapper traceback: " << trace << "\n";
-            // Pop traceback + original error
+            if( trace ) m_lastError = trace;
+            else if( msg ) m_lastError = msg;
+            else m_lastError = std::string("unknown lua_pcall error");
             lua_pop( L, 2 );
             return false;
         }
 
-        // Expecting env table at top
         if( lua_type( L, -1 ) != LUA_TTABLE )
         {
             std::cout << "[LuaSandbox] loadChunk error: wrapper did not return env table\n";
@@ -548,8 +571,6 @@ public:
             return false;
         }
 
-        // Register helper functions into the returned env table so scripts can call debug(), get_property(), etc.
-        // (env is at top of stack)
         lua_pushcfunction( L, goapie_lua_debug_func );
         lua_setfield( L, -2, "debug" );
 
@@ -571,31 +592,29 @@ public:
         lua_pushcfunction( L, goapie_lua_estimate_heuristic_func );
         lua_setfield( L, -2, "estimate_heuristic" );
 
-        // Store env in registry under the chunk name
         lua_pushstring( L, name.c_str() ); // key
         lua_pushvalue( L, -2 );            // env
         lua_settable( L, LUA_REGISTRYINDEX ); // registry[name] = env
 
-        // Pop env from stack
         lua_pop( L, 1 );
 
-        // Record that this chunk was loaded.
         m_loaded.insert( name );
+        m_lastError.clear();
         return true;
     }
 
-    // Execute an evaluation chunk: calls _G[chunkName].evaluate(params)
+    const std::string& lastError() const { return m_lastError; }
+
     bool executeEvaluate( const std::string& chunkName, const EvaluateSimulationParams& params ) const
     {
-        if( !L ) return true; // permissive fallback
+        if( !L ) return true;
 
-        // get stored env for chunkName from registry: registry[chunkName]
         lua_pushstring( L, chunkName.c_str() ); // key
         lua_gettable( L, LUA_REGISTRYINDEX );   // +1 -> env or nil
         if( lua_type( L, -1 ) != LUA_TTABLE )
         {
             lua_pop( L, 1 );
-            return true; // no chunk -> permissive
+            return true;
         }
 
         lua_getfield( L, -1, "evaluate" ); // +1 (function or nil)
@@ -605,14 +624,11 @@ public:
             return true;
         }
 
-        // push params
         pushEvaluateParams( L, params );
-        // call func( params )
         if( lua_pcall( L, 1, 1, 0 ) != LUA_OK )
         {
             const char* msg = lua_tostring( L, -1 );
             if( msg ) std::cout << "[LuaSandbox] executeEvaluate lua_pcall error: " << msg << "\n";
-            // attempt full traceback
             luaL_traceback( L, L, msg ? msg : "nil", 1 );
             const char* trace = lua_tostring( L, -1 );
             if( trace ) std::cout << "[LuaSandbox] executeEvaluate traceback: " << trace << "\n";
@@ -629,12 +645,10 @@ public:
         return result;
     }
 
-    // Execute simulate: calls _G[chunkName].simulate(params)
     bool executeSimulate( const std::string& chunkName, SimulateSimulationParams& params ) const
     {
         if( !L ) return true;
 
-        // get stored env for chunkName from registry: registry[chunkName]
         lua_pushstring( L, chunkName.c_str() ); // key
         lua_gettable( L, LUA_REGISTRYINDEX );   // +1 -> env or nil
         if( lua_type( L, -1 ) != LUA_TTABLE )
@@ -671,12 +685,10 @@ public:
         return result;
     }
 
-    // Execute heuristic: calls _G[chunkName].heuristic(params) and expects number.
     void executeHeuristic( const std::string& chunkName, CalculateHeuristicParams& params ) const
     {
         if( !L ) return;
 
-        // get stored env for chunkName from registry: registry[chunkName]
         lua_pushstring( L, chunkName.c_str() ); // key
         lua_gettable( L, LUA_REGISTRYINDEX );   // +1 -> env or nil
         if( lua_type( L, -1 ) != LUA_TTABLE )
@@ -707,39 +719,32 @@ public:
         if( lua_isnumber( L, -1 ) )
         {
             double v = lua_tonumber( L, -1 );
-            // Heuristic value is expected to be stored on params.simulation.heuristic.value
             params.simulation.heuristic.value = static_cast< float >( v );
         }
 
-        // clear registry pointer
         lua_pushnil( L );
         lua_setfield( L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION" );
         lua_pop( L, 2 );
     }
 
-    // Marshalling helpers: convert C++ params -> Lua tables.
     void pushEvaluateParams( lua_State* L, const EvaluateSimulationParams& params ) const
     {
-        // params = { simulation = { guid = <num> }, agent = { guid = <num> }, goal = {} }
         lua_newtable( L ); // params
 
-        // simulation
         lua_pushstring( L, "simulation" );
         lua_newtable( L );
         lua_pushstring( L, "guid" );
         lua_pushinteger( L, static_cast< lua_Integer >( params.simulation.guid() ) );
-        lua_settable( L, -3 ); // simulation.guid = <num>
-        lua_settable( L, -3 ); // params.simulation = simulation table
+        lua_settable( L, -3 );
+        lua_settable( L, -3 );
 
-        // agent
         lua_pushstring( L, "agent" );
         lua_newtable( L );
         lua_pushstring( L, "guid" );
         lua_pushinteger( L, static_cast< lua_Integer >( params.agent.guid() ) );
-        lua_settable( L, -3 ); // agent.guid = <num>
-        lua_settable( L, -3 ); // params.agent = agent table
+        lua_settable( L, -3 );
+        lua_settable( L, -3 );
 
-        // goal (placeholder table for now)
         lua_pushstring( L, "goal" );
         lua_newtable( L );
         lua_settable( L, -3 ); // params.goal = {}
@@ -747,10 +752,8 @@ public:
 
     void pushSimulateParams( lua_State* L, const SimulateSimulationParams& params ) const
     {
-        // params = { simulation = { guid = <num> }, agent = { guid = <num> }, goal = {} }
         lua_newtable( L ); // params
 
-        // simulation
         lua_pushstring( L, "simulation" );
         lua_newtable( L );
         lua_pushstring( L, "guid" );
@@ -758,7 +761,6 @@ public:
         lua_settable( L, -3 );
         lua_settable( L, -3 );
 
-        // agent
         lua_pushstring( L, "agent" );
         lua_newtable( L );
         lua_pushstring( L, "guid" );
@@ -766,7 +768,6 @@ public:
         lua_settable( L, -3 );
         lua_settable( L, -3 );
 
-        // goal (placeholder)
         lua_pushstring( L, "goal" );
         lua_newtable( L );
         lua_settable( L, -3 );
@@ -774,19 +775,17 @@ public:
 
     void pushCalculateHeuristicParams( lua_State* L, const CalculateHeuristicParams& params ) const
     {
-        // Reuse simulate marshalling for heuristic call.
         pushSimulateParams( L, static_cast< const SimulateSimulationParams& >( params ) );
     }
 
 private:
     lua_State* L;
-    // lightweight set of loaded chunk names
     mutable std::unordered_set< std::string > m_loaded;
+    mutable std::string m_lastError;
 };
 
 #else // GIE_WITH_LUA
 
-// Minimal runtime wrapper (no-op when GIE_WITH_LUA == 0).
 class LuaSandbox
 {
 public:
@@ -843,10 +842,11 @@ public:
     std::string_view name() const { return m_name; }
     StringHash hash() const override { return stringHasher( m_name ); }
 
-    // @Return True if context meets prerequisites.
     bool evaluate( EvaluateSimulationParams params ) const override
     {
 #if GIE_WITH_LUA
+        // Prefer unified lua chunk if present (m_luaChunk on the associated entry).
+        // The simulator receives chunk names from the ActionSetEntry factory; keep legacy behavior here.
         return m_sandbox->executeEvaluate( m_evaluateChunk, params );
 #else
         (void)params;
@@ -854,7 +854,6 @@ public:
 #endif
     }
 
-    // @Return True if simulation setup was successful.
     bool simulate( SimulateSimulationParams params ) const override
     {
 #if GIE_WITH_LUA
@@ -865,7 +864,6 @@ public:
 #endif
     }
 
-    // Calculates heuristic value for simulation.
     void calculateHeuristic( CalculateHeuristicParams params ) const override
     {
 #if GIE_WITH_LUA
@@ -884,21 +882,49 @@ private:
 };
 
 // ActionSetEntry producing LuaActionSimulator instances.
+// This class adds a lightweight single-chunk ergonomics layer while preserving
+// the legacy evaluate/simulate/heuristic fields for compatibility.
+// New usage can provide a single luaChunk + single source; legacy constructors remain supported.
 class LuaActionSetEntry : public ActionSetEntry
 {
 public:
+    // Legacy ctor (kept for compatibility)
     LuaActionSetEntry( const std::shared_ptr<LuaSandbox>& sandbox,
                        const std::string& name,
                        const std::string& evaluateChunk,
                        const std::string& simulateChunk,
                        const std::string& heuristicChunk = std::string(),
-                       const NamedArguments& arguments = {} )
+                       const NamedArguments& args = {} )
     : m_name( name )
     , m_evaluateChunk( evaluateChunk )
     , m_simulateChunk( simulateChunk )
     , m_heuristicChunk( heuristicChunk )
-    , m_arguments( arguments )
+    , m_arguments( args )
     , m_sandbox( sandbox )
+    , m_evaluateSource()
+    , m_simulateSource()
+    , m_heuristicSource()
+    , m_luaChunk() // empty by default
+    , m_source()
+    {
+    }
+
+    // New single-chunk ctor (preferred)
+    LuaActionSetEntry( const std::shared_ptr<LuaSandbox>& sandbox,
+                       const std::string& name,
+                       const std::string& luaChunk,
+                       const NamedArguments& args = {} )
+    : m_name( name )
+    , m_evaluateChunk( luaChunk )
+    , m_simulateChunk( luaChunk )
+    , m_heuristicChunk()
+    , m_arguments( args )
+    , m_sandbox( sandbox )
+    , m_evaluateSource()
+    , m_simulateSource()
+    , m_heuristicSource()
+    , m_luaChunk( luaChunk )
+    , m_source()
     {
     }
 
@@ -909,29 +935,147 @@ public:
 
     std::shared_ptr< ActionSimulator > simulator( const NamedArguments& /*arguments*/ ) const override
     {
-        // Merge stored arguments with provided ones if needed (simple replace semantics).
+        // Create LuaActionSimulator using stored evaluate/simulate chunk names.
         return std::make_shared< LuaActionSimulator >( m_sandbox, m_name, m_evaluateChunk, m_simulateChunk, m_heuristicChunk, m_arguments );
     }
 
-    std::shared_ptr< Action > action( const NamedArguments& /*arguments*/ ) const override
+    std::shared_ptr< Action > action( const NamedArguments& arguments ) const override
     {
-        // No-op runtime Action - planner produces Actions via ActionSetEntry when backtracking.
+        (void)arguments;
         return nullptr;
     }
 
     const NamedArguments& entryArguments() const { return m_arguments; }
 
+    // Legacy chunk accessors
+    std::string evaluateChunkName() const { return !m_luaChunk.empty() ? m_luaChunk : m_evaluateChunk; }
+    std::string simulateChunkName() const { return !m_luaChunk.empty() ? m_luaChunk : m_simulateChunk; }
+    std::string heuristicChunkName() const { return !m_luaChunk.empty() ? m_luaChunk : m_heuristicChunk; }
+
+    // New single-chunk accessor
+    std::string chunkName() const { return !m_luaChunk.empty() ? m_luaChunk : m_evaluateChunk; }
+
+    // Source text accessors for editor integration
+    // Legacy methods still behave by mirroring to the unified source when possible.
+    void setEvaluateSource( const std::string& src )
+    {
+        m_evaluateSource = src;
+        m_simulateSource = src;
+        m_source = src;
+    }
+    void setSimulateSource( const std::string& src )
+    {
+        m_simulateSource = src;
+        m_evaluateSource = src;
+        m_source = src;
+    }
+    void setHeuristicSource( const std::string& src )
+    {
+        m_heuristicSource = src;
+        // heuristic kept separate in legacy model; also set m_source for convenience.
+        if (m_source.empty()) m_source = src;
+    }
+
+    // New single-source API
+    void setSource( const std::string& src )
+    {
+        m_source = src;
+        m_evaluateSource = src;
+        m_simulateSource = src;
+        // do not override heuristicSource
+    }
+
+    const std::string& evaluateSource() const { return m_evaluateSource.empty() ? m_source : m_evaluateSource; }
+    const std::string& simulateSource() const { return m_simulateSource.empty() ? m_source : m_simulateSource; }
+    const std::string& heuristicSource() const { return m_heuristicSource.empty() ? m_source : m_heuristicSource; }
+
+    // New single-source accessor
+    const std::string& source() const { return m_source; }
+
+    // Compile/validate and load stored sources into the sandbox registry under the configured chunk names.
+    // Returns true if all non-empty sources compiled and loaded successfully.
+    bool compileAndLoad() const
+    {
+#if GIE_WITH_LUA
+        m_lastCompileError.clear();
+
+        // Prefer unified chunk if present, otherwise fall back to evaluate/simulate/heuristic.
+        const std::string chunkToLoad = !m_luaChunk.empty() ? m_luaChunk : m_evaluateChunk;
+
+        // If we have a unified source, load it under chunkToLoad.
+        if( !m_source.empty() )
+        {
+            if( !m_sandbox->loadChunk( chunkToLoad, m_source ) )
+            {
+                m_lastCompileError = m_sandbox->lastError();
+                return false;
+            }
+        }
+        else
+        {
+            // Fallback: try individual sources as before.
+            if( !m_evaluateSource.empty() )
+            {
+                if( !m_sandbox->loadChunk( m_evaluateChunk, m_evaluateSource ) )
+                {
+                    m_lastCompileError = m_sandbox->lastError();
+                    return false;
+                }
+            }
+            if( !m_simulateSource.empty() )
+            {
+                if( !m_sandbox->loadChunk( m_simulateChunk, m_simulateSource ) )
+                {
+                    m_lastCompileError = m_sandbox->lastError();
+                    return false;
+                }
+            }
+            if( !m_heuristicSource.empty() )
+            {
+                if( !m_sandbox->loadChunk( m_heuristicChunk, m_heuristicSource ) )
+                {
+                    m_lastCompileError = m_sandbox->lastError();
+                    return false;
+                }
+            }
+        }
+
+        m_lastCompileError.clear();
+        return true;
+#else
+        (void)m_evaluateSource; (void)m_simulateSource; (void)m_heuristicSource; (void)m_source;
+        return true;
+#endif
+    }
+
+    const std::string& lastCompileError() const { return m_lastCompileError; }
+
+    void setSandbox( const std::shared_ptr< LuaSandbox >& sandbox ) { m_sandbox = sandbox; }
+
 private:
     std::string m_name;
+
+    // Legacy per-function chunk identifiers (kept for compatibility)
     std::string m_evaluateChunk;
     std::string m_simulateChunk;
     std::string m_heuristicChunk;
+
     NamedArguments m_arguments;
     std::shared_ptr< LuaSandbox > m_sandbox;
+
+    // Legacy per-function source buffers
+    std::string m_evaluateSource;
+    std::string m_simulateSource;
+    std::string m_heuristicSource;
+
+    // New unified chunk + source (preferred)
+    std::string m_luaChunk;
+    std::string m_source;
+
+    mutable std::string m_lastCompileError;
 };
 
 // Helper: append Lua action entries to a planner's actionSet.
-// This keeps the existing C++ entries and adds Lua-defined ones.
 inline void ApplyLuaActionEntriesToPlanner( Planner& planner, const std::vector< std::shared_ptr< ActionSetEntry > >& entries )
 {
     auto& actionSet = planner.actionSet();

@@ -21,6 +21,11 @@ struct WorldSetupAction
 {
     std::string name;
     bool active{ true };
+    // Chunk names used as keys in the LuaSandbox registry (stable identifiers).
+    std::string evaluateChunk;    // registry key for evaluate chunk
+    std::string simulateChunk;    // registry key for simulate chunk
+    std::string heuristicChunk;   // registry key for heuristic chunk (optional)
+    // Source text stored for editor persistence.
     std::string evaluateSource;   // Lua source for Evaluate
     std::string simulateSource;   // Lua source for Simulate
     std::string heuristicSource;  // optional Lua source for heuristic
@@ -68,6 +73,10 @@ inline bool SaveWorldSetupToJson( const WorldSetupData& data, const std::string&
         json::Object obj;
         obj[ "name" ] = a.name;
         obj[ "active" ] = a.active ? true : false;
+        // Persist chunk identifiers (preferred) alongside the full source buffers for compatibility.
+        obj[ "evaluateChunk" ] = a.evaluateChunk;
+        obj[ "simulateChunk" ] = a.simulateChunk;
+        obj[ "heuristicChunk" ] = a.heuristicChunk;
         obj[ "evaluate" ] = a.evaluateSource;
         obj[ "simulate" ] = a.simulateSource;
         obj[ "heuristic" ] = a.heuristicSource;
@@ -150,6 +159,9 @@ inline bool LoadWorldSetupFromJson( WorldSetupData& outData, const std::string& 
             WorldSetupAction a;
             auto itName = aobj.find( "name" ); if( itName != aobj.end() && itName->second.isString() ) a.name = itName->second.asString();
             auto itActive = aobj.find( "active" ); if( itActive != aobj.end() && itActive->second.isBoolean() ) a.active = itActive->second.asBoolean();
+            auto itEvalChunk = aobj.find( "evaluateChunk" ); if( itEvalChunk != aobj.end() && itEvalChunk->second.isString() ) a.evaluateChunk = itEvalChunk->second.asString();
+            auto itSimChunk = aobj.find( "simulateChunk" ); if( itSimChunk != aobj.end() && itSimChunk->second.isString() ) a.simulateChunk = itSimChunk->second.asString();
+            auto itHeuChunk = aobj.find( "heuristicChunk" ); if( itHeuChunk != aobj.end() && itHeuChunk->second.isString() ) a.heuristicChunk = itHeuChunk->second.asString();
             auto itEval = aobj.find( "evaluate" ); if( itEval != aobj.end() && itEval->second.isString() ) a.evaluateSource = itEval->second.asString();
             auto itSim = aobj.find( "simulate" ); if( itSim != aobj.end() && itSim->second.isString() ) a.simulateSource = itSim->second.asString();
             auto itHeu = aobj.find( "heuristic" ); if( itHeu != aobj.end() && itHeu->second.isString() ) a.heuristicSource = itHeu->second.asString();
@@ -194,12 +206,21 @@ inline std::vector< std::shared_ptr< ActionSetEntry > > BuildLuaActionEntriesFro
 {
     std::vector< std::shared_ptr< ActionSetEntry > > out;
     out.reserve( data.actions.size() );
-    for( const auto& a : data.actions )
-    {
-        // Only include active actions
-        if( !a.active ) continue;
-        out.emplace_back( std::make_shared< LuaActionSetEntry >( std::make_shared< LuaSandbox >(), a.name, a.evaluateSource, a.simulateSource, a.heuristicSource ) );
-    }
+        for( const auto& a : data.actions )
+        {
+            // Only include active actions
+            if( !a.active ) continue;
+            // Determine stable chunk names; fall back to generated names if none provided.
+            std::string evalChunk = !a.evaluateChunk.empty() ? a.evaluateChunk : (a.name + ".evaluate");
+            std::string simChunk = !a.simulateChunk.empty() ? a.simulateChunk : (a.name + ".simulate");
+            std::string heuChunk = a.heuristicChunk;
+            auto entry = std::make_shared< LuaActionSetEntry >( std::make_shared< LuaSandbox >(), a.name, evalChunk, simChunk, heuChunk );
+            // Restore source buffers so editor can show and compile them.
+            entry->setEvaluateSource( a.evaluateSource );
+            entry->setSimulateSource( a.simulateSource );
+            entry->setHeuristicSource( a.heuristicSource );
+            out.emplace_back( entry );
+        }
     return out;
 }
 

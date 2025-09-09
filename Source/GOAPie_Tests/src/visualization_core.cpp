@@ -67,7 +67,7 @@ bool g_ShowWaypointEditorWindow = false;
 bool g_ShowEntityOutlinerWindow = false; // New: Entity Outliner visibility
 bool g_ShowDetailsPanelWindow = false;   // New: Details Panel visibility
 bool g_ShowWorldSettingsWindow = false;  // New: World Settings visibility
-bool g_ShowWorldSetupWindow = false;     // New: World Setup visibility
+bool g_ShowWorldSetupWindow = false;     // New: Planner Setup visibility
 bool g_ShowEntityFactoryWindow = false;  // New: Entity Factory visibility
 
 // Shared selection (unified set) — defined in visualization_selection_state.cpp
@@ -504,7 +504,7 @@ void ShowExampleAppDockSpace( bool* p_open )
             ImGui::MenuItem( "Entity Outliner", NULL, &g_ShowEntityOutlinerWindow ); // New
             ImGui::MenuItem( "Details Panel", NULL, &g_ShowDetailsPanelWindow );     // New
             ImGui::MenuItem( "World Settings", NULL, &g_ShowWorldSettingsWindow );   // New
-            ImGui::MenuItem( "World Setup", NULL, &g_ShowWorldSetupWindow );
+            ImGui::MenuItem( "Planner Setup", NULL, &g_ShowWorldSetupWindow );
             ImGui::MenuItem( "Entity Factory", NULL, &g_ShowEntityFactoryWindow );   // New
             ImGui::EndMenu();
         }

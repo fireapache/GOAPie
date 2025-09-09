@@ -65,10 +65,16 @@ struct HeistToggles
 // Global toggles are kept static inside this TU (edited via ImGui).
 static HeistToggles g_Toggles{};
 
-// Forward declarations
+ // Forward declarations
 static void ImGuiFunc6( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimulationGuid );
 static void ResetHeistWorldFromToggles( gie::World& world );
 static gie::Entity* FindRoom( gie::World& world, const char* roomName );
+
+ // Split example 6 setup into world-only and actions-only functions.
+ // heistOpenSafe_world builds the World/Agent/Goal and returns the created agent pointer.
+ // heistOpenSafe_actions registers native action simulators and action set entries.
+ gie::Agent* heistOpenSafe_world( ExampleParameters& params );
+ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent );
 
 // Heuristic helper: estimate remaining effort to reach safe room from agent position
 static float EstimateHeistHeuristic( const gie::Simulation& sim, const gie::Entity* agentEnt )
@@ -141,13 +147,10 @@ static float MoveAgentAlongPath( gie::SimulateSimulationParams& params, const gl
     return path.length;
 }
 
-// Example entry point
-int heistOpenSafe( ExampleParameters& params )
+// Build world and return created agent
+gie::Agent* heistOpenSafe_world( ExampleParameters& params )
 {
     gie::World& world = params.world;
-    gie::Planner& planner = params.planner;
-    gie::Goal& goal = params.goal;
-
     // specific example visualization
     params.imGuiDrawFunc = &ImGuiFunc6;
 
@@ -247,7 +250,7 @@ int heistOpenSafe( ExampleParameters& params )
     const gie::StringHash BedroomAHash      = H( "BedroomA" );
     const gie::StringHash BedroomBHash      = H( "BedroomB" );
     const gie::StringHash CorridorHash      = H( "Corridor" );
-	const gie::StringHash EntranceHash      = H( "Entrance" );
+const gie::StringHash EntranceHash      = H( "Entrance" );
     const gie::StringHash FrontDoorHash     = H( "FrontDoor" );
     const gie::StringHash FuseBoxHash       = H( "FuseBox" );
     const gie::StringHash GarageHash        = H( "Garage" );
@@ -257,13 +260,13 @@ int heistOpenSafe( ExampleParameters& params )
     const gie::StringHash LivingRoomHash    = H( "LivingRoom" );
     const gie::StringHash OutsideBackHash   = H( "OutsideBack" );
     const gie::StringHash OutsideFrontHash  = H( "OutsideFront" );
-	const gie::StringHash WholeHouseHash    = H( "WholeHouse" );
+const gie::StringHash WholeHouseHash    = H( "WholeHouse" );
 
     struct RoomInfo
-	{
-		gie::StringHash name;
-		glm::vec3 vertices[ 4 ] = {};
-	};
+{
+gie::StringHash name;
+glm::vec3 vertices[ 4 ] = {};
+};
 
     const RoomInfo rooms[] = {
     { WholeHouseHash,  { {  -30.f,  -20.f,   0.f }, {   30.f,  -20.f,   0.f }, {   30.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
@@ -279,21 +282,21 @@ int heistOpenSafe( ExampleParameters& params )
     };
 
     std::vector< gie::Entity* > roomEntities;
-	roomEntities.reserve( std::size( rooms ) );
+roomEntities.reserve( std::size( rooms ) );
 
     for( const auto& room : rooms )
     {
         auto roomEntity = world.createEntity( gie::stringRegister().get( room.name ) );
         roomEntity->createProperty( "Vertices", std::vector< glm::vec3 >( std::begin( room.vertices ), std::end( room.vertices ) ) );
-		roomEntity->createProperty( "Discovered", true );
-		roomEntity->createProperty( "DisplayName", true );
+roomEntity->createProperty( "Discovered", true );
+roomEntity->createProperty( "DisplayName", true );
         roomEntity->createProperty( "Location", ( room.vertices[ 0 ] + room.vertices[ 1 ] + room.vertices[ 2 ] + room.vertices[ 3 ] ) * 0.25f );
-		world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) } );
+world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) } );
         roomEntities.push_back( roomEntity );
     }
 
     *( roomEntities[ 0 ]->property( "Discovered" )->getBool() ) = true; // WholeHouse known from start
-	*( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false; // don't display WholeHouse name in visualization
+*( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false; // don't display WholeHouse name in visualization
 
     // Waypoints (rooms + points of interest + doors/windows + outdoor) laid roughly as a house layout
     struct WP { gie::StringHash name; glm::vec3 p; };
@@ -441,7 +444,6 @@ int heistOpenSafe( ExampleParameters& params )
     link( "Kitchen", "LaundryRoom" );
     link( "Entrance", "LivingRoom" );
 
-
     // Create connectors: FrontDoor, BackDoor, KitchenWindow (entry points)
     auto makeConnector = [&]( const char* name, const char* fromRoom, const char* toRoom, const glm::vec3& where ) -> gie::Entity*
     {
@@ -525,7 +527,22 @@ int heistOpenSafe( ExampleParameters& params )
 
     // Goal: open the safe
     auto safeOpenPpt = safe->property( "Open" );
-    goal.targets.emplace_back( safeOpenPpt->guid(), true );
+
+    // Note: World setup must expose the Goal targets for planner actions.
+    // We don't have direct access to params.goal here (the planner will receive it later),
+    // but example6 originally appended a target to params.goal. To keep behavior consistent,
+    // set the target here by using params.goal (stored at caller side) if available.
+    params.goal.targets.emplace_back( safeOpenPpt->guid(), true );
+
+    return agent;
+}
+
+// Register actions and run planner simulate
+static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
+{
+    gie::World& world = params.world;
+    gie::Planner& planner = params.planner;
+    gie::Goal& goal = params.goal;
 
     // Action dummies
     DEFINE_DUMMY_ACTION_CLASS( DisableAlarm )
@@ -1254,6 +1271,13 @@ int heistOpenSafe( ExampleParameters& params )
     return 0;
 }
 
+// Thin wrapper preserving original entry point but using split functions
+int heistOpenSafe( ExampleParameters& params )
+{
+    gie::Agent* agent = heistOpenSafe_world( params );
+    return heistOpenSafe_actions( params, agent );
+}
+
 // Apply UI toggles
 static void ResetHeistWorldFromToggles( gie::World& world )
 {
@@ -1376,7 +1400,7 @@ static gie::Entity* FindRoom( gie::World& world, const char* roomName )
 
 static void ImGuiFunc6( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimulationGuid )
 {
-    ImGui::TextUnformatted( "Heist – Open the Safe (Example 6)" );
+    ImGui::TextUnformatted( "Heist â€“ Open the Safe (Example 6)" );
     ImGui::Separator();
 
     if( ImGui::CollapsingHeader( "Entry Points" ) )
