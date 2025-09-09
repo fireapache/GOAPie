@@ -13,3 +13,6 @@
 [submodule "Source/LUA"]
 	path = Source/LUA
 	url = https://github.com/lua/lua.git
+[submodule "Source/ImGuiColorTextEdit"]
+	path = Source/ImGuiColorTextEdit
+	url = https://github.com/BalazsJako/ImGuiColorTextEdit.git
