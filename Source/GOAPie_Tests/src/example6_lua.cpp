@@ -63,9 +63,9 @@ int heistOpenSafe_Lua( ExampleParameters& params )
 	const std::string exampleName = g_exampleName;
     
     // New structure: <exeDir>/examples/example6/scripts/
+    std::filesystem::path exeDir;
     if (!exePath.empty()) {
-        // Use std::filesystem::path to construct the path so separators are consistent
-        std::filesystem::path exeDir( exePath );
+        exeDir = std::filesystem::path( exePath );
         // If exePath was a full path including the executable file, remove the filename
         if (std::filesystem::is_regular_file(exeDir)) exeDir = exeDir.parent_path();
 
@@ -79,43 +79,65 @@ int heistOpenSafe_Lua( ExampleParameters& params )
             std::cout << "[example6_lua] Using new directory structure: " << scriptsBase << std::endl;
         }
     }
-    
-    const std::vector< std::string > actionNames =
+
+    // Discover .lua files in scriptsBase and build actions from their filenames
+	std::vector< std::filesystem::path > luaFiles;
+
+    if( scriptsBase.empty() )
     {
-        "DisableAlarm",
-        "DisablePower",
-        "UseKey",
-        "Lockpick",
-        "BreakConnector",
-        "CutBars",
-        "EnterThrough",
-        "SearchForItem",
-        "MoveInside",
-        "OpenSafeWithKey",
-        "OpenSafeWithCode",
-        "CrackSafe",
-        "BruteForceSafe"
-    };
+		std::cout << "[example6_lua] New directory structure not found!\n";
+	}
+    else
+    {
+		try
+		{
+			for( const auto& entry : std::filesystem::directory_iterator( std::filesystem::path( scriptsBase ) ) )
+			{
+				try
+				{
+					if( !entry.is_regular_file() )
+						continue;
+					auto ext = entry.path().extension().string();
+					if( ext == ".lua" )
+						luaFiles.emplace_back( entry.path() );
+				}
+				catch( const std::exception& /*e*/ )
+				{
+					// skip problematic entries
+				}
+			}
+		}
+		catch( const std::exception& /*e*/ )
+		{
+			std::cout << "[example6_lua] failed to enumerate scripts in: " << scriptsBase << std::endl;
+		}
+    }
+
+    if( luaFiles.empty() )
+	{
+		std::cout << "[example6_lua] No .lua files found!\n";
+	}
+    
+    // Sort discovered files by filename to have deterministic order
+    std::sort( luaFiles.begin(), luaFiles.end() );
 
     std::vector< std::shared_ptr< ActionSetEntry > > luaEntries;
-    for( const auto& name : actionNames )
-    {
-        std::string file = scriptsBase + name + ".lua";
+    for (const auto& p : luaFiles) {
+        std::string name = p.stem().string();
+        std::string file = p.string();
         std::string src = readFileContents( file );
 
         // Use unified chunk name per-action
-		std::string luaChunk = g_exampleName + std::string{ "." } + name;
+        std::string luaChunk = g_exampleName + std::string{ "." } + name;
 
         // New single-chunk constructor
         auto entry = std::make_shared< LuaActionSetEntry >( sandbox, name, luaChunk, NamedArguments{} );
 
-        if( src.empty() )
-        {
+        if (src.empty()) {
             std::cout << "[example6_lua] script missing or empty: " << file << "\n";
             // leave entry source empty (permissive entry)
         }
-        else
-        {
+        else {
             // Attach the source to the entry so the UI/editor can show and edit it.
             entry->setSource( src );
 
