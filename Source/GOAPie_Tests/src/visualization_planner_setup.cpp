@@ -18,6 +18,7 @@
 
 #include <unordered_map>
 #include <regex>
+#include <map>
 
 using namespace gie;
 
@@ -39,14 +40,19 @@ static bool s_canSaveLuaFile = false;
 static int s_editPlannerActionIndex = -1; // index into planner.actionSet() when modal opened
 static SimpleActionEntry s_modalEditEntry;
 static std::string s_modalCompileError;
-using ErrorMarkers = TextEditor::ErrorMarkers;
-static ErrorMarkers markers;
+static std::map<int, std::string> markers;
 
 // Transient modal message (mutually exclusive) - shown for a limited time
 static std::string s_modalTransientMessage;
 static ImVec4 s_modalTransientColor = ImVec4( 0, 0, 0, 0 );
 static double s_modalTransientExpire = 0.0; // ImGui::GetTime() + seconds
 static ImVec2 s_bottomGroupSize = ImVec2( 0, 0 );
+
+// New action creation state
+static char s_newActionName[64] = "";
+static std::string s_createStatusMsg;
+static ImVec4 s_createStatusColor = ImVec4( 0, 0, 0, 0 );
+static double s_createStatusExpire = 0.0;
 
 bool extractLastNumberAndSuffix( const std::string& s, std::string& lastNumber, std::string& suffix )
 {
@@ -113,15 +119,20 @@ void drawPlannerSetupWindow( ExampleParameters& params )
         ImGui::TextUnformatted( "Registered Actions (planner)" );
         ImGui::Separator();
 
-        // Columns: Name | Use | Logic
-        ImGui::Columns( 3, "registered_actions_cols", true );
+        // Columns: Name | Use | Logic | Delete
+        ImGui::Columns( 4, "registered_actions_cols", true );
         ImGui::TextUnformatted( "Name" );
         ImGui::NextColumn();
         ImGui::TextUnformatted( "Use" );
         ImGui::NextColumn();
         ImGui::TextUnformatted( "Logic" );
         ImGui::NextColumn();
+        ImGui::TextUnformatted( "Delete" );
+        ImGui::NextColumn();
         ImGui::Separator();
+
+        // Collect indices to delete (will be processed after iteration)
+        std::vector<int> indicesToDelete;
 
         // Seed UI model from current planner actionSet (only for Lua entries)
         auto& actionSet = params.planner.actionSet();
@@ -169,7 +180,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                         s_actions.push_back( std::move( newSa ) );
                     }
 
-                    if( ImGui::Button( "Edit Logic" ) )
+                    if( ImGui::Button( "Edit" ) )
                     {
                         s_modalEditEntry.name = nm;
                         s_modalEditEntry.chunk = luaChunk;
@@ -187,10 +198,228 @@ void drawPlannerSetupWindow( ExampleParameters& params )
             }
 
             ImGui::NextColumn();
+
+            // Delete button: only for LuaActionSetEntry
+            if( entry )
+            {
+                auto luaEntry = std::dynamic_pointer_cast< gie::LuaActionSetEntry >( entry );
+                if( luaEntry )
+                {
+                    if( ImGui::Button( "Delete" ) )
+                    {
+                        indicesToDelete.push_back( static_cast<int>( ai ) );
+                    }
+                }
+                else
+                {
+                    ImGui::TextDisabled( "-" );
+                }
+            }
+
+            ImGui::NextColumn();
             ImGui::PopID();
         }
 
         ImGui::Columns( 1 );
+
+        // Process deletions after iteration
+        if( !indicesToDelete.empty() )
+        {
+            // Sort in descending order to delete from back to front
+            std::sort( indicesToDelete.rbegin(), indicesToDelete.rend() );
+            
+            for( int idx : indicesToDelete )
+            {
+                if( idx >= 0 && idx < static_cast<int>( actionSet.size() ) )
+                {
+                    auto& entry = actionSet[ idx ];
+                    if( entry )
+                    {
+                        auto luaEntry = std::dynamic_pointer_cast< gie::LuaActionSetEntry >( entry );
+                        if( luaEntry )
+                        {
+            // Remove from planner action set
+            actionSet.erase( actionSet.begin() + idx );
+            
+            // Remove from UI model
+            std::string entryName = std::string( luaEntry->name() );
+                            s_actions.erase( 
+                                std::remove_if( s_actions.begin(), s_actions.end(),
+                                    [&entryName]( const SimpleActionEntry& sa ) {
+                                        return sa.name == entryName;
+                                    }), 
+                                s_actions.end() );
+                            
+                            // Remove from enabled map
+                            s_actionEnabled.erase( entryName );
+                            
+                            // Delete the Lua file
+                            std::string exeDir = gie::persistency::executableDirectory();
+                            const std::string folderName = ( g_exampleName.empty() ? std::string( "example" ) : g_exampleName ) + "_lua";
+                            std::string scriptsDir = gie::persistency::joinPath( exeDir, "scripts" );
+                            std::string actionDir = gie::persistency::joinPath( scriptsDir, folderName );
+                            std::string filePath = gie::persistency::joinPath( actionDir, entryName + ".lua" );
+                            try
+                            {
+                                std::filesystem::remove( filePath );
+                            }
+                            catch( ... )
+                            {
+                                // Ignore file deletion errors
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Re-run planner.plan() after deletions
+            params.planner.plan();
+        }
+
+        ImGui::Separator();
+        
+        // Create new action section
+        ImGui::Text( "Create New Action:" );
+        ImGui::PushItemWidth( 300 );
+        ImGui::InputText( "##new_action_name", s_newActionName, sizeof( s_newActionName ) );
+        ImGui::PopItemWidth();
+        ImGui::SameLine();
+        
+        if( ImGui::Button( "Create Action" ) )
+        {
+            std::string newName = s_newActionName;
+            
+            // Validate name: only letters A-Z, a-z
+            std::regex namePattern( "^[A-Za-z]+$" );
+            bool validName = std::regex_match( newName, namePattern );
+            
+            if( newName.empty() )
+            {
+                s_createStatusMsg = "Name cannot be empty";
+                s_createStatusColor = ImVec4( 1.0f, 0.2f, 0.2f, 1.0f );
+                s_createStatusExpire = ImGui::GetTime() + 3.0;
+            }
+            else if( !validName )
+            {
+                s_createStatusMsg = "Name can only contain letters (A-Z, a-z)";
+                s_createStatusColor = ImVec4( 1.0f, 0.2f, 0.2f, 1.0f );
+                s_createStatusExpire = ImGui::GetTime() + 3.0;
+            }
+            else
+            {
+                // Check for duplicate names
+                bool duplicate = false;
+                for( const auto& entry : actionSet )
+                {
+                    if( entry && entry->name() == newName )
+                    {
+                        duplicate = true;
+                        break;
+                    }
+                }
+                
+                if( duplicate )
+                {
+                    s_createStatusMsg = "Action with this name already exists";
+                    s_createStatusColor = ImVec4( 1.0f, 0.2f, 0.2f, 1.0f );
+                    s_createStatusExpire = ImGui::GetTime() + 3.0;
+                }
+                else
+                {
+                    // Create template Lua script
+                    std::string templateScript = 
+                        "-- " + newName + " action\n"
+                        "\n"
+                        "function evaluate(params)\n"
+                        "    -- Return true if this action can be executed with the given parameters\n"
+                        "    return false\n"
+                        "end\n"
+                        "\n"
+                        "function simulate(params)\n"
+                        "    -- Apply the effects of this action to the world state\n"
+                        "    -- Return true if simulation was successful\n"
+                        "    return false\n"
+                        "end\n"
+                        "\n"
+                        "function heuristic(params)\n"
+                        "    -- Return estimated cost/priority for this action (lower is better)\n"
+                        "    return 0\n"
+                        "end\n";
+                    
+                    try
+                    {
+                        // Create the Lua action entry with a new sandbox
+                        auto sandbox = std::make_shared< gie::LuaSandbox >();
+                        std::string chunkName = newName + "_chunk";
+                        auto newLuaEntry = std::make_shared< gie::LuaActionSetEntry >(
+                            sandbox, newName, chunkName, gie::NamedArguments{} );
+                        
+                        newLuaEntry->setSource( templateScript );
+                        bool compiled = newLuaEntry->compileAndLoad();
+                        
+                        if( compiled )
+                        {
+                            // Add to planner action set
+                            params.planner.actionSet().push_back( newLuaEntry );
+                            
+                            // Add to UI model
+                            SimpleActionEntry newSa;
+                            newSa.name = newName;
+                            newSa.chunk = chunkName;
+                            newSa.sourceLua = templateScript;
+                            newSa.active = true;
+                            s_actions.push_back( std::move( newSa ) );
+                            
+                            // Enable by default
+                            s_actionEnabled[ newName ] = true;
+                            
+                            // Save the Lua file
+                            std::string exeDir = gie::persistency::executableDirectory();
+                            const std::string folderName = ( g_exampleName.empty() ? std::string( "example" ) : g_exampleName ) + "_lua";
+                            std::string scriptsDir = gie::persistency::joinPath( exeDir, "scripts" );
+                            std::string actionDir = gie::persistency::joinPath( scriptsDir, folderName );
+                            std::string filePath = gie::persistency::joinPath( actionDir, newName + ".lua" );
+                            
+                            std::filesystem::create_directories( actionDir );
+                            std::ofstream out( filePath, std::ios::binary | std::ios::trunc );
+                            if( out.is_open() )
+                            {
+                                out.write( templateScript.data(), static_cast< std::streamsize >( templateScript.size() ) );
+                                out.close();
+                            }
+                            
+                            // Re-run planner.plan() after creation
+                            params.planner.plan();
+                            
+                            // Clear the input and show success
+                            std::memset( s_newActionName, 0, sizeof( s_newActionName ) );
+                            s_createStatusMsg = "Action '" + newName + "' created successfully!";
+                            s_createStatusColor = ImVec4( 0.2f, 1.0f, 0.2f, 1.0f );
+                            s_createStatusExpire = ImGui::GetTime() + 3.0;
+                        }
+                        else
+                        {
+                            s_createStatusMsg = "Failed to compile template script: " + newLuaEntry->lastCompileError();
+                            s_createStatusColor = ImVec4( 1.0f, 0.2f, 0.2f, 1.0f );
+                            s_createStatusExpire = ImGui::GetTime() + 5.0;
+                        }
+                    }
+                    catch( const std::exception& e )
+                    {
+                        s_createStatusMsg = "Error creating action: " + std::string( e.what() );
+                        s_createStatusColor = ImVec4( 1.0f, 0.2f, 0.2f, 1.0f );
+                        s_createStatusExpire = ImGui::GetTime() + 5.0;
+                    }
+                }
+            }
+        }
+        
+        // Display creation status message
+        double now = ImGui::GetTime();
+        if( s_createStatusExpire > now && !s_createStatusMsg.empty() )
+        {
+            ImGui::TextColored( s_createStatusColor, "%s", s_createStatusMsg.c_str() );
+        }
 
         // Logic editor modal for planner action entries (Lua)
         if( s_showLogicModal )
