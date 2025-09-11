@@ -34,6 +34,10 @@ struct SimpleActionEntry
 static std::vector< SimpleActionEntry > s_actions;
 static std::unordered_map< std::string, bool > s_actionEnabled;
 
+// Planner state persistence
+static bool s_plannerStateLoaded = false;
+static bool s_plannerStateDirty = false;
+
 // Modal editing state
 static bool s_showLogicModal = false;
 static bool s_canSaveLuaFile = false;
@@ -56,16 +60,127 @@ static double s_createStatusExpire = 0.0;
 
 bool extractLastNumberAndSuffix( const std::string& s, std::string& lastNumber, std::string& suffix )
 {
-	static const std::regex re( R"((?:.*\D)?(\d+)\D*(.*)$)" );
-	std::smatch m;
-	if( std::regex_search( s, m, re ) && m.size() >= 3 )
-	{
-		lastNumber = m[ 1 ].str();
-		std::string afterNumber = m[ 0 ].str().substr( m.position( 1 ) + m.length( 1 ) + 2 );
-		suffix = afterNumber.replace( afterNumber.size() - 17, 17, "" ); // trim end
-		return true;
-	}
-	return false;
+static const std::regex re( R"((?:.*\D)?(\d+)\D*(.*)$)" );
+std::smatch m;
+if( std::regex_search( s, m, re ) && m.size() >= 3 )
+{
+lastNumber = m[ 1 ].str();
+std::string afterNumber = m[ 0 ].str().substr( m.position( 1 ) + m.length( 1 ) + 2 );
+suffix = afterNumber.replace( afterNumber.size() - 17, 17, "" ); // trim end
+return true;
+}
+return false;
+}
+
+// Planner state persistence helper functions
+static std::string plannerStateFilePath()
+{
+    extern std::string g_exampleName;
+    std::string exeDir = gie::persistency::executableDirectory();
+    const std::string folderName = ( g_exampleName.empty() ? std::string( "example" ) : g_exampleName ) + "_lua";
+    std::string scriptsDir = gie::persistency::joinPath( exeDir, "scripts" );
+    std::string actionDir = gie::persistency::joinPath( scriptsDir, folderName );
+    return gie::persistency::joinPath( actionDir, "planner.json" );
+}
+
+static void loadPlannerSetupState()
+{
+    if( s_plannerStateLoaded )
+        return;
+    
+    s_plannerStateLoaded = true;
+    
+    const std::string filePath = plannerStateFilePath();
+    std::ifstream in( filePath, std::ios::binary );
+    if( !in.is_open() )
+        return; // File doesn't exist, use defaults
+    
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    const std::string data = oss.str();
+    if( data.empty() )
+        return;
+    
+    try
+    {
+        gie::persistency::json::Value root = gie::persistency::json::Value::parse( data );
+        if( !root.isObject() )
+            return;
+        
+        const auto& rootObj = root.asObject();
+        
+        // Check format version
+        auto itFmt = rootObj.find( "formatVersion" );
+        if( itFmt == rootObj.end() || !itFmt->second.isNumber() )
+            return;
+        const int formatVersion = static_cast<int>( itFmt->second.asNumber() );
+        if( formatVersion != 1 )
+            return;
+        
+        // Load actions
+        auto itActions = rootObj.find( "actions" );
+        if( itActions != rootObj.end() && itActions->second.isObject() )
+        {
+            const auto& actionsObj = itActions->second.asObject();
+            for( const auto& kv : actionsObj )
+            {
+                const std::string& actionName = kv.first;
+                if( kv.second.isObject() )
+                {
+                    const auto& actionData = kv.second.asObject();
+                    auto itActive = actionData.find( "active" );
+                    if( itActive != actionData.end() && itActive->second.isBoolean() )
+                    {
+                        s_actionEnabled[ actionName ] = itActive->second.asBoolean();
+                    }
+                }
+            }
+        }
+    }
+    catch( ... )
+    {
+        // Ignore parsing errors, use defaults
+    }
+}
+
+static void savePlannerSetupState()
+{
+    const std::string filePath = plannerStateFilePath();
+    
+    try
+    {
+        // Build JSON
+        gie::persistency::json::Object rootObj;
+        rootObj[ "formatVersion" ] = 1.0;
+        
+        gie::persistency::json::Object actionsObj;
+        for( const auto& kv : s_actionEnabled )
+        {
+            gie::persistency::json::Object actionData;
+            actionData[ "active" ] = kv.second;
+            actionsObj[ kv.first ] = gie::persistency::json::Value{ std::move( actionData ) };
+        }
+        rootObj[ "actions" ] = gie::persistency::json::Value{ std::move( actionsObj ) };
+        
+        gie::persistency::json::Value root{ std::move( rootObj ) };
+        std::string jsonText = root.dump( 2 );
+        
+        // Ensure directory exists
+        std::filesystem::create_directories( std::filesystem::path( filePath ).parent_path() );
+        
+        // Write to file
+        std::ofstream out( filePath, std::ios::binary | std::ios::trunc );
+        if( out.is_open() )
+        {
+            out.write( jsonText.data(), static_cast< std::streamsize >( jsonText.size() ) );
+        }
+        
+        s_plannerStateDirty = false;
+    }
+    catch( ... )
+    {
+        // Ignore file write errors
+    }
 }
 
 // Forward
@@ -113,6 +228,9 @@ void drawPlannerSetupWindow( ExampleParameters& params )
         return;
     }
 
+    // Load planner state once before processing actions
+    loadPlannerSetupState();
+
     if( ImGui::CollapsingHeader( "Actions", ImGuiTreeNodeFlags_DefaultOpen ) )
     {
         ImGui::Separator();
@@ -149,7 +267,15 @@ void drawPlannerSetupWindow( ExampleParameters& params )
             // Use checkbox (UI-only)
             if( s_actionEnabled.find( nm ) == s_actionEnabled.end() )
                 s_actionEnabled[ nm ] = true;
-            ImGui::Checkbox( ( "##use" + nm ).c_str(), &s_actionEnabled[ nm ] );
+            bool oldValue = s_actionEnabled[ nm ];
+            if( ImGui::Checkbox( ( "##use" + nm ).c_str(), &s_actionEnabled[ nm ] ) )
+            {
+                // Checkbox was toggled, save state
+                if( s_actionEnabled[ nm ] != oldValue )
+                {
+                    savePlannerSetupState();
+                }
+            }
             ImGui::NextColumn();
 
             // Logic button: only for LuaActionSetEntry
@@ -274,6 +400,9 @@ void drawPlannerSetupWindow( ExampleParameters& params )
             
             // Re-run planner.plan() after deletions
             params.planner.plan();
+            
+            // Save planner state after deletions
+            savePlannerSetupState();
         }
 
         ImGui::Separator();
@@ -372,6 +501,9 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                             
                             // Enable by default
                             s_actionEnabled[ newName ] = true;
+                            
+                            // Save planner state
+                            savePlannerSetupState();
                             
                             // Save the Lua file
                             std::string exeDir = gie::persistency::executableDirectory();
