@@ -8,6 +8,8 @@
 #include <sstream>
 #include <string>
 
+#include "persistency.h"
+
 // Forward declarations for internal helpers
 static void handleWaypointEditorOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
 static void drawWaypointEditorOverlayOnWorldView( ImVec2 pos, float windowWidth, float windowHeight );
@@ -381,20 +383,49 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 	}
 }
 
+// Path helper functions for new directory structure
+static std::string exampleNameOrDefault()
+{
+    extern std::string g_exampleName;
+    return g_exampleName.empty() ? std::string( "example" ) : g_exampleName;
+}
+
+static std::string examplesRootDir()
+{
+    std::string exeDir = gie::persistency::executableDirectory();
+    return gie::persistency::joinPath( exeDir, "examples" );
+}
+
+static std::string exampleRootDir()
+{
+    return gie::persistency::joinPath( examplesRootDir(), exampleNameOrDefault() );
+}
+
+static std::string worldStateFilePath()
+{
+    return gie::persistency::joinPath( exampleRootDir(), "world.json" );
+}
+
+static std::string legacyWorldStateFilePath()
+{
+    extern std::string g_exampleName;
+    std::string saveFile = g_exampleName;
+    // Remove invalid filename characters
+    saveFile.erase(
+        std::remove_if(
+            saveFile.begin(),
+            saveFile.end(),
+            []( char c ) { return !( std::isalnum( c ) || c == '_' || c == '-' ); } ),
+        saveFile.end() );
+    if( saveFile.empty() )
+        saveFile = "world";
+    saveFile += "_world.json";
+    return saveFile;
+}
+
 std::string getSaveFileName()
 {
-	std::string saveFile = g_exampleName;
-	// Remove invalid filename characters
-	saveFile.erase(
-		std::remove_if(
-			saveFile.begin(),
-			saveFile.end(),
-			[]( char c ) { return !( std::isalnum( c ) || c == '_' || c == '-' ); } ),
-		saveFile.end() );
-	if( saveFile.empty() )
-		saveFile = "world";
-	saveFile += "_world.json";
-	return saveFile;
+    return worldStateFilePath();
 }
 
 void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
@@ -467,16 +498,34 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
 			ImGui::SameLine();
 			if( ImGui::Button( "Load" ) )
 			{
-				// Use a local filename to avoid mutating g_exampleName
+				// Try new path first, then legacy path
 				g_IsLoading = true;
-				if( gie::persistency::LoadWorldFromJson( world, getSaveFileName() ) )
+				bool loaded = false;
+				
+				// Try new path
+				if( gie::persistency::LoadWorldFromJson( world, worldStateFilePath() ) )
+				{
+					loaded = true;
+				}
+				else
+				{
+					// Try legacy path
+					std::string legacyPath = legacyWorldStateFilePath();
+					if( gie::persistency::LoadWorldFromJson( world, legacyPath ) )
+					{
+						std::cout << "[WorldView] Loaded from legacy path: " << legacyPath << std::endl;
+						loaded = true;
+					}
+				}
+				
+				if( loaded )
 				{
 					g_DrawingLimitsInitialized = false;
 					s_LoadMsgTimer = 2.0f;
 				}
 				else
 				{
-					s_LoadErrText = std::string( "Load failed: " ) + getSaveFileName().c_str();
+					s_LoadErrText = std::string( "Load failed: " ) + worldStateFilePath();
 					s_LoadErrTimer = 4.0f;
 				}
 				g_IsLoading = false;

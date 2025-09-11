@@ -72,8 +72,39 @@ return true;
 return false;
 }
 
+// Path helper functions for new directory structure
+static std::string exampleNameOrDefault( const std::string& exampleName = "" )
+{
+    if( !exampleName.empty() )
+        return exampleName;
+    
+    extern std::string g_exampleName;
+    return g_exampleName.empty() ? std::string( "example" ) : g_exampleName;
+}
+
+static std::string examplesRootDir()
+{
+    std::string exeDir = gie::persistency::executableDirectory();
+    return gie::persistency::joinPath( exeDir, "examples" );
+}
+
+static std::string exampleRootDir( const std::string& exampleName = "" )
+{
+    return gie::persistency::joinPath( examplesRootDir(), exampleNameOrDefault( exampleName ) );
+}
+
+static std::string exampleScriptsDir( const std::string& exampleName = "" )
+{
+    return gie::persistency::joinPath( exampleRootDir( exampleName ), "scripts" );
+}
+
 // Planner state persistence helper functions
 static std::string plannerStateFilePath()
+{
+    return gie::persistency::joinPath( exampleRootDir(), "planner.json" );
+}
+
+static std::string legacyPlannerStateFilePath()
 {
     extern std::string g_exampleName;
     std::string exeDir = gie::persistency::executableDirectory();
@@ -92,6 +123,19 @@ static void loadPlannerSetupState()
     
     const std::string filePath = plannerStateFilePath();
     std::ifstream in( filePath, std::ios::binary );
+    
+    // If new path doesn't exist, try legacy path
+    if( !in.is_open() )
+    {
+        const std::string legacyPath = legacyPlannerStateFilePath();
+        in.open( legacyPath, std::ios::binary );
+        if( in.is_open() )
+        {
+            std::cout << "[PlannerSetup] Loading from legacy path: " << legacyPath << std::endl;
+            s_plannerStateDirty = true; // Mark dirty to save in new location later
+        }
+    }
+    
     if( !in.is_open() )
         return; // File doesn't exist, use defaults
     
@@ -380,11 +424,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                             s_actionEnabled.erase( entryName );
                             
                             // Delete the Lua file
-                            std::string exeDir = gie::persistency::executableDirectory();
-                            const std::string folderName = ( g_exampleName.empty() ? std::string( "example" ) : g_exampleName ) + "_lua";
-                            std::string scriptsDir = gie::persistency::joinPath( exeDir, "scripts" );
-                            std::string actionDir = gie::persistency::joinPath( scriptsDir, folderName );
-                            std::string filePath = gie::persistency::joinPath( actionDir, entryName + ".lua" );
+                            std::string filePath = gie::persistency::joinPath( exampleScriptsDir(), entryName + ".lua" );
                             try
                             {
                                 std::filesystem::remove( filePath );
@@ -506,13 +546,9 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                             savePlannerSetupState();
                             
                             // Save the Lua file
-                            std::string exeDir = gie::persistency::executableDirectory();
-                            const std::string folderName = ( g_exampleName.empty() ? std::string( "example" ) : g_exampleName ) + "_lua";
-                            std::string scriptsDir = gie::persistency::joinPath( exeDir, "scripts" );
-                            std::string actionDir = gie::persistency::joinPath( scriptsDir, folderName );
-                            std::string filePath = gie::persistency::joinPath( actionDir, newName + ".lua" );
+                            std::string filePath = gie::persistency::joinPath( exampleScriptsDir(), newName + ".lua" );
                             
-                            std::filesystem::create_directories( actionDir );
+                            std::filesystem::create_directories( exampleScriptsDir() );
                             std::ofstream out( filePath, std::ios::binary | std::ios::trunc );
                             if( out.is_open() )
                             {
@@ -572,7 +608,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                     s_logicEditor.SetLanguageDefinition( TextEditor::LanguageDefinition::Lua() );
                     s_logicEditor.SetPalette( TextEditor::GetDarkPalette() );
                     s_logicEditor.SetText( s_modalEditEntry.sourceLua );
-                    s_logicEditor.SetShowWhitespaces( false );
+                    // s_logicEditor.SetShowWhitespaces( false ); // Method not available in this TextEditor version
                     s_logicEditorInit = true;
                 }
 
@@ -600,7 +636,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
 						ImGui::SameLine();
                         if( ImGui::SmallButton( "Go" ) )
                         {
-                            s_logicEditor.SetCursorPosition( TextEditor::Coordinates( kv.first - 1, 0 ) );
+                            // s_logicEditor.SetCursorPosition( TextEditor::Coordinates( kv.first - 1, 0 ) ); // Method not available in this TextEditor version
 						}
 					}
                     ImGui::Separator();
@@ -703,16 +739,12 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                         }
                     }
 
-                    // Determine path: <exeDir>/scripts/<exampleName>_lua/<ActionName>.lua
-                    std::string exeDir = gie::persistency::executableDirectory();
-                    const std::string folderName = ( g_exampleName.empty() ? std::string( "example" ) : g_exampleName ) + "_lua";
-                    std::string scriptsDir = gie::persistency::joinPath( exeDir, "scripts" );
-                    std::string actionDir = gie::persistency::joinPath( scriptsDir, folderName );
+                    // Save to new directory structure
                     std::string filePath;
                     try
                     {
-                        std::filesystem::create_directories( actionDir );
-                        filePath = gie::persistency::joinPath( actionDir, s_modalEditEntry.name + ".lua" );
+                        std::filesystem::create_directories( exampleScriptsDir() );
+                        filePath = gie::persistency::joinPath( exampleScriptsDir(), s_modalEditEntry.name + ".lua" );
                         std::ofstream out( filePath, std::ios::binary | std::ios::trunc );
                         if( out.is_open() )
                         {
@@ -770,7 +802,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                     // (we declared s_logicEditorInit above in this scope; set it to false to force re-init)
                     s_logicEditorInit = false;
 					markers.clear();
-					s_logicEditor.SetErrorMarkers( markers );
+					// s_logicEditor.SetErrorMarkers( markers ); // Method not available in this TextEditor version
                     ImGui::CloseCurrentPopup();
                 }
 

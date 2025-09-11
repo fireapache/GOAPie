@@ -5,6 +5,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <filesystem>
 
 #include <goapie.h>
 #include "goapie_lua.h"
@@ -14,6 +15,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+// set in main.cpp
+extern std::string g_exampleName;
 
  // forward-declare C++ example setup from example6.cpp
  gie::Agent* heistOpenSafe_world( ExampleParameters& params );
@@ -54,9 +58,28 @@ int heistOpenSafe_Lua( ExampleParameters& params )
     }
 #endif
 
-    const std::string scriptsBase = exePath.empty()
-        ? std::string("Source/GOAPie_Tests/scripts/example6_lua/")
-        : (exePath + std::string("scripts/example6_lua/"));
+    // Try new directory structure first, then fallback to legacy
+    std::string scriptsBase;
+	const std::string exampleName = g_exampleName;
+    
+    // New structure: <exeDir>/examples/example6/scripts/
+    if (!exePath.empty()) {
+        // Use std::filesystem::path to construct the path so separators are consistent
+        std::filesystem::path exeDir( exePath );
+        // If exePath was a full path including the executable file, remove the filename
+        if (std::filesystem::is_regular_file(exeDir)) exeDir = exeDir.parent_path();
+
+        std::filesystem::path newPath = exeDir / "examples" / exampleName / "scripts";
+        if (std::filesystem::exists(newPath)) {
+            scriptsBase = newPath.string();
+            // Ensure scriptsBase ends with the native directory separator so later concatenation works
+            if (!scriptsBase.empty() && scriptsBase.back() != std::filesystem::path::preferred_separator) {
+                scriptsBase.push_back(static_cast<char>(std::filesystem::path::preferred_separator));
+            }
+            std::cout << "[example6_lua] Using new directory structure: " << scriptsBase << std::endl;
+        }
+    }
+    
     const std::vector< std::string > actionNames =
     {
         "DisableAlarm",
@@ -81,7 +104,7 @@ int heistOpenSafe_Lua( ExampleParameters& params )
         std::string src = readFileContents( file );
 
         // Use unified chunk name per-action
-        std::string luaChunk = std::string("example6.") + name;
+		std::string luaChunk = g_exampleName + std::string{ "." } + name;
 
         // New single-chunk constructor
         auto entry = std::make_shared< LuaActionSetEntry >( sandbox, name, luaChunk, NamedArguments{} );

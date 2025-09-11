@@ -853,15 +853,11 @@ class LuaActionSimulator : public ActionSimulator
 public:
     LuaActionSimulator( const std::shared_ptr<LuaSandbox>& sandbox,
                         const std::string& name,
-                        const std::string& evaluateChunk,
-                        const std::string& simulateChunk,
-                        const std::string& heuristicChunk = std::string(),
+                        const std::string& chunkName,
                         const NamedArguments& args = {} )
     : ActionSimulator( args )
     , m_name( name )
-    , m_evaluateChunk( evaluateChunk )
-    , m_simulateChunk( simulateChunk )
-    , m_heuristicChunk( heuristicChunk )
+    , m_chunkName( chunkName )
     , m_sandbox( sandbox ? sandbox : std::make_shared< LuaSandbox >() )
     {
     }
@@ -874,9 +870,8 @@ public:
     bool evaluate( EvaluateSimulationParams params ) const override
     {
 #if GIE_WITH_LUA
-        // Prefer unified lua chunk if present (m_luaChunk on the associated entry).
-        // The simulator receives chunk names from the ActionSetEntry factory; keep legacy behavior here.
-        return m_sandbox->executeEvaluate( m_evaluateChunk, params );
+        // Use the unified chunk name for all Lua-backed callbacks.
+        return m_sandbox->executeEvaluate( m_chunkName, params );
 #else
         (void)params;
         return true;
@@ -886,7 +881,7 @@ public:
     bool simulate( SimulateSimulationParams params ) const override
     {
 #if GIE_WITH_LUA
-        return m_sandbox->executeSimulate( m_simulateChunk, params );
+        return m_sandbox->executeSimulate( m_chunkName, params );
 #else
         (void)params;
         return true;
@@ -896,7 +891,7 @@ public:
     void calculateHeuristic( CalculateHeuristicParams params ) const override
     {
 #if GIE_WITH_LUA
-        m_sandbox->executeHeuristic( m_heuristicChunk, params );
+        m_sandbox->executeHeuristic( m_chunkName, params );
 #else
         (void)params;
 #endif
@@ -904,9 +899,7 @@ public:
 
 private:
     std::string m_name;
-    std::string m_evaluateChunk;
-    std::string m_simulateChunk;
-    std::string m_heuristicChunk;
+    std::string m_chunkName;
     std::shared_ptr< LuaSandbox > m_sandbox;
 };
 
@@ -917,44 +910,42 @@ private:
 class LuaActionSetEntry : public ActionSetEntry
 {
 public:
-    // Legacy ctor (kept for compatibility)
-    LuaActionSetEntry( const std::shared_ptr<LuaSandbox>& sandbox,
-                       const std::string& name,
-                       const std::string& evaluateChunk,
-                       const std::string& simulateChunk,
-                       const std::string& heuristicChunk = std::string(),
-                       const NamedArguments& args = {} )
-    : m_name( name )
-    , m_evaluateChunk( evaluateChunk )
-    , m_simulateChunk( simulateChunk )
-    , m_heuristicChunk( heuristicChunk )
-    , m_arguments( args )
-    , m_sandbox( sandbox )
-    , m_evaluateSource()
-    , m_simulateSource()
-    , m_heuristicSource()
-    , m_luaChunk() // empty by default
-    , m_source()
-    {
-    }
-
-    // New single-chunk ctor (preferred)
     LuaActionSetEntry( const std::shared_ptr<LuaSandbox>& sandbox,
                        const std::string& name,
                        const std::string& luaChunk,
                        const NamedArguments& args = {} )
     : m_name( name )
-    , m_evaluateChunk( luaChunk )
-    , m_simulateChunk( luaChunk )
-    , m_heuristicChunk()
+    , m_luaChunk( luaChunk )
     , m_arguments( args )
     , m_sandbox( sandbox )
+    , m_luaChunkSource()
+    , m_source()
     , m_evaluateSource()
     , m_simulateSource()
     , m_heuristicSource()
-    , m_luaChunk( luaChunk )
-    , m_source()
     {
+    }
+
+    // Legacy constructor kept for compatibility: accepts separate chunk names.
+    LuaActionSetEntry( const std::shared_ptr<LuaSandbox>& sandbox,
+                       const std::string& name,
+                       const std::string& evaluateChunk,
+                       const std::string& simulateChunk,
+                       const std::string& heuristicChunk,
+                       const NamedArguments& args = {} )
+    : m_name( name )
+    , m_arguments( args )
+    , m_sandbox( sandbox )
+    , m_luaChunkSource()
+    , m_source()
+    , m_evaluateSource()
+    , m_simulateSource()
+    , m_heuristicSource()
+    {
+        // Prefer evaluate chunk name as unified chunk identifier; fallback to simulate or heuristic
+        if( !evaluateChunk.empty() ) m_luaChunk = evaluateChunk;
+        else if( !simulateChunk.empty() ) m_luaChunk = simulateChunk;
+        else m_luaChunk = heuristicChunk;
     }
 
     virtual ~LuaActionSetEntry() = default;
@@ -964,8 +955,8 @@ public:
 
     std::shared_ptr< ActionSimulator > simulator( const NamedArguments& /*arguments*/ ) const override
     {
-        // Create LuaActionSimulator using stored evaluate/simulate chunk names.
-        return std::make_shared< LuaActionSimulator >( m_sandbox, m_name, m_evaluateChunk, m_simulateChunk, m_heuristicChunk, m_arguments );
+        // Create LuaActionSimulator using the unified chunk name.
+        return std::make_shared< LuaActionSimulator >( m_sandbox, m_name, m_luaChunk, m_arguments );
     }
 
     std::shared_ptr< Action > action( const NamedArguments& arguments ) const override
@@ -976,47 +967,19 @@ public:
 
     const NamedArguments& entryArguments() const { return m_arguments; }
 
-    // Legacy chunk accessors
-    std::string evaluateChunkName() const { return !m_luaChunk.empty() ? m_luaChunk : m_evaluateChunk; }
-    std::string simulateChunkName() const { return !m_luaChunk.empty() ? m_luaChunk : m_simulateChunk; }
-    std::string heuristicChunkName() const { return !m_luaChunk.empty() ? m_luaChunk : m_heuristicChunk; }
-
     // New single-chunk accessor
-    std::string chunkName() const { return !m_luaChunk.empty() ? m_luaChunk : m_evaluateChunk; }
-
-    // Source text accessors for editor integration
-    // Legacy methods still behave by mirroring to the unified source when possible.
-    void setEvaluateSource( const std::string& src )
-    {
-        m_evaluateSource = src;
-        m_simulateSource = src;
-        m_source = src;
-    }
-    void setSimulateSource( const std::string& src )
-    {
-        m_simulateSource = src;
-        m_evaluateSource = src;
-        m_source = src;
-    }
-    void setHeuristicSource( const std::string& src )
-    {
-        m_heuristicSource = src;
-        // heuristic kept separate in legacy model; also set m_source for convenience.
-        if (m_source.empty()) m_source = src;
-    }
+    std::string chunkName() const { return m_luaChunk; }
 
     // New single-source API
     void setSource( const std::string& src )
     {
         m_source = src;
-        m_evaluateSource = src;
-        m_simulateSource = src;
-        // do not override heuristicSource
     }
 
-    const std::string& evaluateSource() const { return m_evaluateSource.empty() ? m_source : m_evaluateSource; }
-    const std::string& simulateSource() const { return m_simulateSource.empty() ? m_source : m_simulateSource; }
-    const std::string& heuristicSource() const { return m_heuristicSource.empty() ? m_source : m_heuristicSource; }
+    // Legacy per-function source setters (kept for compatibility with persisted data)
+    void setEvaluateSource( const std::string& src ) { m_evaluateSource = src; }
+    void setSimulateSource( const std::string& src ) { m_simulateSource = src; }
+    void setHeuristicSource( const std::string& src ) { m_heuristicSource = src; }
 
     // New single-source accessor
     const std::string& source() const { return m_source; }
@@ -1028,48 +991,56 @@ public:
 #if GIE_WITH_LUA
         m_lastCompileError.clear();
 
-        // Prefer unified chunk if present, otherwise fall back to evaluate/simulate/heuristic.
-        const std::string chunkToLoad = !m_luaChunk.empty() ? m_luaChunk : m_evaluateChunk;
-
         // If we have a unified source, load it under chunkToLoad.
         if( !m_source.empty() )
         {
-            if( !m_sandbox->loadChunk( chunkToLoad, m_source ) )
+            if( !m_sandbox->loadChunk( m_luaChunk, m_source ) )
             {
                 m_lastCompileError = m_sandbox->lastError();
                 return false;
             }
+            m_lastCompileError.clear();
+            return true;
         }
-        else
+
+        // If legacy per-function sources are present, build a combined source wrapper.
+        if( !m_evaluateSource.empty() || !m_simulateSource.empty() || !m_heuristicSource.empty() )
         {
-            // Fallback: try individual sources as before.
+            std::string combined;
+            combined.reserve( m_evaluateSource.size() + m_simulateSource.size() + m_heuristicSource.size() + 64 );
+            // If user provided standalone functions, prefer to insert them as-is. Wrap into functions if needed.
             if( !m_evaluateSource.empty() )
             {
-                if( !m_sandbox->loadChunk( m_evaluateChunk, m_evaluateSource ) )
-                {
-                    m_lastCompileError = m_sandbox->lastError();
-                    return false;
-                }
+                combined += "function evaluate(params)\n";
+                combined += m_evaluateSource;
+                combined += "\nend\n";
             }
             if( !m_simulateSource.empty() )
             {
-                if( !m_sandbox->loadChunk( m_simulateChunk, m_simulateSource ) )
-                {
-                    m_lastCompileError = m_sandbox->lastError();
-                    return false;
-                }
+                combined += "function simulate(params)\n";
+                combined += m_simulateSource;
+                combined += "\nend\n";
             }
             if( !m_heuristicSource.empty() )
             {
-                if( !m_sandbox->loadChunk( m_heuristicChunk, m_heuristicSource ) )
+                combined += "function heuristic(params)\n";
+                combined += m_heuristicSource;
+                combined += "\nend\n";
+            }
+
+            if( !combined.empty() )
+            {
+                if( !m_sandbox->loadChunk( m_luaChunk, combined ) )
                 {
                     m_lastCompileError = m_sandbox->lastError();
                     return false;
                 }
+                m_lastCompileError.clear();
+                return true;
             }
         }
 
-        m_lastCompileError.clear();
+        // Nothing to load; treat as success.
         return true;
 #else
         (void)m_evaluateSource; (void)m_simulateSource; (void)m_heuristicSource; (void)m_source;
@@ -1084,15 +1055,11 @@ public:
 private:
     std::string m_name;
 
-    // Legacy per-function chunk identifiers (kept for compatibility)
-    std::string m_evaluateChunk;
-    std::string m_simulateChunk;
-    std::string m_heuristicChunk;
-
     NamedArguments m_arguments;
     std::shared_ptr< LuaSandbox > m_sandbox;
 
     // Legacy per-function source buffers
+    std::string m_luaChunkSource;
     std::string m_evaluateSource;
     std::string m_simulateSource;
     std::string m_heuristicSource;

@@ -361,7 +361,10 @@ removefiles {
 		cppdialect "C++17"
 		staticruntime "On"
 		systemversion "latest"
-		--postbuildcommands { "xcopy /y /d $(ProjectDir)..\\Embree\\bin\\*.dll $(ProjectDir)$(OutDir)" }
+		postbuildcommands {
+			'mkdir "$(TargetDir)examples" 2>nul',
+			'for /D %%D in ("$(ProjectDir)scripts\\*") do @call "$(ProjectDir)scripts\\copy_lua_examples.bat" "%%~fD" "$(TargetDir)examples"'
+		}
 
 	filter "configurations:Debug"
 		symbols "On"

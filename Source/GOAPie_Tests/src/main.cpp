@@ -96,8 +96,8 @@ std::vector< ExampleFunctionEntry > exampleFunctions
 
 	// running example function
 	ExampleParameters exampleParams{ world, planner, goal };
-	int exResult = exampleFunctions[ ex - 1 ].func( exampleParams );
 	g_exampleName = exampleFunctions[ ex - 1 ].name;
+	int exResult = exampleFunctions[ ex - 1 ].func( exampleParams );
 
 	// example code set up the world, planner and goal,
 	// and now we can run the planner.
