@@ -520,6 +520,7 @@ public:
             }
         }
 
+        // Strip optional BOM
         std::string src = source;
         if( src.size() >= 3 &&
             static_cast<unsigned char>( src[0] ) == 0xEF &&
@@ -529,6 +530,7 @@ public:
             src.erase( 0, 3 );
         }
 
+        // Wrapper now returns (f, env) instead of executing f() in Lua.
         std::string wrapper;
         wrapper.reserve( src.size() + name.size() + 128 );
         wrapper += "local env = {} setmetatable(env, { __index = _G })\n";
@@ -537,10 +539,10 @@ public:
         wrapper += "\n]=], '";
         wrapper += name;
         wrapper += "', 't', env)\n";
-        wrapper += "if not f then error(err) end\n";
-        wrapper += "f()\n";
-        wrapper += "return env\n";
+        wrapper += "if not f then return nil, err end\n";
+        wrapper += "return f, env\n";
 
+        // Load the wrapper chunk and run it to obtain (f, env) on the stack.
         if( luaL_loadstring( L, wrapper.c_str() ) != LUA_OK )
         {
             const char* msg = lua_tostring( L, -1 );
@@ -550,7 +552,8 @@ public:
             return false;
         }
 
-        if( lua_pcall( L, 0, 1, 0 ) != LUA_OK )
+        // Execute wrapper: expects 2 returns: function (or nil) and env (or error string)
+        if( lua_pcall( L, 0, 2, 0 ) != LUA_OK )
         {
             const char* msg = lua_tostring( L, -1 );
             if( msg ) std::cout << "[LuaSandbox] loadChunk wrapper lua_pcall error: " << msg << "\n";
@@ -560,19 +563,24 @@ public:
             if( trace ) m_lastError = trace;
             else if( msg ) m_lastError = msg;
             else m_lastError = std::string("unknown lua_pcall error");
+            lua_pop( L, 2 ); // pop error + traceback
+            return false;
+        }
+
+        // At this point stack: -2 = f (function or nil), -1 = env (table or error string)
+        if( lua_type( L, -2 ) != LUA_TFUNCTION || lua_type( L, -1 ) != LUA_TTABLE )
+        {
+            const char* msg = lua_tostring( L, -1 );
+            if( msg ) std::cout << "[LuaSandbox] loadChunk wrapper returned unexpected types: " << msg << "\n";
+            m_lastError = msg ? msg : std::string("wrapper did not return (function, env)");
             lua_pop( L, 2 );
             return false;
         }
 
-        if( lua_type( L, -1 ) != LUA_TTABLE )
-        {
-            std::cout << "[LuaSandbox] loadChunk error: wrapper did not return env table\n";
-            lua_pop( L, 1 );
-            return false;
-        }
-
+        // Set helper C functions into env BEFORE executing the compiled chunk.
+        // Stack currently: f (-2), env (-1)
         lua_pushcfunction( L, goapie_lua_debug_func );
-        lua_setfield( L, -2, "debug" );
+        lua_setfield( L, -2, "debug" ); // set env.debug
 
         lua_pushcfunction( L, goapie_lua_get_property_func );
         lua_setfield( L, -2, "get_property" );
@@ -592,11 +600,32 @@ public:
         lua_pushcfunction( L, goapie_lua_estimate_heuristic_func );
         lua_setfield( L, -2, "estimate_heuristic" );
 
+        // Store env in registry under name so later lookups work.
         lua_pushstring( L, name.c_str() ); // key
-        lua_pushvalue( L, -2 );            // env
+        lua_pushvalue( L, -2 );            // push env (env is at -2 after pushes)
         lua_settable( L, LUA_REGISTRYINDEX ); // registry[name] = env
 
-        lua_pop( L, 1 );
+        // Execute the compiled chunk (call the function). Duplicate f to top and call.
+        lua_pushvalue( L, -2 ); // duplicate function f
+        if( lua_pcall( L, 0, 0, 0 ) != LUA_OK )
+        {
+            const char* msg = lua_tostring( L, -1 );
+            if( msg ) std::cout << "[LuaSandbox] executing compiled chunk error: " << msg << "\n";
+            luaL_traceback( L, L, msg ? msg : "nil", 1 );
+            const char* trace = lua_tostring( L, -1 );
+            if( trace ) std::cout << "[LuaSandbox] compiled chunk traceback: " << trace << "\n";
+            if( trace ) m_lastError = trace;
+            else if( msg ) m_lastError = msg;
+            else m_lastError = std::string("unknown lua_pcall error");
+            lua_pop( L, 2 ); // pop error + original error/trace
+            // pop env (the env table remains on stack)
+            if( lua_type( L, -1 ) == LUA_TTABLE ) lua_pop( L, 1 );
+            return false;
+        }
+
+        // Pop env table and the original f value if still present.
+        if( lua_type( L, -1 ) == LUA_TTABLE ) lua_pop( L, 1 ); // pop env
+        if( lua_type( L, -1 ) == LUA_TFUNCTION ) lua_pop( L, 1 ); // pop original f (if any)
 
         m_loaded.insert( name );
         m_lastError.clear();

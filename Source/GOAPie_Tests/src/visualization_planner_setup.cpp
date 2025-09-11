@@ -39,6 +39,8 @@ static bool s_canSaveLuaFile = false;
 static int s_editPlannerActionIndex = -1; // index into planner.actionSet() when modal opened
 static SimpleActionEntry s_modalEditEntry;
 static std::string s_modalCompileError;
+using ErrorMarkers = TextEditor::ErrorMarkers;
+static ErrorMarkers markers;
 
 // Transient modal message (mutually exclusive) - shown for a limited time
 static std::string s_modalTransientMessage;
@@ -53,7 +55,8 @@ bool extractLastNumberAndSuffix( const std::string& s, std::string& lastNumber, 
 	if( std::regex_search( s, m, re ) && m.size() >= 3 )
 	{
 		lastNumber = m[ 1 ].str();
-		suffix = m[ 2 ].str();
+		std::string afterNumber = m[ 0 ].str().substr( m.position( 1 ) + m.length( 1 ) + 2 );
+		suffix = afterNumber.replace( afterNumber.size() - 17, 17, "" ); // trim end
 		return true;
 	}
 	return false;
@@ -65,9 +68,6 @@ void drawPlannerSetupWindow( ExampleParameters& params );
 // Helper: parse s_modalCompileError and set TextEditor error markers
 static void applyCompileErrorMarkers( TextEditor & editor, const std::string & error )
 {
-    using ErrorMarkers = TextEditor::ErrorMarkers;
-    static ErrorMarkers markers;
-
     if( !error.empty() )
     {
 		markers.clear();
@@ -83,23 +83,6 @@ static void applyCompileErrorMarkers( TextEditor & editor, const std::string & e
             }
             catch( ... ) {}
 		}
-
-        // Fallback: if no markers found but error has a leading number somewhere, try to pick first number
-        if( markers.empty() )
-        {
-            std::regex numre(R"((\d+))");
-            std::smatch m;
-            if( std::regex_search( error, m, numre ) )
-            {
-                try
-                {
-                    int ln = std::stoi( m[1].str() );
-                    if( ln > 0 ) --ln;
-                    markers[ ln ] = error;
-                }
-                catch( ... ) {}
-            }
-        }
     }
     else
     {
@@ -246,11 +229,19 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                 ImGui::BeginGroup();
                 ImGui::Separator();
 
-                if( !s_modalCompileError.empty() )
+                if( !markers.empty() )
                 {
-                    ImGui::TextColored( ImVec4( 1.0f, 0.2f, 0.2f, 1.0f ), "Compile error:" );
-                    
-                    ImGui::TextWrapped( "%s", s_modalCompileError.c_str() );
+					for( const auto& kv : markers )
+					{
+						ImGui::TextColored( /*red*/ ImVec4( 1.0f, 0.2f, 0.2f, 1.0f ), "Line %d: ", kv.first );
+						ImGui::SameLine();
+						ImGui::TextColored( /*yellow*/ ImVec4( 1.0f, 1.0f, 0.2f, 1.0f ), "%s", kv.second.c_str() );
+						ImGui::SameLine();
+                        if( ImGui::SmallButton( "Go" ) )
+                        {
+                            s_logicEditor.SetCursorPosition( TextEditor::Coordinates( kv.first - 1, 0 ) );
+						}
+					}
                     ImGui::Separator();
                 }
 
@@ -263,8 +254,16 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                             params.planner.actionSet()[ s_editPlannerActionIndex ] );
                         if( targetEntry )
                         {
-                            targetEntry->setSource( s_modalEditEntry.sourceLua );
-                            bool ok = targetEntry->compileAndLoad();
+                            // Create a temporary sandbox and entry for compilation testing without modifying the original
+                            auto tempSandbox = std::make_shared< gie::LuaSandbox >();
+                            auto tempEntry = std::make_shared< gie::LuaActionSetEntry >(
+                                tempSandbox, 
+                                std::string( targetEntry->name() ), 
+                                targetEntry->chunkName(),
+                                gie::NamedArguments{} );
+                            tempEntry->setSource( s_modalEditEntry.sourceLua );
+                            
+                            bool ok = tempEntry->compileAndLoad();
                             if( ok )
                             {
                                 // Update UI model
@@ -302,7 +301,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                             }
                             else
                             {
-                                s_modalCompileError = targetEntry->lastCompileError();
+                                s_modalCompileError = tempEntry->lastCompileError();
                                 s_canSaveLuaFile = false;
 
                                 // Parse compile error and set editor markers
@@ -326,6 +325,23 @@ void drawPlannerSetupWindow( ExampleParameters& params )
 
                 if( ImGui::Button( "Save" ) && s_canSaveLuaFile )
                 {
+                    // Set the source on the actual entry and compile it
+                    if( s_editPlannerActionIndex >= 0 && s_editPlannerActionIndex < ( int )params.planner.actionSet().size() )
+                    {
+                        auto targetEntry = std::dynamic_pointer_cast< gie::LuaActionSetEntry >(
+                            params.planner.actionSet()[ s_editPlannerActionIndex ] );
+                        if( targetEntry )
+                        {
+                            targetEntry->setSource( s_modalEditEntry.sourceLua );
+                            bool ok = targetEntry->compileAndLoad();
+                            if( !ok )
+                            {
+                                // Log compile error but continue with file save
+                                std::cout << "[PlannerSetup] Warning: Failed to compile entry after save: " << targetEntry->lastCompileError() << std::endl;
+                            }
+                        }
+                    }
+
                     // Determine path: <exeDir>/scripts/<exampleName>_lua/<ActionName>.lua
                     std::string exeDir = gie::persistency::executableDirectory();
                     const std::string folderName = ( g_exampleName.empty() ? std::string( "example" ) : g_exampleName ) + "_lua";
@@ -392,6 +408,8 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                     // Note: s_logicEditorInit is static inside this modal scope; reset via a second static variable trick
                     // (we declared s_logicEditorInit above in this scope; set it to false to force re-init)
                     s_logicEditorInit = false;
+					markers.clear();
+					s_logicEditor.SetErrorMarkers( markers );
                     ImGui::CloseCurrentPopup();
                 }
 
