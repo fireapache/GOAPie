@@ -676,7 +676,7 @@ namespace persistency
     // Public API -----------------------------------------------------------------
 
     // Save world context to a JSON file next to executable.
-    inline bool SaveWorldToJson( const World& world, const std::string& fileName )
+    inline bool SaveWorldToJson( const World& world, const std::string& relativeFilePath )
     {
         const Blackboard& worldContext = world.context();
 
@@ -702,7 +702,7 @@ namespace persistency
         json::Value root( std::move( rootObj ) );
         std::string jsonText = root.dump( 2 );
 
-        const std::string path = joinPath( executableDirectory(), fileName );
+        const std::string path = joinPath( executableDirectory(), relativeFilePath );
         std::ofstream out( path, std::ios::binary | std::ios::trunc );
         if( !out.is_open() ) return false;
         out.write( jsonText.data(), static_cast<std::streamsize>( jsonText.size() ) );
@@ -711,9 +711,9 @@ namespace persistency
 
     // Load world context from a JSON file next to executable.
     // This clears current entities/properties/tags and rebuilds them.
-    inline bool LoadWorldFromJson( World& world, const std::string& fileName )
+    inline bool LoadWorldFromJson( World& world, const std::string& relativeFilePath )
     {
-        const std::string path = joinPath( executableDirectory(), fileName );
+        const std::string path = joinPath( executableDirectory(), relativeFilePath );
         std::ifstream in( path, std::ios::binary );
         if( !in.is_open() ) return false;
         std::ostringstream oss; oss << in.rdbuf();

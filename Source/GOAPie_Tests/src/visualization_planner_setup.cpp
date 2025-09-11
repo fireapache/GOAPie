@@ -82,26 +82,26 @@ static std::string exampleNameOrDefault( const std::string& exampleName = "" )
     return g_exampleName.empty() ? std::string( "example" ) : g_exampleName;
 }
 
-static std::string examplesRootDir()
+static std::string relativeExamplesRootDir()
 {
     std::string exeDir = gie::persistency::executableDirectory();
     return gie::persistency::joinPath( exeDir, "examples" );
 }
 
-static std::string exampleRootDir( const std::string& exampleName = "" )
+static std::string relativeExampleRootDir( const std::string& exampleName = "" )
 {
-    return gie::persistency::joinPath( examplesRootDir(), exampleNameOrDefault( exampleName ) );
+    return gie::persistency::joinPath( relativeExamplesRootDir(), exampleNameOrDefault( exampleName ) );
 }
 
 static std::string exampleScriptsDir( const std::string& exampleName = "" )
 {
-    return gie::persistency::joinPath( exampleRootDir( exampleName ), "scripts" );
+    return gie::persistency::joinPath( relativeExampleRootDir( exampleName ), "scripts" );
 }
 
 // Planner state persistence helper functions
 static std::string plannerStateFilePath()
 {
-    return gie::persistency::joinPath( exampleRootDir(), "planner.json" );
+    return gie::persistency::joinPath( relativeExampleRootDir(), "planner.json" );
 }
 
 static std::string legacyPlannerStateFilePath()
