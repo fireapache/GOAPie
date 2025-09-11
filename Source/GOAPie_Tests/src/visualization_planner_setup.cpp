@@ -612,7 +612,22 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                     s_logicEditorInit = true;
                 }
 
+                // Single-line title with right-aligned Close button
                 ImGui::Text( "Editing: %s", s_modalEditEntry.name.c_str() );
+                // Compute width of the Close button
+                float closeBtnW = ImGui::CalcTextSize( "Close" ).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+                ImGui::SameLine();
+                // Move cursor to right side so the button sits at the end of the title row
+                ImGui::SetCursorPosX( ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - closeBtnW );
+                if( ImGui::Button( "Close" ) )
+                {
+                    s_showLogicModal = false;
+                    s_editPlannerActionIndex = -1;
+                    s_modalCompileError.clear();
+                    s_logicEditorInit = false; // reset static editor init so it re-inits next open
+                    markers.clear();
+                    ImGui::CloseCurrentPopup();
+                }
                 ImGui::Separator();
 
                 ImVec2 editorSize = ImGui::GetContentRegionAvail() - ImVec2{ 0, s_bottomGroupSize.y };
@@ -790,21 +805,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                 if( !s_canSaveLuaFile )
                     ImGui::EndDisabled();
 
-                ImGui::SameLine();
-                if( ImGui::Button( "Close" ) )
-                {
-                    s_showLogicModal = false;
-                    s_editPlannerActionIndex = -1;
-                    s_modalCompileError.clear();
-                    // reset editor init so it re-initializes next time modal opens
-                    /* if TextEditor is present it will be a static in this scope; reset its init flag */
-                    // Note: s_logicEditorInit is static inside this modal scope; reset via a second static variable trick
-                    // (we declared s_logicEditorInit above in this scope; set it to false to force re-init)
-                    s_logicEditorInit = false;
-					markers.clear();
-					// s_logicEditor.SetErrorMarkers( markers ); // Method not available in this TextEditor version
-                    ImGui::CloseCurrentPopup();
-                }
+
 
                 // Display transient message (mutually exclusive) to the right of buttons for up to 5 seconds
                 double now = ImGui::GetTime();
