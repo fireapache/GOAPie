@@ -8,6 +8,10 @@ imgui.ini
 
 Source/Tests/NodeEditor.json
 
+*.md
+*.txt
+.vscode
+
 *.lib
 
 *.sln
