@@ -356,105 +356,9 @@ static int goapie_lua_move_agent_to_entity_func(lua_State* L)
     return 1;
 }
 
-static int goapie_lua_estimate_heuristic_real_func(lua_State* L)
-{
-    lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
-    void* ud = lua_touserdata(L, -1);
-    lua_pop(L, 1);
-    if(!ud) { lua_pushnumber(L, 0.0); return 1; }
-    Simulation* sim = static_cast< Simulation* >( ud );
 
-    Guid agentGuid = sim->agent().guid();
-    const Entity* agentEnt = sim->context().entity( agentGuid );
-    if( !agentEnt ) agentEnt = sim->world()->entity( agentGuid );
-    if( !agentEnt ) { lua_pushnumber( L, 0.0 ); return 1; }
 
-    StringHash safeHash = stringHasher( "Safe" );
-    const Entity* safeEnt = nullptr;
-    for( const auto& kv : sim->context().entities() )
-    {
-        const Entity& e = kv.second;
-        if( e.nameHash() == safeHash ) { safeEnt = &e; break; }
-    }
-    if( !safeEnt )
-    {
-        for( const auto& kv : sim->world()->context().entities() )
-        {
-            const Entity& e = kv.second;
-            if( e.nameHash() == safeHash ) { safeEnt = &e; break; }
-        }
-    }
 
-    if( !safeEnt ) { lua_pushnumber( L, 0.0 ); return 1; }
-
-    const Property* agentLocP = agentEnt->property( "Location" );
-    const Property* safeLocP = safeEnt->property( "Location" );
-    if( !agentLocP || !safeLocP || !agentLocP->getVec3() || !safeLocP->getVec3() )
-    {
-        lua_pushnumber( L, 0.0 );
-        return 1;
-    }
-
-    const glm::vec3& a = *agentLocP->getVec3();
-    const glm::vec3& s = *safeLocP->getVec3();
-    const float dx = a.x - s.x;
-    const float dy = a.y - s.y;
-    const float dz = a.z - s.z;
-    const float dist = std::sqrt( dx*dx + dy*dy + dz*dz );
-
-    lua_pushnumber( L, static_cast< lua_Number >( dist ) );
-    return 1;
-}
-
-static int goapie_lua_estimate_heuristic_func(lua_State* L)
-{
-    lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
-    void* ud = lua_touserdata(L, -1);
-    lua_pop(L, 1);
-    if(!ud) { lua_pushnumber(L, 0.0); return 1; }
-    Simulation* sim = static_cast< Simulation* >( ud );
-
-    Guid agentGuid = sim->agent().guid();
-    const Entity* agentEnt = sim->context().entity( agentGuid );
-    if( !agentEnt ) agentEnt = sim->world()->entity( agentGuid );
-    if( !agentEnt ) { lua_pushnumber( L, 0.0 ); return 1; }
-
-    StringHash safeHash = stringHasher( "Safe" );
-    const Entity* safeEnt = nullptr;
-    for( const auto& kv : sim->context().entities() )
-    {
-        const Entity& e = kv.second;
-        if( e.nameHash() == safeHash ) { safeEnt = &e; break; }
-    }
-    if( !safeEnt )
-    {
-        for( const auto& kv : sim->world()->context().entities() )
-        {
-            const Entity& e = kv.second;
-            if( e.nameHash() == safeHash ) { safeEnt = &e; break; }
-        }
-    }
-
-    if( !safeEnt ) { lua_pushnumber( L, 0.0 ); return 1; }
-
-    const Property* agentLocP = agentEnt->property( "Location" );
-    const Property* safeLocP = safeEnt->property( "Location" );
-    if( !agentLocP || !safeLocP || !agentLocP->getVec3() || !safeLocP->getVec3() )
-    {
-        lua_pushnumber( L, 0.0 );
-        return 1;
-    }
-
-    const glm::vec3& a = *agentLocP->getVec3();
-    const glm::vec3& s = *safeLocP->getVec3();
-    const float dx = a.x - s.x;
-    const float dy = a.y - s.y;
-    const float dz = a.z - s.z;
-    const float dist = std::sqrt( dx*dx + dy*dy + dz*dz );
-
-    lua_pushnumber( L, static_cast< lua_Number >( dist ) );
-    return 1;
-}
 
 // Real Lua-backed sandbox (requires linking Lua).
 class LuaSandbox
@@ -597,8 +501,7 @@ public:
         lua_pushcfunction( L, goapie_lua_move_agent_to_entity_func );
         lua_setfield( L, -2, "move_agent_to_entity" );
 
-        lua_pushcfunction( L, goapie_lua_estimate_heuristic_func );
-        lua_setfield( L, -2, "estimate_heuristic" );
+
 
         // Store env in registry under name so later lookups work.
         lua_pushstring( L, name.c_str() ); // key
