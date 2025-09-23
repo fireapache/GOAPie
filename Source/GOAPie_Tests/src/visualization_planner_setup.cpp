@@ -104,16 +104,6 @@ static std::string plannerStateFilePath()
     return gie::persistency::joinPath( relativeExampleRootDir(), "planner.json" );
 }
 
-static std::string legacyPlannerStateFilePath()
-{
-    extern std::string g_exampleName;
-    std::string exeDir = gie::persistency::executableDirectory();
-    const std::string folderName = ( g_exampleName.empty() ? std::string( "example" ) : g_exampleName ) + "_lua";
-    std::string scriptsDir = gie::persistency::joinPath( exeDir, "scripts" );
-    std::string actionDir = gie::persistency::joinPath( scriptsDir, folderName );
-    return gie::persistency::joinPath( actionDir, "planner.json" );
-}
-
 static void loadPlannerSetupState()
 {
     if( s_plannerStateLoaded )
@@ -123,18 +113,6 @@ static void loadPlannerSetupState()
     
     const std::string filePath = plannerStateFilePath();
     std::ifstream in( filePath, std::ios::binary );
-    
-    // If new path doesn't exist, try legacy path
-    if( !in.is_open() )
-    {
-        const std::string legacyPath = legacyPlannerStateFilePath();
-        in.open( legacyPath, std::ios::binary );
-        if( in.is_open() )
-        {
-            std::cout << "[PlannerSetup] Loading from legacy path: " << legacyPath << std::endl;
-            s_plannerStateDirty = true; // Mark dirty to save in new location later
-        }
-    }
     
     if( !in.is_open() )
         return; // File doesn't exist, use defaults

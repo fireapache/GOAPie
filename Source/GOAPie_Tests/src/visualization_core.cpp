@@ -1,4 +1,5 @@
 #include "visualization.h"
+#include "project_manager.h"
 
 #include <iostream>
 #include <fstream>
@@ -470,25 +471,41 @@ void ShowExampleAppDockSpace( bool* p_open )
 
     if( ImGui::BeginMenuBar() )
     {
-        if( ImGui::BeginMenu( "Options" ) )
+        if( ImGui::BeginMenu( "File" ) )
         {
-            ImGui::MenuItem( "Fullscreen", NULL, &opt_fullscreen );
-            ImGui::MenuItem( "Padding", NULL, &opt_padding );
-            ImGui::Separator();
+            if( ImGui::MenuItem( "New Project" ) )
+            {
+                project::NewProject();
+            }
+            if( ImGui::MenuItem( "Load Project" ) )
+            {
+                std::string filePath;
+                if( project::ShowOpenFileDialog( filePath ) )
+                {
+                    project::LoadProject( filePath );
+                }
+            }
+            if( ImGui::MenuItem( "Save Project" ) )
+            {
+                project::SaveProject();
+            }
+            if( ImGui::MenuItem( "Save Project As" ) )
+            {
+                std::string folderPath;
+                if( project::ShowSelectFolderDialog( folderPath ) )
+                {
+                    project::SaveProjectAs( folderPath );
+                }
+            }
 
-            if( ImGui::MenuItem( "Flag: NoDockingOverCentralNode", "", ( dockspace_flags & ImGuiDockNodeFlags_NoDockingOverCentralNode ) != 0 ) ) { dockspace_flags ^= ImGuiDockNodeFlags_NoDockingOverCentralNode; }
-            if( ImGui::MenuItem( "Flag: NoDockingSplit",         "", ( dockspace_flags & ImGuiDockNodeFlags_NoDockingSplit ) != 0 ) )             { dockspace_flags ^= ImGuiDockNodeFlags_NoDockingSplit; }
-            if( ImGui::MenuItem( "Flag: NoUndocking",            "", ( dockspace_flags & ImGuiDockNodeFlags_NoUndocking ) != 0 ) )                { dockspace_flags ^= ImGuiDockNodeFlags_NoUndocking; }
-            if( ImGui::MenuItem( "Flag: NoResize",               "", ( dockspace_flags & ImGuiDockNodeFlags_NoResize ) != 0 ) )                   { dockspace_flags ^= ImGuiDockNodeFlags_NoResize; }
-            if( ImGui::MenuItem( "Flag: AutoHideTabBar",         "", ( dockspace_flags & ImGuiDockNodeFlags_AutoHideTabBar ) != 0 ) )             { dockspace_flags ^= ImGuiDockNodeFlags_AutoHideTabBar; }
-            if( ImGui::MenuItem( "Flag: PassthruCentralNode",    "", ( dockspace_flags & ImGuiDockNodeFlags_PassthruCentralNode ) != 0, opt_fullscreen ) ) { dockspace_flags ^= ImGuiDockNodeFlags_PassthruCentralNode; }
             ImGui::Separator();
 
             if( ImGui::MenuItem( "Close", NULL, false, p_open != NULL ) )
                 *p_open = false;
+
             ImGui::EndMenu();
         }
-
+        
         if( ImGui::BeginMenu( "Tools" ) )
         {
             ImGui::MenuItem( "GOAPie Visualization", NULL, &g_ShowGoapieVisualizationWindow );

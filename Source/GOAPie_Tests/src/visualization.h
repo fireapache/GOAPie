@@ -51,6 +51,7 @@ extern gie::Guid selectedSimulationGuid;
 extern bool g_ShowWaypointGuidSuffix;
 extern bool g_ShowWaypointArrows;
 
+// TODO: Rename g_exampleName to g_projectName (frontend mapping)
 extern std::string g_exampleName;
 
 // Global loading state

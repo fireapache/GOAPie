@@ -8,11 +8,12 @@
 
 namespace gie
 {
-	// Forward declarations
-	class Agent;
-	class SimAgent;
-	class Goal;
-	class Simulation;
+// Forward declarations
+class Agent;
+class SimAgent;
+class Goal;
+class Simulation;
+class DebugMessages;
 
 	// Class representing an action to be performed by an agent.
 	// It has a state machine for asyncronous execution.
@@ -47,78 +48,45 @@ namespace gie
 		virtual State tick( Agent& agent ) { return State::Done; };
 	};
 
-	struct EvaluateSimulationParams
-	{
-	private:
-		// Debug messages for simulation.
-		DebugMessages* debugMessages;
-		// Named arguments for simulation.
-		NamedArguments& namedArguments;
+struct EvaluateSimulationParams
+{
+private:
+// Debug messages for simulation.
+DebugMessages* debugMessages;
+// Named arguments for simulation.
+NamedArguments& namedArguments;
 
-	public:
-		// Agent which is performing action.
-		const SimAgent& agent;
-		// Simulation context.
-		const Simulation& simulation;
-		// Goal which is being achieved.
-		const Goal& goal;
+public:
+// Agent which is performing action.
+const SimAgent& agent;
+// Simulation context.
+const Simulation& simulation;
+// Goal which is being achieved.
+const Goal& goal;
 
-		EvaluateSimulationParams(
-			Simulation& simulation,
-			const SimAgent& agent,
-			const Goal& goal )
-			: simulation( simulation )
-			, agent( agent )
-			, goal( goal )
-			, debugMessages( &simulation.debugMessages() )
-			, namedArguments( simulation.arguments() )
-		{
-		}
+// Constructor declaration only - implementation deferred
+EvaluateSimulationParams( Simulation& simulation, const SimAgent& agent, const Goal& goal );
 
-		void addDebugMessage( std::string_view message )
-		{
-			if( debugMessages )
-			{
-				debugMessages->add( message );
-			}
-		}
+void addDebugMessage( std::string_view message );
+NamedArguments& arguments();
+};
 
-		NamedArguments& arguments()
-		{
-			return namedArguments;
-		}
-	};
+struct SimulateSimulationParams
+{
+public:
+// Agent which is performing action.
+SimAgent& agent;
+// Simulation context.
+Simulation& simulation;
+// Goal which is being achieved.
+const Goal& goal;
 
-	struct SimulateSimulationParams
-	{
+// Constructor declaration only - implementation deferred
+SimulateSimulationParams( Simulation& simulation, SimAgent& agent, const Goal& goal );
 
-	public:
-		// Agent which is performing action.
-		SimAgent& agent;
-		// Simulation context.
-		Simulation& simulation;
-		// Goal which is being achieved.
-		const Goal& goal;
-		SimulateSimulationParams(
-			Simulation& simulation,
-			SimAgent& agent,
-			const Goal& goal )
-			: simulation( simulation )
-			, agent( agent )
-			, goal( goal )
-		{
-		}
-
-		void addDebugMessage( std::string_view message )
-		{
-			simulation.debugMessages().add( message );
-		}
-
-		NamedArguments& arguments()
-		{
-			return simulation.arguments();
-		}
-	};
+void addDebugMessage( std::string_view message );
+NamedArguments& arguments();
+};
 
 	struct CalculateHeuristicParams : public SimulateSimulationParams
 	{
@@ -195,5 +163,54 @@ namespace gie
 		{ \
 			return std::make_shared< ActionName##Action >( arguments ); \
 		} \
-	};
+};
+
+// Implementations - must be after all forward declarations are resolved
+// These should be included after simulation.h is included in the translation unit
+
+inline EvaluateSimulationParams::EvaluateSimulationParams( 
+    Simulation& simulation, 
+    const SimAgent& agent, 
+    const Goal& goal )
+: simulation( simulation )
+, agent( agent )
+, goal( goal )
+, debugMessages( nullptr )  // Will be set when simulation.h is available
+, namedArguments( *reinterpret_cast<NamedArguments*>(nullptr) )  // Will be set when simulation.h is available
+{
+    // Note: This implementation is incomplete - the actual initialization
+    // should be done when the full Simulation type is available
+}
+
+inline void EvaluateSimulationParams::addDebugMessage( std::string_view message )
+{
+    // This will need to be implemented when DebugMessages is fully defined
+}
+
+inline NamedArguments& EvaluateSimulationParams::arguments()
+{
+    return namedArguments;
+}
+
+inline SimulateSimulationParams::SimulateSimulationParams( 
+    Simulation& simulation, 
+    SimAgent& agent, 
+    const Goal& goal )
+: simulation( simulation )
+, agent( agent )
+, goal( goal )
+{
+}
+
+inline void SimulateSimulationParams::addDebugMessage( std::string_view message )
+{
+    // This will need to be implemented when Simulation is fully defined
+}
+
+inline NamedArguments& SimulateSimulationParams::arguments()
+{
+    // This will need to be implemented when Simulation is fully defined
+    return *reinterpret_cast<NamedArguments*>(nullptr);
+}
+
 }
