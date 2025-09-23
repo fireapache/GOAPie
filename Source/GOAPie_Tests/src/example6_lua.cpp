@@ -142,8 +142,8 @@ int heistOpenSafe_Lua( ExampleParameters& params )
             entry->setSource( src );
 
             // Compile/validate and load sources into the shared sandbox under the configured chunk name.
-            bool ok = entry->compileAndLoad();
-            std::cout << "[example6_lua] compileAndLoad('" << name << "') -> " << (ok ? "OK" : "FAIL") << "\n";
+            bool ok = entry->compile();
+            std::cout << "[example6_lua] compile('" << name << "') -> " << (ok ? "OK" : "FAIL") << "\n";
         }
 
         luaEntries.emplace_back( entry );

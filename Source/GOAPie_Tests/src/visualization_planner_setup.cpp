@@ -524,7 +524,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                             sandbox, newName, chunkName, gie::NamedArguments{} );
                         
                         newLuaEntry->setSource( templateScript );
-                        bool compiled = newLuaEntry->compileAndLoad();
+                        bool compiled = newLuaEntry->compile();
                         
                         if( compiled )
                         {
@@ -657,7 +657,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                     ImGui::Separator();
                 }
 
-                // Compile button: validate Lua syntax via compileAndLoad (sets both evaluate & simulate sources)
+                // Compile button: validate Lua syntax via compile (sets both evaluate & simulate sources)
                 if( ImGui::Button( "Compile" ) )
                 {
                     if( s_editPlannerActionIndex >= 0 && s_editPlannerActionIndex < ( int )params.planner.actionSet().size() )
@@ -675,7 +675,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                                 gie::NamedArguments{} );
                             tempEntry->setSource( s_modalEditEntry.sourceLua );
                             
-                            bool ok = tempEntry->compileAndLoad();
+                            bool ok = tempEntry->compile();
                             if( ok )
                             {
                                 // Update UI model
@@ -721,6 +721,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
 
                                 // Set transient failure message (mutually exclusive)
                                 s_modalTransientMessage = "Compilation failed!";
+								std::cout << s_modalCompileError << "\n";
                                 s_modalTransientColor = ImVec4( 1.0f, 0.2f, 0.2f, 1.0f );
                                 s_modalTransientExpire = ImGui::GetTime() + 5.0;
                             }
@@ -745,7 +746,7 @@ void drawPlannerSetupWindow( ExampleParameters& params )
                         if( targetEntry )
                         {
                             targetEntry->setSource( s_modalEditEntry.sourceLua );
-                            bool ok = targetEntry->compileAndLoad();
+                            bool ok = targetEntry->compile();
                             if( !ok )
                             {
                                 // Log compile error but continue with file save

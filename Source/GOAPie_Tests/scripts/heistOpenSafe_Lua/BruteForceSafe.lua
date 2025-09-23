@@ -1,4 +1,4 @@
-﻿-- BruteForceSafe.lua
+-- BruteForceSafe.lua
 function evaluate(params)
     debug("BruteForceSafe.evaluate called")
     return true

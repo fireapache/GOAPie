@@ -1,4 +1,4 @@
-﻿-- BreakConnector.lua
+-- BreakConnector.lua
 function evaluate(params)
     debug("BreakConnector.evaluate called")
     return true

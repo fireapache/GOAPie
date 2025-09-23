@@ -1,4 +1,4 @@
-﻿-- OpenSafeWithCode.lua
+-- OpenSafeWithCode.lua
 function evaluate(params)
     debug("OpenSafeWithCode.evaluate called")
     return true

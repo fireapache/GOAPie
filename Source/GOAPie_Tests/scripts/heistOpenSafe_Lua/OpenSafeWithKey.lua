@@ -1,4 +1,4 @@
-﻿-- OpenSafeWithKey.lua
+-- OpenSafeWithKey.lua
 function evaluate(params)
     debug("OpenSafeWithKey.evaluate called")
     local agentHasKey = get_property(entity_by_name("Agent"), "HasKey")

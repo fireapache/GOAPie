@@ -1,4 +1,4 @@
-﻿-- CrackSafe.lua
+-- CrackSafe.lua
 function evaluate(params)
     debug("CrackSafe.evaluate called")
     return true

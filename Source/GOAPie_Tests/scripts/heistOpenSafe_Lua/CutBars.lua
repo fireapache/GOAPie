@@ -1,4 +1,4 @@
-﻿-- CutBars.lua
+-- CutBars.lua
 function evaluate(params)
     debug("CutBars.evaluate called")
     return true

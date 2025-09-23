@@ -1,4 +1,4 @@
-﻿-- MoveInside.lua
+-- MoveInside.lua
 function evaluate(params)
     debug("MoveInside.evaluate called")
     return true

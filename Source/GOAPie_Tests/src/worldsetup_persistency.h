@@ -21,14 +21,10 @@ struct WorldSetupAction
 {
     std::string name;
     bool active{ true };
-    // Chunk names used as keys in the LuaSandbox registry (stable identifiers).
-    std::string evaluateChunk;    // registry key for evaluate chunk
-    std::string simulateChunk;    // registry key for simulate chunk
-    std::string heuristicChunk;   // registry key for heuristic chunk (optional)
-    // Source text stored for editor persistence.
-    std::string evaluateSource;   // Lua source for Evaluate
-    std::string simulateSource;   // Lua source for Simulate
-    std::string heuristicSource;  // optional Lua source for heuristic
+    // Single chunk name used as key in the LuaSandbox registry
+    std::string luaChunk = "luaChunk";  // registry key for unified chunk
+    // Single source text containing all Lua code (evaluate, simulate, heuristic functions)
+    std::string luaSource;
 };
 
 struct WorldSetupTarget
@@ -73,13 +69,9 @@ inline bool SaveWorldSetupToJson( const WorldSetupData& data, const std::string&
         json::Object obj;
         obj[ "name" ] = a.name;
         obj[ "active" ] = a.active ? true : false;
-        // Persist chunk identifiers (preferred) alongside the full source buffers for compatibility.
-        obj[ "evaluateChunk" ] = a.evaluateChunk;
-        obj[ "simulateChunk" ] = a.simulateChunk;
-        obj[ "heuristicChunk" ] = a.heuristicChunk;
-        obj[ "evaluate" ] = a.evaluateSource;
-        obj[ "simulate" ] = a.simulateSource;
-        obj[ "heuristic" ] = a.heuristicSource;
+        // Single chunk identifier and unified source
+        obj[ "luaChunk" ] = a.luaChunk;
+        obj[ "luaSource" ] = a.luaSource;
         actionsArray.emplace_back( std::move( obj ) );
     }
     root[ "actions" ] = json::Value{ std::move( actionsArray ) };
@@ -159,12 +151,11 @@ inline bool LoadWorldSetupFromJson( WorldSetupData& outData, const std::string& 
             WorldSetupAction a;
             auto itName = aobj.find( "name" ); if( itName != aobj.end() && itName->second.isString() ) a.name = itName->second.asString();
             auto itActive = aobj.find( "active" ); if( itActive != aobj.end() && itActive->second.isBoolean() ) a.active = itActive->second.asBoolean();
-            auto itEvalChunk = aobj.find( "evaluateChunk" ); if( itEvalChunk != aobj.end() && itEvalChunk->second.isString() ) a.evaluateChunk = itEvalChunk->second.asString();
-            auto itSimChunk = aobj.find( "simulateChunk" ); if( itSimChunk != aobj.end() && itSimChunk->second.isString() ) a.simulateChunk = itSimChunk->second.asString();
-            auto itHeuChunk = aobj.find( "heuristicChunk" ); if( itHeuChunk != aobj.end() && itHeuChunk->second.isString() ) a.heuristicChunk = itHeuChunk->second.asString();
-            auto itEval = aobj.find( "evaluate" ); if( itEval != aobj.end() && itEval->second.isString() ) a.evaluateSource = itEval->second.asString();
-            auto itSim = aobj.find( "simulate" ); if( itSim != aobj.end() && itSim->second.isString() ) a.simulateSource = itSim->second.asString();
-            auto itHeu = aobj.find( "heuristic" ); if( itHeu != aobj.end() && itHeu->second.isString() ) a.heuristicSource = itHeu->second.asString();
+
+            // Try new unified format first
+            auto itLuaChunk = aobj.find( "luaChunk" ); if( itLuaChunk != aobj.end() && itLuaChunk->second.isString() ) a.luaChunk = itLuaChunk->second.asString();
+            auto itLuaSource = aobj.find( "luaSource" ); if( itLuaSource != aobj.end() && itLuaSource->second.isString() ) a.luaSource = itLuaSource->second.asString();
+
             outData.actions.emplace_back( std::move( a ) );
         }
     }
@@ -210,15 +201,10 @@ inline std::vector< std::shared_ptr< ActionSetEntry > > BuildLuaActionEntriesFro
         {
             // Only include active actions
             if( !a.active ) continue;
-            // Determine stable chunk names; fall back to generated names if none provided.
-            std::string evalChunk = !a.evaluateChunk.empty() ? a.evaluateChunk : (a.name + ".evaluate");
-            std::string simChunk = !a.simulateChunk.empty() ? a.simulateChunk : (a.name + ".simulate");
-            std::string heuChunk = a.heuristicChunk;
-            auto entry = std::make_shared< LuaActionSetEntry >( std::make_shared< LuaSandbox >(), a.name, evalChunk, simChunk, heuChunk );
-            // Restore source buffers so editor can show and compile them.
-            entry->setEvaluateSource( a.evaluateSource );
-            entry->setSimulateSource( a.simulateSource );
-            entry->setHeuristicSource( a.heuristicSource );
+
+            // Use the unified chunk name and source
+            auto entry = std::make_shared< LuaActionSetEntry >( std::make_shared< LuaSandbox >(), a.name, a.luaChunk );
+            entry->setSource( a.luaSource );
             out.emplace_back( entry );
         }
     return out;

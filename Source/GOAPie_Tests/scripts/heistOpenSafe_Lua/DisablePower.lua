@@ -1,4 +1,4 @@
-﻿-- DisablePower.lua
+-- DisablePower.lua
 function evaluate(params)
     debug("DisablePower.evaluate called")
     return true

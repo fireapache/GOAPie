@@ -1,4 +1,4 @@
-﻿-- Lockpick.lua
+-- Lockpick.lua
 function evaluate(params)
     debug("Lockpick.evaluate called")
     return true

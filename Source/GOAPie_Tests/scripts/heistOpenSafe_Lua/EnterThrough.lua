@@ -1,4 +1,4 @@
-﻿-- EnterThrough.lua
+-- EnterThrough.lua
 function evaluate(params)
     debug("EnterThrough.evaluate called")
     return true

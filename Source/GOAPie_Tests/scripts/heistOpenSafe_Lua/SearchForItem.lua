@@ -1,4 +1,4 @@
-﻿-- SearchForItem.lua
+-- SearchForItem.lua
 function evaluate(params)
     debug("SearchForItem.evaluate called")
     return true

@@ -1,4 +1,4 @@
-﻿-- UseKey.lua
+-- UseKey.lua
 function evaluate(params)
     debug("UseKey.evaluate called")
     return true

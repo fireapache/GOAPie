@@ -18,6 +18,8 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <set>
+#include <cctype>
 
 #include "action.h"
 #include "arguments.h"
@@ -394,35 +396,6 @@ public:
             return false;
         }
         std::cout << "[LuaSandbox] loadChunk: " << name << " (source size=" << source.size() << ")\n";
-
-        if( luaL_loadstring( L, "return _VERSION, type(load), type(loadstring)" ) != LUA_OK )
-        {
-            const char* msg = lua_tostring( L, -1 );
-            if( msg ) std::cout << "[LuaSandbox] probe luaL_loadstring error: " << msg << "\n";
-            lua_pop( L, 1 );
-        }
-        else
-        {
-            if( lua_pcall( L, 0, 3, 0 ) != LUA_OK )
-            {
-                const char* msg = lua_tostring( L, -1 );
-                if( msg ) std::cout << "[LuaSandbox] probe lua_pcall error: " << msg << "\n";
-#ifdef LUA_VERSION_NUM
-                std::cout << "[LuaSandbox] compiled LUA_VERSION_NUM=" << LUA_VERSION_NUM << "\n";
-#endif
-                lua_pop( L, 1 );
-            }
-            else
-            {
-                const char* version = lua_isstring( L, -3 ) ? lua_tostring( L, -3 ) : "(nil)";
-                const char* loadType = lua_isstring( L, -2 ) ? lua_tostring( L, -2 ) : "(nil)";
-                const char* loadstringType = lua_isstring( L, -1 ) ? lua_tostring( L, -1 ) : "(nil)";
-                std::cout << "[LuaSandbox] runtime probe: _VERSION=" << (version ? version : "(null)")
-                          << ", type(load)=" << (loadType ? loadType : "(null)")
-                          << ", type(loadstring)=" << (loadstringType ? loadstringType : "(null)") << "\n";
-                lua_pop( L, 3 );
-            }
-        }
 
         // Strip optional BOM
         std::string src = source;
@@ -821,34 +794,8 @@ public:
     , m_luaChunk( luaChunk )
     , m_arguments( args )
     , m_sandbox( sandbox )
-    , m_luaChunkSource()
     , m_source()
-    , m_evaluateSource()
-    , m_simulateSource()
-    , m_heuristicSource()
     {
-    }
-
-    // Legacy constructor kept for compatibility: accepts separate chunk names.
-    LuaActionSetEntry( const std::shared_ptr<LuaSandbox>& sandbox,
-                       const std::string& name,
-                       const std::string& evaluateChunk,
-                       const std::string& simulateChunk,
-                       const std::string& heuristicChunk,
-                       const NamedArguments& args = {} )
-    : m_name( name )
-    , m_arguments( args )
-    , m_sandbox( sandbox )
-    , m_luaChunkSource()
-    , m_source()
-    , m_evaluateSource()
-    , m_simulateSource()
-    , m_heuristicSource()
-    {
-        // Prefer evaluate chunk name as unified chunk identifier; fallback to simulate or heuristic
-        if( !evaluateChunk.empty() ) m_luaChunk = evaluateChunk;
-        else if( !simulateChunk.empty() ) m_luaChunk = simulateChunk;
-        else m_luaChunk = heuristicChunk;
     }
 
     virtual ~LuaActionSetEntry() = default;
@@ -879,74 +826,74 @@ public:
         m_source = src;
     }
 
-    // Legacy per-function source setters (kept for compatibility with persisted data)
-    void setEvaluateSource( const std::string& src ) { m_evaluateSource = src; }
-    void setSimulateSource( const std::string& src ) { m_simulateSource = src; }
-    void setHeuristicSource( const std::string& src ) { m_heuristicSource = src; }
+
 
     // New single-source accessor
     const std::string& source() const { return m_source; }
 
+    // Validate that Lua action script defines the required functions
+    bool validateActionScript(const std::string& source) const
+    {
+        // Simple check for function definitions
+        bool hasEvaluate = source.find("function evaluate(") != std::string::npos;
+        bool hasSimulate = source.find("function simulate(") != std::string::npos;
+        bool hasHeuristic = source.find("function heuristic(") != std::string::npos;
+
+        if (!hasEvaluate) {
+            m_lastCompileError = "Missing required 'evaluate' function definition. Expected: function evaluate(params)";
+            return false;
+        }
+
+        if (!hasSimulate) {
+            m_lastCompileError = "Missing required 'simulate' function definition. Expected: function simulate(params)";
+            return false;
+        }
+
+        if (!hasHeuristic) {
+            m_lastCompileError = "Missing required 'heuristic' function definition. Expected: function heuristic(params)";
+            return false;
+        }
+
+        return true;
+    }
+
     // Compile/validate and load stored sources into the sandbox registry under the configured chunk names.
     // Returns true if all non-empty sources compiled and loaded successfully.
-    bool compileAndLoad() const
+    bool compile() const
     {
 #if GIE_WITH_LUA
         m_lastCompileError.clear();
 
-        // If we have a unified source, load it under chunkToLoad.
+        std::string sourceToCompile;
+
+        // If we have a unified source, use it
         if( !m_source.empty() )
         {
-            if( !m_sandbox->loadChunk( m_luaChunk, m_source ) )
-            {
-                m_lastCompileError = m_sandbox->lastError();
-                return false;
-            }
-            m_lastCompileError.clear();
+            sourceToCompile = m_source;
+        }
+        // Legacy per-function sources are no longer supported - only unified source is used
+        else
+        {
+            // Nothing to load; treat as success.
             return true;
         }
 
-        // If legacy per-function sources are present, build a combined source wrapper.
-        if( !m_evaluateSource.empty() || !m_simulateSource.empty() || !m_heuristicSource.empty() )
-        {
-            std::string combined;
-            combined.reserve( m_evaluateSource.size() + m_simulateSource.size() + m_heuristicSource.size() + 64 );
-            // If user provided standalone functions, prefer to insert them as-is. Wrap into functions if needed.
-            if( !m_evaluateSource.empty() )
-            {
-                combined += "function evaluate(params)\n";
-                combined += m_evaluateSource;
-                combined += "\nend\n";
-            }
-            if( !m_simulateSource.empty() )
-            {
-                combined += "function simulate(params)\n";
-                combined += m_simulateSource;
-                combined += "\nend\n";
-            }
-            if( !m_heuristicSource.empty() )
-            {
-                combined += "function heuristic(params)\n";
-                combined += m_heuristicSource;
-                combined += "\nend\n";
-            }
-
-            if( !combined.empty() )
-            {
-                if( !m_sandbox->loadChunk( m_luaChunk, combined ) )
-                {
-                    m_lastCompileError = m_sandbox->lastError();
-                    return false;
-                }
-                m_lastCompileError.clear();
-                return true;
-            }
+        // Validate action script before compiling
+        if (!validateActionScript(sourceToCompile)) {
+            return false;
         }
 
-        // Nothing to load; treat as success.
+        // Now compile the validated source
+        if( !m_sandbox->loadChunk( m_luaChunk, sourceToCompile ) )
+        {
+            m_lastCompileError = m_sandbox->lastError();
+            return false;
+        }
+
+        m_lastCompileError.clear();
         return true;
 #else
-        (void)m_evaluateSource; (void)m_simulateSource; (void)m_heuristicSource; (void)m_source;
+        (void)m_source;
         return true;
 #endif
     }
@@ -961,11 +908,7 @@ private:
     NamedArguments m_arguments;
     std::shared_ptr< LuaSandbox > m_sandbox;
 
-    // Legacy per-function source buffers
-    std::string m_luaChunkSource;
-    std::string m_evaluateSource;
-    std::string m_simulateSource;
-    std::string m_heuristicSource;
+
 
     // New unified chunk + source (preferred)
     std::string m_luaChunk;

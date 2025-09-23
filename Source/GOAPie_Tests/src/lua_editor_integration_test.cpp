@@ -14,18 +14,21 @@ struct LuaEditorIntegrationTestRunner
     {
         std::cout << "[LuaEditorIntegrationTest] starting\n";
 
-        // Prepare a simple WorldSetupAction with evaluate/simulate sources.
+        // Prepare a simple WorldSetupAction with unified lua source.
         WorldSetupData data;
         WorldSetupAction a;
         a.name = "EditorAction";
         a.active = true;
-        a.evaluateSource =
+        a.luaSource =
             "function evaluate(params)\n"
             "  return true\n"
-            "end\n";
-        a.simulateSource =
+            "end\n"
+            "\n"
             "function simulate(params)\n"
             "  return true\n"
+            "end\n"
+            "function heuristic(params)\n"
+            "  return 1\n"
             "end\n";
 
         data.actions.emplace_back( std::move(a) );
@@ -55,8 +58,8 @@ struct LuaEditorIntegrationTestRunner
         assert( loaded.actions.size() == 1 );
         const auto& la = loaded.actions[0];
         assert( la.name == "EditorAction" );
-        assert( la.evaluateSource.find("function evaluate") != std::string::npos );
-        assert( la.simulateSource.find("function simulate") != std::string::npos );
+        assert( la.luaSource.find("function evaluate") != std::string::npos );
+        assert( la.luaSource.find("function simulate") != std::string::npos );
 
         std::cout << "[LuaEditorIntegrationTest] persistence verified\n";
 
@@ -67,11 +70,15 @@ struct LuaEditorIntegrationTestRunner
         const std::string chunkName = la.name + "_chunk";
         auto entry = std::make_shared< LuaActionSetEntry >( sandbox, la.name, chunkName, NamedArguments{} );
 
-        // Attach the unified source (prefer evaluate source)
-        entry->setSource( la.evaluateSource );
+        // Attach the unified source
+        entry->setSource( la.luaSource );
 
-        bool compiled = entry->compileAndLoad();
-        std::cout << "[LuaEditorIntegrationTest] compileAndLoad('" << la.name << "') -> " << (compiled ? "OK" : "FAIL") << "\n";
+        bool compiled = entry->compile();
+        std::cout << "[LuaEditorIntegrationTest] compile('" << la.name << "') -> " << (compiled ? "OK" : "FAIL") << "\n";
+        if( !compiled )
+        {
+			std::cout << entry->lastCompileError() << "\n";
+        }
         assert( compiled );
 
         std::cout << "[LuaEditorIntegrationTest] all checks passed\n";
