@@ -2,6 +2,11 @@
 
 #include "example.h"
 
+const char* openDoorDescription()
+{
+    return "Simple example demonstrating opening a door via planner actions.";
+}
+
 extern void printPlannedActions( const std::vector< std::shared_ptr< gie::Action > >& plannedActions );
 
 int openDoor( ExampleParameters& params )

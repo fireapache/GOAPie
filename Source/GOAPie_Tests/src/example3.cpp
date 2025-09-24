@@ -4,6 +4,11 @@
 
 extern void printSimulatedActions( const gie::Planner& planner );
 
+const char* cutDownTreesDescription()
+{
+    return "Agent gathers logs by cutting down trees and may build a house when enough logs are available.";
+}
+
 int cutDownTrees( ExampleParameters& params )
 {
 	gie::World& world = params.world;
@@ -14,7 +19,7 @@ int cutDownTrees( ExampleParameters& params )
 	auto agentEntity = world.createAgent();
 
 	// NOTE: this is a step towards the next (more complex)
-	// tutorial, a wood house is not being built here yet.
+	// tutorial, a wood house is not being built here yet.	
 	
 	// property telling if agent has a wood house
 	auto agentWoodHousePpt = agentEntity->createProperty( "WoodHouse", false );
@@ -104,7 +109,7 @@ int cutDownTrees( ExampleParameters& params )
 			}
 
 			// getting set of trees still up
-			const auto treeUpTagSet = params.simulation.tagSet( gie::stringHasher( "TreeUp" ) );
+			auto treeUpTagSet = params.simulation.tagSet( gie::stringHasher( "TreeUp" ) );
 
 			// no tag set found
 			if( !treeUpTagSet )
@@ -127,14 +132,14 @@ int cutDownTrees( ExampleParameters& params )
 			// getting Axe Integrity property guid from world context
 			auto axeIntegrityPpt = params.agent.worldContextAgent()->property( "AxeIntegrity" );
 
-			// getting Axe Integrity property from current simulation context
+			// getting Axe Integrity property from simulation context
 			auto simAxeIntegrityPpt = params.simulation.context().property( axeIntegrityPpt->guid() );
 
 			// decreasing axe integrity once tree was cut down
 			simAxeIntegrityPpt->value = *simAxeIntegrityPpt->getFloat() - 1.f;
 
 			// getting set of trees still up
-			const auto treeUpTagSet = params.simulation.tagSet( gie::stringHasher( "TreeUp" ) );
+			auto treeUpTagSet = params.simulation.tagSet( gie::stringHasher( "TreeUp" ) );
 
 			// consuming first tree
 			gie::Guid treeEntityGuid = *treeUpTagSet->cbegin();
@@ -180,11 +185,11 @@ int cutDownTrees( ExampleParameters& params )
 			// getting property Guid to refer in the simulation
 			auto moneyPpt = params.agent.worldContextAgent()->property( "Money" );
 			auto thingsToBuyPpt = params.agent.worldContextAgent()->property( "ThingsToBuy" );
-
+		
 			// getting property in simulation property
 			const auto simMoneyPpt = params.simulation.context().property( moneyPpt->guid() );
 			const auto simThingsToBuyPpt = params.simulation.context().property( thingsToBuyPpt->guid() );
-
+		
 			// getting cost of things to buy
 			float cost = 0.f;
 			auto thingsToBuyArray = simThingsToBuyPpt->getGuidArray();
@@ -214,10 +219,10 @@ int cutDownTrees( ExampleParameters& params )
 		{
 			// getting property Guid to refer in the simulation
 			auto moneyPpt = params.agent.worldContextAgent()->property( "Money" );
-
+		
 			// getting property in simulation property
 			auto simMoneyPpt = params.simulation.context().property( moneyPpt->guid() );
-
+		
 			// setting money property in simulation's context
 			simMoneyPpt->value = *simMoneyPpt->getFloat() + workSalary;
 

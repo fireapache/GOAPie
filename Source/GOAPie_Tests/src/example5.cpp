@@ -12,6 +12,12 @@
 
 static inline float clampf( float v, float lo, float hi ) { return std::max( lo, std::min( v, hi ) ); }
 
+// Add description function
+const char* survivalOnHillDescription()
+{
+    return "Survival example demonstrating energy, hunger and thirst management while gathering resources.";
+}
+
 // Helper to apply travel-based survival deltas. Kept at file scope so inner simulator classes can use it.
 static inline void ApplyTravelAndBaseDeltas(
     gie::Entity* agent,

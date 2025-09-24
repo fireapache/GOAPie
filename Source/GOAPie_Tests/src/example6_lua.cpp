@@ -16,6 +16,11 @@
 #include <windows.h>
 #endif
 
+const char* heistOpenSafe_LuaDescription()
+{
+	return "Heist example, but actions defined by external Lua scripts loaded from examples/<name>/scripts/";
+}
+
 // set in main.cpp
 extern std::string g_exampleName;
 

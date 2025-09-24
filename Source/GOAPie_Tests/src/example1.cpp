@@ -5,6 +5,11 @@
 int insertingDataEntities( gie::World& world );
 int insertingParameters( gie::World& world );
 
+const char* fundamentalsDescription()
+{
+    return "Basic world/entity/property insertion example.";
+}
+
 int fundamentals( ExampleParameters& params )
 {
 	gie::World& world = params.world;

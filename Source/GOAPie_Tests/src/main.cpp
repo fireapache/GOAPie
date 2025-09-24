@@ -1,10 +1,11 @@
-#include "example.h"
-
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#include <string>
 
 #include <goapie_main.h>
+
+#include "example.h"
 
 // found in visualization.h
 // TODO: Rename g_exampleName to g_projectName (frontend mapping)
@@ -13,6 +14,7 @@ std::string g_exampleName;
 // TODO: Rename EXAMPLE_FUNCTION to PROJECT_FUNCTION (frontend mapping)
 #define EXAMPLE_FUNCTION( x ) \
 	extern int x( ExampleParameters& params ); \
+	extern const char* x##Description(); \
 	const char* x##Name = #x;
 
 // example 1
@@ -36,6 +38,7 @@ struct ExampleFunctionEntry
 {
 	ExampleFunc func;
 	const char* name;
+	const char* description;
 };
 
 // used to draw elements using OpenGL
@@ -44,73 +47,124 @@ extern int visualization( ExampleParameters& params );
 // used to print actions from simulation leaf nodes
 extern void printSimulatedActions( const gie::Planner& planner );
 
+// TODO: Rename exampleFunctions to projectFunctions (frontend mapping)
+std::vector< ExampleFunctionEntry > exampleFunctions{
+	{ fundamentals,			fundamentalsName, fundamentalsDescription() },
+	{ openDoor,			openDoorName, openDoorDescription() },
+	{ cutDownTrees,			cutDownTreesName, cutDownTreesDescription() },
+	{ treesOnHill,			treesOnHillName, treesOnHillDescription() },
+	{ survivalOnHill,		survivalOnHillName, survivalOnHillDescription() },
+	{ heistOpenSafe,		heistOpenSafeName, heistOpenSafeDescription() },
+	{ heistOpenSafe_Lua,	heistOpenSafe_LuaName, heistOpenSafe_LuaDescription() }
+};
+
+static void printUsage()
+{
+	std::string msg;
+	msg.reserve( 512 );
+	msg += "usage: <exe> [options]\n\n";
+	msg += "OPTIONS\n";
+ msg += "    -e, --example <N>       Run native example numbered N (1.." + std::to_string( exampleFunctions.size() ) + ") and exit.\n";
+ msg += "    -v, --visualization     Launch visualization GUI. If combined with -e,\n";
+ msg += "                            the example will be loaded before showing GUI.\n";
+ msg += "    -le, --list-examples    List available examples with short descriptions.\n\n";
+	msg += "EXAMPLES\n";
+	msg += "    <exe> -e 1               Run example 1 and exit.\n";
+	msg += "    <exe> -e 2 -v            Load example 2 and show GUI.\n";
+	msg += "    <exe> -v                 Show GUI without loading any example.\n";
+
+	std::printf( "%s", msg.c_str() );
+}
+
 int main( int argc, char** argv )
 {
-	// TODO: Rename exampleFunctions to projectFunctions (frontend mapping)
-	std::vector< ExampleFunctionEntry > exampleFunctions{
-		{ fundamentals,			fundamentalsName },
-		{ openDoor,				openDoorName },
-		{ cutDownTrees,			cutDownTreesName },
-		{ treesOnHill,			treesOnHillName },
-		{ survivalOnHill,		survivalOnHillName },
-		{ heistOpenSafe,		heistOpenSafeName },
-		{ heistOpenSafe_Lua,	heistOpenSafe_LuaName }
-	};
-
 	int ex = -1;
+	bool visualize = false;
+	bool listExamples = false;
 
-	if( argc > 1 )
+	// Simple command-line parsing for -e/--example, -v/--visualization and -le/--list-examples
+	for( int i = 1; i < argc; ++i )
 	{
-		ex = std::atoi( argv[ 1 ] );
-	}
-
-	if( ex < 1 || ex > exampleFunctions.size() )
-	{
-		while( true )
+		if( std::strcmp( argv[ i ], "-v" ) == 0 || std::strcmp( argv[ i ], "--visualization" ) == 0 )
 		{
-			// TODO: Update this message to use "project" instead of "example" (frontend mapping)
-			std::printf( "Enter valid example number [1..%d]: ", static_cast< int >( exampleFunctions.size() ) );
-			std::scanf( "%d", &ex );
-
-			if( ex < 1 || ex > exampleFunctions.size() )
+			visualize = true;
+		}
+		else if( std::strcmp( argv[ i ], "-e" ) == 0 || std::strcmp( argv[ i ], "--example" ) == 0 )
+		{
+			if( i + 1 < argc )
 			{
-				// TODO: Update this message to use "project" instead of "example" (frontend mapping)
-				std::printf( "Wrong example number!\n" );
+				ex = std::atoi( argv[ i + 1 ] );
+				++i; // skip the number argument
 			}
 			else
 			{
-				break;
+				std::printf( "Missing example number after %s\n", argv[ i ] );
+				printUsage();
+				return 1;
 			}
 		}
-	}
-
-	// checking for -v parameter
-	bool visualize = false;
-	for( int i = 1; i < argc; ++i )
-	{
-		if( std::strcmp( argv[ i ], "-v" ) == 0 )
+		else if( std::strcmp( argv[ i ], "-le" ) == 0 || std::strcmp( argv[ i ], "--list-examples" ) == 0 )
 		{
-			visualize = true;
-			break;
+			listExamples = true;
+		}
+		else
+		{
+			// ignore unknown parameters for now
 		}
 	}
 
-	// TODO: Update comment to use "project" instead of "example" (frontend mapping)
-	// instantiating essential objects for the example
+	// If list-examples requested, print list and exit
+	if( listExamples )
+	{
+		std::printf( "Available examples (use -e N to run):\n" );
+		for( size_t i = 0; i < exampleFunctions.size(); ++i )
+		{
+			std::printf( "  %zu) %s\n", i + 1, exampleFunctions[ i ].name );
+			if( exampleFunctions[ i ].description )
+			{
+				std::printf( "     %s\n", exampleFunctions[ i ].description );
+			}
+		}
+		return 0;
+	}
+
+	// If neither flag is provided, print usage and quit
+	if( ex == -1 && !visualize )
+	{
+		printUsage();
+		return 0;
+	}
+
+	// validate example number if provided
+	if( ex != -1 )
+	{
+		if( ex < 1 || static_cast<size_t>( ex ) > exampleFunctions.size() )
+		{
+			std::printf( "Wrong example number: %d (valid range 1..%zu)\n", ex, exampleFunctions.size() );
+			printUsage();
+			return 1;
+		}
+	}
+
+	// instantiating essential objects for any possible usage
 	gie::World world{};
 	gie::Planner planner{};
 	gie::Goal goal{ world };
 
-	// TODO: Rename ExampleParameters to ProjectParameters (frontend mapping)
-	// TODO: Update comment to use "project" instead of "example" (frontend mapping)
-	// running example function
+	// running example function if requested
 	ExampleParameters exampleParams{ world, planner, goal };
-	g_exampleName = exampleFunctions[ ex - 1 ].name;
-	int exResult = exampleFunctions[ ex - 1 ].func( exampleParams );
 
-	// TODO: Update comment to use "project" instead of "example" (frontend mapping)
-	// example code set up the world, planner and goal,
-	// and now we can run the planner.
+	if( ex != -1 )
+	{
+		g_exampleName = exampleFunctions[ ex - 1 ].name;
+		int exResult = exampleFunctions[ ex - 1 ].func( exampleParams );
+		( void )exResult;
+	}
+	else
+	{
+		// no example loaded
+		g_exampleName.clear();
+	}
 
 	if( visualize )
 	{
@@ -119,11 +173,14 @@ int main( int argc, char** argv )
 	}
 	else
 	{
-		// simply run the planner
-		planner.plan();
+		if( ex != -1 )
+		{
+			// simply run the planner (example already set up)
+			planner.plan();
 
-		// printing simulated nodes
-		printSimulatedActions( planner );
+			// printing simulated nodes
+			printSimulatedActions( planner );
+		}
 	}
 
 	return 0;

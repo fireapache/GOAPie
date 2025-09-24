@@ -19,6 +19,11 @@
 //  - System interaction (alarm panel, fuse box)
 //  - GOAP action simulators with heuristic guidance and rich debug messages
 
+const char* heistOpenSafeDescription()
+{
+    return "Complex heist scenario: plan actions to open a safe using tools, keys, or brute force.";
+}
+
 // Simple helpers
 static inline float clampf( float v, float lo, float hi ) { return std::max( lo, std::min( v, hi ) ); }
 
@@ -206,7 +211,7 @@ gie::Agent* heistOpenSafe_world( ExampleParameters& params )
         if( auto* a = world.createArchetype( "Info" ) )
         {
             a->addTag( "Info" );
-            a->addProperty( "Name", gie::NullGuid );
+			a->addProperty( "Name", gie::NullGuid );
         }
         // Safe archetype
         if( auto* a = world.createArchetype( "Safe" ) )
@@ -474,7 +479,7 @@ world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) 
     auto makeInfo = [&]( const char* infoName ) -> gie::Entity*
     {
         auto e = world.createEntity( infoName );
-        e->createProperty( "Name", infoName );
+		e->createProperty( "Name", infoName );
         world.context().entityTagRegister().tag( e, { H( "Info" ) } );
         return e;
     };
@@ -1380,13 +1385,13 @@ static void ResetHeistWorldFromToggles( gie::World& world )
         }
     };
 
-    place( "CrowbarInfo",     "Crowbar",     "Garage",    g_Toggles.placeCrowbar );
-    place( "BoltCutterInfo",  "BoltCutter",  "Garage",    g_Toggles.placeBoltCutter );
-    place( "LockpickInfo",    "LockpickSet", "Garage",    g_Toggles.placeLockpick );
-    place( "StethoscopeInfo", "Stethoscope", "BedroomB",  g_Toggles.placeStethoscope );
-    place( "FrontKeyInfo",    "FrontDoorKey","LivingRoom",g_Toggles.placeFrontKey );
-    place( "BackKeyInfo",     "BackDoorKey", "Kitchen",   g_Toggles.placeBackKey );
-    place( "SafeKeyInfo",     "SafeKey",     "BedroomA",  g_Toggles.placeSafeKey );
+    place( "CrowbarInfo",     "Crowbar",     "Garage",     g_Toggles.placeCrowbar );
+    place( "BoltCutterInfo",  "BoltCutter",  "Garage",     g_Toggles.placeBoltCutter );
+    place( "LockpickInfo",    "LockpickSet", "Garage",     g_Toggles.placeLockpick );
+    place( "StethoscopeInfo", "Stethoscope", "BedroomB",   g_Toggles.placeStethoscope );
+    place( "FrontKeyInfo",    "FrontDoorKey","LivingRoom", g_Toggles.placeFrontKey );
+    place( "BackKeyInfo",     "BackDoorKey", "Kitchen",    g_Toggles.placeBackKey );
+    place( "SafeKeyInfo",     "SafeKey",     "BedroomA",   g_Toggles.placeSafeKey );
 }
 
 static gie::Entity* FindRoom( gie::World& world, const char* roomName )
