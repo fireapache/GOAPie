@@ -7,6 +7,9 @@
 
 #include "example.h"
 
+extern void RunLuaIntegrationTest();
+extern void RunLuaEditorIntegrationTest();
+
 // found in visualization.h
 // TODO: Rename g_exampleName to g_projectName (frontend mapping)
 std::string g_exampleName;
@@ -64,14 +67,17 @@ static void printUsage()
 	msg.reserve( 512 );
 	msg += "usage: <exe> [options]\n\n";
 	msg += "OPTIONS\n";
- msg += "    -e, --example <N>       Run native example numbered N (1.." + std::to_string( exampleFunctions.size() ) + ") and exit.\n";
- msg += "    -v, --visualization     Launch visualization GUI. If combined with -e,\n";
- msg += "                            the example will be loaded before showing GUI.\n";
- msg += "    -le, --list-examples    List available examples with short descriptions.\n\n";
+	msg += "    -e, --example <N>       Run native example numbered N (1.." + std::to_string( exampleFunctions.size() ) + ") and exit.\n";
+	msg += "    -v, --visualization     Launch visualization GUI. If combined with -e,\n";
+	msg += "                            the example will be loaded before showing GUI.\n";
+	msg += "    -le, --list-examples    List available examples with short descriptions.\n";
+	msg += "    -t, --tests             Run Lua integration tests before app starts.\n\n";
 	msg += "EXAMPLES\n";
 	msg += "    <exe> -e 1               Run example 1 and exit.\n";
 	msg += "    <exe> -e 2 -v            Load example 2 and show GUI.\n";
 	msg += "    <exe> -v                 Show GUI without loading any example.\n";
+	msg += "    <exe> -t                 Run Lua tests and exit.\n";
+	msg += "    <exe> -t -v              Run Lua tests then show GUI.\n";
 
 	std::printf( "%s", msg.c_str() );
 }
@@ -81,8 +87,9 @@ int main( int argc, char** argv )
 	int ex = -1;
 	bool visualize = false;
 	bool listExamples = false;
+	bool runTests = false;
 
-	// Simple command-line parsing for -e/--example, -v/--visualization and -le/--list-examples
+	// Simple command-line parsing for -e/--example, -v/--visualization, -le/--list-examples and -t/--tests
 	for( int i = 1; i < argc; ++i )
 	{
 		if( std::strcmp( argv[ i ], "-v" ) == 0 || std::strcmp( argv[ i ], "--visualization" ) == 0 )
@@ -107,6 +114,10 @@ int main( int argc, char** argv )
 		{
 			listExamples = true;
 		}
+		else if( std::strcmp( argv[ i ], "-t" ) == 0 || std::strcmp( argv[ i ], "--tests" ) == 0 )
+		{
+			runTests = true;
+		}
 		else
 		{
 			// ignore unknown parameters for now
@@ -128,10 +139,22 @@ int main( int argc, char** argv )
 		return 0;
 	}
 
+	// Run Lua integration tests if requested (before app begins)
+	if( runTests )
+	{
+		RunLuaIntegrationTest();
+		RunLuaEditorIntegrationTest();
+	}
+
 	// If neither flag is provided, print usage and quit
-	if( ex == -1 && !visualize )
+	if( ex == -1 && !visualize && !runTests )
 	{
 		printUsage();
+		return 0;
+	}
+
+	if( runTests && ex == -1 && !visualize )
+	{
 		return 0;
 	}
 
