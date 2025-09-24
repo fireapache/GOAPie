@@ -1,4 +1,3 @@
-
 --[[
 
 	Premake5 script for GOAPie and its dependicies.
@@ -354,8 +353,14 @@ removefiles {
 	files
 	{
 		"%{prj.location}/include/**.h",
-		"%{prj.location}/src/**.cpp"
+		"%{prj.location}/src/**.cpp",
+		-- Include lua scripts so they appear in Visual Studio solution explorer
+		"%{prj.location}/scripts/**.lua"
 	}
+
+	-- Mark lua files as non-build items in Visual Studio (optional)
+	filter { "files:%{prj.location}/scripts/**.lua" }
+		flags { "ExcludeFromBuild" }
 
 	filter "system:windows"
 		cppdialect "C++17"
