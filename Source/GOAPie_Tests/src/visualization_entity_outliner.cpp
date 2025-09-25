@@ -12,11 +12,23 @@ namespace {
     static char s_NameDialogBuf[256] = { 0 };
     static bool s_NameDialogFocus = false; // request keyboard focus on next frame
 
+    // New: inline rename state
+    static gie::Guid s_InlineRenameGuid = gie::NullGuid;
+    static char s_InlineRenameBuf[256] = { 0 };
+    static bool s_InlineRenameFocus = false; // request keyboard focus on next frame
+
     inline void CancelNameDialog()
     {
         s_NameDialogMode = NameDialogMode::None;
         s_NameDialogBuf[0] = '\0';
         s_NameDialogFocus = false;
+    }
+
+    inline void CancelInlineRename()
+    {
+        s_InlineRenameGuid = gie::NullGuid;
+        s_InlineRenameBuf[0] = '\0';
+        s_InlineRenameFocus = false;
     }
 }
 
@@ -32,8 +44,8 @@ void drawEntityOutlinerWindow( gie::World& world )
             ImGui::End();
             return;
         }
-        // If name dialog is open and user interacts/focuses elsewhere, cancel it
-        if( s_NameDialogMode != NameDialogMode::None )
+        // If name dialog or inline rename is open and user interacts/focuses elsewhere, cancel it
+        if( s_NameDialogMode != NameDialogMode::None || s_InlineRenameGuid != gie::NullGuid )
         {
             if( !ImGui::IsWindowFocused( ImGuiFocusedFlags_RootAndChildWindows ) )
             {
@@ -41,6 +53,7 @@ void drawEntityOutlinerWindow( gie::World& world )
                 if( io.MouseClicked[0] || io.MouseClicked[1] || io.MouseClicked[2] || io.MouseWheel != 0.0f )
                 {
                     CancelNameDialog();
+                    CancelInlineRename();
                 }
             }
         }
@@ -61,7 +74,7 @@ void drawEntityOutlinerWindow( gie::World& world )
             hasSelection = ( g != gie::NullGuid && world.entity( g ) != nullptr );
         }
 
-        ImGui::BeginDisabled( s_NameDialogMode != NameDialogMode::None );
+        ImGui::BeginDisabled( s_NameDialogMode != NameDialogMode::None || s_InlineRenameGuid != gie::NullGuid );
         if( ImGui::Button( "+ Add" ) )
         {
             // Start name dialog for Add
@@ -184,16 +197,55 @@ void drawEntityOutlinerWindow( gie::World& world )
             {
                 ImGui::TableNextRow();
                 ImGui::TableSetColumnIndex( 0 );
-                std::string displayName = nameOf( ent );
-                if( displayName.empty() ) displayName = "<unnamed>";
-                        bool selected = false;
-                        if( g_selectedEntityGuids.size() == 1 && *g_selectedEntityGuids.begin() == guid ) selected = true;
-                std::string selLabel = displayName + "##" + std::to_string( static_cast<unsigned long long>( guid ) );
-                if( ImGui::Selectable( selLabel.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns ) )
+
+                if( guid == s_InlineRenameGuid )
                 {
-                    g_selectedEntityGuids.clear();
-                    g_selectedEntityGuids.insert( guid );
-                    g_WaypointEditSelectedGuid = guid; // sync to other tools
+                    // Inline rename input
+                    ImGui::SetNextItemWidth( -1.0f );
+                    if( s_InlineRenameFocus ) { ImGui::SetKeyboardFocusHere(); s_InlineRenameFocus = false; }
+                    bool enterPressed = ImGui::InputText( "##inline_rename", s_InlineRenameBuf, IM_ARRAYSIZE( s_InlineRenameBuf ), ImGuiInputTextFlags_EnterReturnsTrue );
+                    if( enterPressed )
+                    {
+                        // Apply rename
+                        auto* e = world.entity( guid );
+                        if( e ) e->setName( s_InlineRenameBuf );
+                        CancelInlineRename();
+                    }
+                    else if( ImGui::IsKeyPressed( ImGuiKey_Escape ) )
+                    {
+                        // Cancel rename
+                        CancelInlineRename();
+                    }
+                    else if( !ImGui::IsItemActive() && ImGui::IsMouseClicked( 0 ) )
+                    {
+                        // Clicked outside input, cancel
+                        CancelInlineRename();
+                    }
+                }
+                else
+                {
+                    // Normal selectable row
+                    std::string displayName = nameOf( ent );
+                    if( displayName.empty() ) displayName = "<unnamed>";
+                    bool selected = false;
+                    if( g_selectedEntityGuids.size() == 1 && *g_selectedEntityGuids.begin() == guid ) selected = true;
+                    std::string selLabel = displayName + "##" + std::to_string( static_cast<unsigned long long>( guid ) );
+                    if( ImGui::Selectable( selLabel.c_str(), selected, ImGuiSelectableFlags_SpanAllColumns ) )
+                    {
+                        g_selectedEntityGuids.clear();
+                        g_selectedEntityGuids.insert( guid );
+                        g_WaypointEditSelectedGuid = guid; // sync to other tools
+                    }
+                    // Check for double-click to start inline rename
+                    if( ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked( 0 ) )
+                    {
+                        s_InlineRenameGuid = guid;
+                        std::string curName = nameOf( ent );
+                        std::strncpy( s_InlineRenameBuf, curName.c_str(), sizeof( s_InlineRenameBuf ) - 1 );
+                        s_InlineRenameBuf[ sizeof( s_InlineRenameBuf ) - 1 ] = '\0';
+                        s_InlineRenameFocus = true;
+                        CancelNameDialog(); // cancel any existing dialog
+                    }
                 }
 
                 ImGui::TableSetColumnIndex( 1 );
@@ -204,7 +256,7 @@ void drawEntityOutlinerWindow( gie::World& world )
 
         // Hint
         ImGui::Separator();
-        ImGui::TextUnformatted( "Tip: Click a row to select. 'Add' opens a name dialog." );
+        ImGui::TextUnformatted( "Tip: Click a row to select. Double-click to rename inline. 'Add' opens a name dialog." );
     }
     ImGui::End();
 }
@@ -212,6 +264,7 @@ void drawEntityOutlinerWindow( gie::World& world )
 void ResetEntityOutlinerState()
 {
     CancelNameDialog();
+    CancelInlineRename();
 }
 
 bool CancelEntityOutlinerOngoingOperation()
@@ -219,6 +272,11 @@ bool CancelEntityOutlinerOngoingOperation()
     if( s_NameDialogMode != NameDialogMode::None )
     {
         CancelNameDialog();
+        return true;
+    }
+    if( s_InlineRenameGuid != gie::NullGuid )
+    {
+        CancelInlineRename();
         return true;
     }
     return false;
