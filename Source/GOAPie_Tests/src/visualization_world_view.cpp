@@ -116,26 +116,21 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 		const gie::Archetype* arch = g_WorldPtr->archetype( g_SelectedArchetypeGuid );
 		if( arch )
 		{
-			gie::Entity* e = arch->instantiate( *g_WorldPtr );
-			if( e )
+			gie::Entity* entity = arch->instantiate( *g_WorldPtr );
+			if( entity )
 			{
 				// Set default Location property if available or create it
-				glm::vec3 wp = MouseToWorld( localX, localY, windowWidth, windowHeight );
-				if( auto* loc = e->property( "Location" ) )
+				glm::vec3 worldLocation = MouseToWorld( localX, localY, windowWidth, windowHeight );
+				if( auto* locationPtt = entity->property( "Location" ) )
 				{
-					loc->value = wp;
+					locationPtt->value = worldLocation;
 				}
 				else
 				{
-					e->createProperty( "Location", wp );
+					entity->createProperty( "Location", worldLocation );
 				}
-
-				// Tag as Draw by convenience so it shows up
-				std::vector< gie::Tag > tags{ gie::stringHasher( "Draw" ) };
-				g_WorldPtr->context().entityTagRegister().tag( e, tags );
-
 				g_selectedEntityGuids.clear();
-				g_selectedEntityGuids.insert( e->guid() );
+				g_selectedEntityGuids.insert( entity->guid() );
 			}
 		}
 		return; // avoid also doing selection
