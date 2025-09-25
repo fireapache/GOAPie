@@ -36,11 +36,11 @@ static inline gie::StringHash H( const char* s ) { return gie::stringHasher( s )
 struct HeistToggles
 {
     // entry points
-    bool frontDoorLocked{ true };
+    bool frontDoorLocked{ false };
     bool frontDoorAlarmed{ true };
-    bool backDoorLocked{ true };
+    bool backDoorLocked{ false };
     bool backDoorBlocked{ false };
-    bool kitchenWindowLocked{ true };
+    bool kitchenWindowLocked{ false };
     bool kitchenWindowBarred{ false };
 
     // systems
@@ -81,6 +81,17 @@ static gie::Entity* FindRoom( gie::World& world, const char* roomName );
  gie::Agent* heistOpenSafe_world( ExampleParameters& params );
  static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent );
 
+// Helper to get all entities tagged with "Access"
+static std::vector<gie::Guid> getAccessPoints( const gie::Blackboard& ctx )
+{
+    std::vector<gie::Guid> accessPoints;
+    if( auto accessSet = ctx.entityTagRegister().tagSet( "Access" ) )
+    {
+        accessPoints.assign( accessSet->begin(), accessSet->end() );
+    }
+    return accessPoints;
+}
+
 // Heuristic helper: estimate remaining effort to reach safe room from agent position
 static float EstimateHeistHeuristic( const gie::Simulation& sim, const gie::Entity* agentEnt )
 {
@@ -117,17 +128,17 @@ static float EstimateHeistHeuristic( const gie::Simulation& sim, const gie::Enti
     auto curRoomGuid = agentEnt->property( "CurrentRoom" ) ? *agentEnt->property( "CurrentRoom" )->getGuid() : gie::NullGuid;
     if( curRoomGuid == gie::NullGuid )
     {
-        auto connectors = sim.context().entityTagRegister().tagSet( "Connector" );
+        auto connectors = getAccessPoints( sim.context() );
         bool alarmArmed = true; for( const auto& kv : sim.context().entities() ) { if( gie::stringRegister().get( kv.second.nameHash() ) == std::string_view( "AlarmSystem" ) ) { auto a = sim.context().entity( kv.first ); alarmArmed = *a->property( "Armed" )->getBool(); break; } }
-        if( connectors )
+        if( !connectors.empty() )
         {
             float extra = 0.f;
-            for( auto g : *connectors )
+            for( auto g : connectors )
             {
                 auto c = sim.context().entity( g );
                 if( *c->property( "Locked" )->getBool() ) extra += g_Toggles.lockedPenalty;
-                if( *c->property( "Barred" )->getBool() ) extra += g_Toggles.barredPenalty;
-                if( alarmArmed && *c->property( "Alarmed" )->getBool() ) extra += g_Toggles.alarmedPenalty;
+                if( c->property( "Barred" ) && *c->property( "Barred" )->getBool() ) extra += g_Toggles.barredPenalty;
+                if( c->property( "Alarmed" ) && alarmArmed && *c->property( "Alarmed" )->getBool() ) extra += g_Toggles.alarmedPenalty;
             }
             h += extra * 0.25f; // normalize penalties influence
         }
@@ -187,19 +198,7 @@ gie::Agent* heistOpenSafe_world( ExampleParameters& params )
             a->addProperty( "DisplayName", true );
             a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
         }
-        // Connector archetype (doors/windows entries)
-        if( auto* a = world.createArchetype( "Connector" ) )
-        {
-            a->addTag( "Connector" );
-            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-            a->addProperty( "From", gie::NullGuid );
-            a->addProperty( "To", gie::NullGuid );
-            a->addProperty( "Locked", false );
-            a->addProperty( "Blocked", false );
-            a->addProperty( "Barred", false );
-            a->addProperty( "Alarmed", false );
-            a->addProperty( "RequiredKey", gie::NullGuid );
-        }
+
         // Item archetype (carryable items)
         if( auto* a = world.createArchetype( "Item" ) )
         {
@@ -226,7 +225,7 @@ gie::Agent* heistOpenSafe_world( ExampleParameters& params )
         {
             a->addProperty( "Armed", false );
         }
-        if( auto* a = world.createArchetype( "AlarmPanelEntity" ) )
+        if( auto* a = world.createArchetype( "AlarmPanel" ) )
         {
             a->addTag( "AlarmPanel" );
             a->addTag( "Item" );
@@ -237,6 +236,20 @@ gie::Agent* heistOpenSafe_world( ExampleParameters& params )
             a->addTag( "FuseBox" );
             a->addTag( "Item" );
             a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+        }
+        // RoomAccess archetype (doors/windows)
+        if( auto* a = world.createArchetype( "RoomAccess" ) )
+        {
+            a->addTag( "Waypoint" );
+            a->addTag( "Draw" );
+            a->addTag( "Access" );
+            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+            a->addProperty( "Links", gie::Property::GuidVector{} );
+            a->addProperty( "Locked", false );
+            a->addProperty( "Blocked", false );
+            a->addProperty( "Barred", false );
+            a->addProperty( "Alarmed", false );
+            a->addProperty( "RequiredKey", gie::NullGuid );
         }
         // Agent archetype (thief)
         if( auto* a = world.createArchetype( "Agent" ) )
@@ -303,173 +316,11 @@ world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) 
     *( roomEntities[ 0 ]->property( "Discovered" )->getBool() ) = true; // WholeHouse known from start
 *( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false; // don't display WholeHouse name in visualization
 
-    // Waypoints (rooms + points of interest + doors/windows + outdoor) laid roughly as a house layout
-    struct WP { gie::StringHash name; glm::vec3 p; };
 
-    const WP wps[] = {
-        // Outdoor waypoints (9 points around the house)
-        { OutsideFrontHash,      {-35.f,   0.f, 0.f} },  // Front center
-        { H("OutsideFrontLeft"), {-35.f,  10.f, 0.f} },  // Front left
-        { H("OutsideFrontRight"),{-35.f, -10.f, 0.f} },  // Front right
-        { OutsideBackHash,       { 35.f,   0.f, 0.f} },  // Back center
-        { H("OutsideBackLeft"),  { 35.f,  10.f, 0.f} },  // Back left
-        { H("OutsideBackRight"), { 35.f, -10.f, 0.f} },  // Back right
-        { H("OutsideLeft"),      { -5.f,  25.f, 0.f} },  // Left side
-        { H("OutsideRight"),     { 15.f, -25.f, 0.f} },  // Right side
-        { H("OutsideCorner"),    { 35.f,  25.f, 0.f} },  // Corner (back-left)
 
-        // Room centers
-        { GarageHash,        { 17.5f, -15.f, 0.f} },
-        { KitchenHash,       {-12.5f, -15.f, 0.f} },
-        { CorridorHash,      {  0.f,  -7.5f, 0.f} },
-        { LivingRoomHash,    {-20.f,   7.5f, 0.f} },
-        { BathroomHash,      {  0.f,  -15.f, 0.f} },
-        { BedroomAHash,      {  7.5f,   7.5f, 0.f} },
-        { BedroomBHash,      { 22.5f,   7.5f, 0.f} },
-        { LaundryRoomHash,   {-25.f,  -15.f, 0.f} },
-        { EntranceHash,      { -5.f,    7.5f, 0.f} },
 
-        // Points of Interest
-        { AlarmPanelHash,    {  0.f,  -2.f, 0.f} },
-        { FuseBoxHash,       { 17.5f, -17.f, 0.f} },
 
-        // Doors (positioned at room boundaries)
-        { FrontDoorHash,     {-10.f,   -5.f, 0.f} },  // Between Entrance and Corridor
-        { BackDoorHash,      { 30.f,  -10.f, 0.f} },  // Between Garage and outside
-        { H("GarageToKitchen"),    { 5.f,  -10.f, 0.f} },  // Internal door
-        { H("CorridorToLiving"),   {-10.f,  -5.f, 0.f} },  // Internal door  
-        { H("CorridorToBedA"),     { 0.f,   -5.f, 0.f} },   // Internal door
-        { H("CorridorToBedB"),     {15.f,   -5.f, 0.f} },   // Internal door
-        { H("CorridorToBath"),     { 0.f,  -10.f, 0.f} },   // Internal door
-        { H("EntranceToLiving"),   {-10.f,   0.f, 0.f} },   // Internal door
 
-        // Windows (positioned at exterior walls)
-        { KitchenWindowHash,       {-12.5f, -20.f, 0.f} }, // Kitchen south wall
-        { H("LivingRoomWindow"),   {-30.f,   7.5f, 0.f} }, // Living room west wall
-        { H("BedroomAWindow"),     {  7.5f,  20.f, 0.f} }, // Bedroom A north wall  
-        { H("BedroomBWindow"),     { 22.5f,  20.f, 0.f} }, // Bedroom B north wall
-        { H("BathroomWindow"),     {  5.f,  -20.f, 0.f} }, // Bathroom south wall
-        { H("GarageWindow"),       { 30.f,  -15.f, 0.f} }, // Garage east wall
-    };
-
-    std::vector< gie::Entity* > waypoints;
-    waypoints.reserve( std::size( wps ) );
-    std::vector< Guid > waypointGuids;
-    waypointGuids.reserve( std::size( wps ) );
-
-    for( const auto& wp : wps )
-    {
-        auto e = world.createEntity( gie::stringRegister().get( wp.name ) );
-        e->createProperty( "Location", wp.p );
-        world.context().entityTagRegister().tag( e, { H( "Waypoint" ), H( "Draw" ) } );
-        waypoints.push_back( e );
-        waypointGuids.push_back( e->guid() );
-        // Links array for movement graph
-        e->createProperty( "Links", gie::Property::GuidVector{} );
-    }
-
-    auto findWp = [&]( const char* name ) -> gie::Entity*
-    {
-        for( auto* e : waypoints ) if( gie::stringRegister().get( e->nameHash() ) == name ) return e;
-        return nullptr;
-    };
-
-    // Enhanced connectivity system
-    auto link = [&]( const char* a, const char* b )
-    {
-        auto ea = findWp( a ); auto eb = findWp( b );
-        if( !ea || !eb ) return;
-        auto la = ea->property( "Links" )->getGuidArray(); la->push_back( eb->guid() );
-        auto lb = eb->property( "Links" )->getGuidArray(); lb->push_back( ea->guid() );
-    };
-
-    // Outdoor connectivity (around the house perimeter)
-    link( "OutsideFront", "OutsideFrontLeft" );
-    link( "OutsideFront", "OutsideFrontRight" );
-    link( "OutsideFrontLeft", "OutsideLeft" );
-    link( "OutsideFrontRight", "OutsideRight" );
-    link( "OutsideLeft", "OutsideCorner" );
-    link( "OutsideRight", "OutsideBackRight" );
-    link( "OutsideCorner", "OutsideBackLeft" );
-    link( "OutsideBackLeft", "OutsideBack" );
-    link( "OutsideBackRight", "OutsideBack" );
-    link( "OutsideBack", "OutsideCorner" );
-
-    // Outdoor to doors/windows connectivity
-    link( "OutsideFront", "FrontDoor" );
-    link( "OutsideBack", "BackDoor" );
-    link( "OutsideLeft", "LivingRoomWindow" );
-    link( "OutsideFrontRight", "KitchenWindow" );
-    link( "OutsideRight", "BathroomWindow" );
-    link( "OutsideBackLeft", "BedroomAWindow" );
-    link( "OutsideBackLeft", "BedroomBWindow" );
-    link( "OutsideBack", "GarageWindow" );
-
-    // Room to door connectivity
-    link( "Entrance", "FrontDoor" );
-    link( "Garage", "BackDoor" );
-    link( "Kitchen", "GarageToKitchen" );
-    link( "Garage", "GarageToKitchen" );
-    link( "Corridor", "CorridorToLiving" );
-    link( "LivingRoom", "CorridorToLiving" );
-    link( "Corridor", "CorridorToBedA" );
-    link( "BedroomA", "CorridorToBedA" );
-    link( "Corridor", "CorridorToBedB" );
-    link( "BedroomB", "CorridorToBedB" );
-    link( "Corridor", "CorridorToBath" );
-    link( "Bathroom", "CorridorToBath" );
-    link( "Entrance", "EntranceToLiving" );
-    link( "LivingRoom", "EntranceToLiving" );
-
-    // Room to window connectivity
-    link( "Kitchen", "KitchenWindow" );
-    link( "LivingRoom", "LivingRoomWindow" );
-    link( "BedroomA", "BedroomAWindow" );
-    link( "BedroomB", "BedroomBWindow" );
-    link( "Bathroom", "BathroomWindow" );
-    link( "Garage", "GarageWindow" );
-
-    // Door to door connectivity (through corridor)
-    link( "FrontDoor", "CorridorToLiving" );
-    link( "FrontDoor", "CorridorToBedA" );
-    link( "FrontDoor", "CorridorToBedB" );
-    link( "FrontDoor", "CorridorToBath" );
-    link( "EntranceToLiving", "CorridorToLiving" );
-
-    // Interior room to room connectivity through corridor
-    link( "Corridor", "Kitchen" );
-    link( "Corridor", "LivingRoom" );
-    link( "Corridor", "Bathroom" );
-    link( "Corridor", "BedroomA" );
-    link( "Corridor", "BedroomB" );
-    link( "Corridor", "LaundryRoom" );
-    link( "Corridor", "Entrance" );
-
-    // Additional direct room connections
-    link( "Kitchen", "LaundryRoom" );
-    link( "Entrance", "LivingRoom" );
-
-    // Create connectors: FrontDoor, BackDoor, KitchenWindow (entry points)
-    auto makeConnector = [&]( const char* name, const char* fromRoom, const char* toRoom, const glm::vec3& where ) -> gie::Entity*
-    {
-        auto c = world.createEntity( name );
-        c->createProperty( "Location", where );
-        c->createProperty( "From", findWp( fromRoom ) ? findWp( fromRoom )->guid() : gie::NullGuid );
-        c->createProperty( "To",   findWp( toRoom ) ? findWp( toRoom )->guid()   : gie::NullGuid );
-        world.context().entityTagRegister().tag( c, { H( "Connector" ) } );
-        // state properties
-        c->createProperty( "Locked", false );
-        c->createProperty( "Blocked", false );
-        c->createProperty( "Barred", false );
-        c->createProperty( "Alarmed", false );
-        // required key info (optional)
-        c->createProperty( "RequiredKey", gie::NullGuid );
-        return c;
-    };
-
-    auto cFront = makeConnector( "FrontDoorConnector", "OutsideFront", "Entrance", *findWp( "FrontDoor" )->property( "Location" )->getVec3() );
-    auto cBack  = makeConnector( "BackDoorConnector",  "OutsideBack",  "Garage",   *findWp( "BackDoor" )->property( "Location" )->getVec3() );
-    auto cKWin  = makeConnector( "KitchenWindowConnector", "OutsideFrontRight", "Kitchen", *findWp( "KitchenWindow" )->property( "Location" )->getVec3() );
 
     // House systems
     auto alarmSystem = world.createEntity( "AlarmSystem" );
@@ -491,31 +342,50 @@ world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) 
     auto infoFrontK  = makeInfo( "FrontKeyInfo" );
     auto infoBackK   = makeInfo( "BackKeyInfo" );
     auto infoSafeK   = makeInfo( "SafeKeyInfo" );
-    cFront->property( "RequiredKey" )->value = infoFrontK->guid();
-    cBack->property( "RequiredKey" )->value = infoBackK->guid();
+
+    // Set required keys for specific access entities if they exist
+    for( const auto& kv : world.context().entities() )
+    {
+        auto name = gie::stringRegister().get( kv.second.nameHash() );
+        if( name == "FrontDoor" )
+        {
+            auto ent = world.entity( kv.first );
+            if( !ent->property( "RequiredKey" ) ) ent->createProperty( "RequiredKey", gie::NullGuid );
+            ent->property( "RequiredKey" )->value = infoFrontK->guid();
+        }
+        else if( name == "BackDoor" )
+        {
+            auto ent = world.entity( kv.first );
+            if( !ent->property( "RequiredKey" ) ) ent->createProperty( "RequiredKey", gie::NullGuid );
+            ent->property( "RequiredKey" )->value = infoBackK->guid();
+        }
+    }
 
     // Safe entity
     auto safe = world.createEntity( "Safe" );
     safe->createProperty( "Open", false );
-    safe->createProperty( "InRoom", findWp( "BedroomA" )->guid() );
+    auto safeRoom = FindRoom( world, "BedroomA" );
+    safe->createProperty( "InRoom", safeRoom ? safeRoom->guid() : gie::NullGuid );
     safe->createProperty( "LockMode", 1.f );
     safe->createProperty( "RequiredCodePieces", 2.f );
 
     // Alarm Panel and FuseBox
-    auto alarmPanel = world.createEntity( "AlarmPanelEntity" );
-    alarmPanel->createProperty( "Location", *findWp( "AlarmPanel" )->property( "Location" )->getVec3() );
+    auto alarmPanel = world.createEntity( "AlarmPanel" );
+    auto alarmRoom = FindRoom( world, "Corridor" );
+    alarmPanel->createProperty( "Location", alarmRoom ? *alarmRoom->property( "Location" )->getVec3() : glm::vec3{ 0.f, 0.f, 0.f } );
     world.context().entityTagRegister().tag( alarmPanel, { H( "AlarmPanel" ), H( "Item" ) } );
     auto fuseBox = world.createEntity( "FuseBoxEntity" );
-    fuseBox->createProperty( "Location", *findWp( "FuseBox" )->property( "Location" )->getVec3() );
+    auto fuseRoom = FindRoom( world, "Garage" );
+    fuseBox->createProperty( "Location", fuseRoom ? *fuseRoom->property( "Location" )->getVec3() : glm::vec3{ 0.f, 0.f, 0.f } );
     world.context().entityTagRegister().tag( fuseBox, { H( "FuseBox" ), H( "Item" ) } );
 
     // Helper to create items placed in rooms
     auto placeItem = [&]( const char* itemName, gie::Entity* info, const char* roomName ) -> gie::Entity*
     {
-        auto room = findWp( roomName );
+        auto room = FindRoom( world, roomName );
         auto e = world.createEntity( itemName );
         world.context().entityTagRegister().tag( e, { H( "Item" ) } );
-        e->createProperty( "Location", *room->property( "Location" )->getVec3() );
+        e->createProperty( "Location", room ? *room->property( "Location" )->getVec3() : glm::vec3{ 0.f, 0.f, 0.f } );
         e->createProperty( "Info", info ? info->guid() : gie::NullGuid );
         return e;
     };
@@ -598,7 +468,7 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             {
                 const auto& ent = kv.second;
                 auto name = gie::stringRegister().get( ent.nameHash() );
-                if( name == "AlarmPanelEntity" ) panel = bb.entity( kv.first );
+                if( name == "AlarmPanel" ) panel = bb.entity( kv.first );
                 if( name == "AlarmSystem" ) alarmE = bb.entity( kv.first );
             }
             if( !panel || !alarmE ) { params.addDebugMessage( "  Missing panel or system -> FALSE" ); return false; }
@@ -680,14 +550,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
             auto inv = agent->property( "Inventory" )->getGuidArray();
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" );
-            if( !connectors ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            for( auto g : *connectors )
+            auto connectors = getAccessPoints( ctx );
+            if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
+            for( auto g : connectors )
             {
                 auto c = ctx.entity( g );
                 if( *c->property( "Locked" )->getBool() )
                 {
-                    Guid req = *c->property( "RequiredKey" )->getGuid();
+                    auto reqProp = c->property( "RequiredKey" );
+                    Guid req = reqProp ? *reqProp->getGuid() : gie::NullGuid;
                     if( req == gie::NullGuid ) continue;
                     for( Guid it : *inv )
                     {
@@ -708,16 +579,17 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
             auto inv = agent->property( "Inventory" )->getGuidArray();
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" );
-            if( !connectors ) return false;
+            auto connectors = getAccessPoints( ctx );
+            if( connectors.empty() ) return false;
             gie::Entity* bestC = nullptr; float bestL = std::numeric_limits<float>::max();
             std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
             glm::vec3 from = *agent->property( "Location" )->getVec3();
-            for( auto g : *connectors )
+            for( auto g : connectors )
             {
                 auto c = ctx.entity( g );
                 if( !*c->property( "Locked" )->getBool() ) continue;
-                Guid req = *c->property( "RequiredKey" )->getGuid();
+                auto reqProp = c->property( "RequiredKey" );
+                Guid req = reqProp ? *reqProp->getGuid() : gie::NullGuid;
                 if( req == gie::NullGuid ) continue;
                 bool have = false;
                 for( Guid it : *inv )
@@ -764,7 +636,7 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             {
                 auto e = ctx.entity( g );
                 auto nm = gie::stringRegister().get( e->nameHash() );
-                if( nm == "AlarmPanelEntity" || nm == "FuseBoxEntity" ) continue;
+                if( nm == "AlarmPanel" || nm == "FuseBoxEntity" ) continue;
                 if( e->hasTag( H( "Disabled" ) ) ) continue;
                 bool inInv = std::find( inv->begin(), inv->end(), g ) != inv->end();
                 if( !inInv ) { params.addDebugMessage( "  Missing item found -> TRUE" ); return true; }
@@ -826,8 +698,8 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
                 auto ent = ctx.entity( *info->getGuid() ); if( ent && gie::stringRegister().get( ent->nameHash() ) == std::string_view( "LockpickInfo" ) ) { hasLP = true; break; }
             }
             if( !hasLP ) { params.addDebugMessage( "  No lockpick -> FALSE" ); return false; }
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" ); if( !connectors ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            for( auto g : *connectors ) if( *ctx.entity( g )->property( "Locked" )->getBool() ) return true;
+            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
+            for( auto g : connectors ) if( *ctx.entity( g )->property( "Locked" )->getBool() ) return true;
             params.addDebugMessage( "  No locked connector -> FALSE" );
             return false;
         }
@@ -836,11 +708,11 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             params.addDebugMessage( "Lockpick::simulate" );
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" ); if( !connectors ) return false;
+            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) return false;
             std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
             glm::vec3 from = *agent->property( "Location" )->getVec3();
             gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : *connectors )
+            for( auto g : connectors )
             {
                 auto c = ctx.entity( g ); if( !*c->property( "Locked" )->getBool() ) continue;
                 if( auto loc = c->property( "Location" ) )
@@ -874,8 +746,8 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             auto inv = agent->property( "Inventory" )->getGuidArray();
             bool hasBC = false; for( auto g : *inv ) { auto e = ctx.entity( g ); auto info = e->property( "Info" ); if( info ) { auto ent = ctx.entity( *info->getGuid() ); if( ent && gie::stringRegister().get( ent->nameHash() ) == std::string_view( "BoltCutterInfo" ) ) { hasBC = true; break; } } }
             if( !hasBC ) { params.addDebugMessage( "  No bolt cutter -> FALSE" ); return false; }
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" ); if( !connectors ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            for( auto g : *connectors ) if( *ctx.entity( g )->property( "Barred" )->getBool() ) return true;
+            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
+            for( auto g : connectors ) { auto c = ctx.entity( g ); if( c->property( "Barred" ) && *c->property( "Barred" )->getBool() ) return true; }
             params.addDebugMessage( "  No barred connector -> FALSE" );
             return false;
         }
@@ -883,13 +755,13 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
         {
             params.addDebugMessage( "CutBars::simulate" );
             auto& ctx = params.simulation.context();
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" ); if( !connectors ) return false;
+            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) return false;
             std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
             auto agent = ctx.entity( params.agent.guid() ); glm::vec3 from = *agent->property( "Location" )->getVec3();
             gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : *connectors )
+            for( auto g : connectors )
             {
-                auto c = ctx.entity( g ); if( !*c->property( "Barred" )->getBool() ) continue;
+                auto c = ctx.entity( g ); if( !c->property( "Barred" ) || !*c->property( "Barred" )->getBool() ) continue;
                 if( auto loc = c->property( "Location" ) ) { auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() ); if( path.length < bestL ) { bestL = path.length; best = c; } }
             }
             if( !best ) { params.addDebugMessage( "  No target -> FALSE" ); return false; }
@@ -925,11 +797,11 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
                 if( infoEnt && gie::stringRegister().get( infoEnt->nameHash() ) == std::string_view( "CrowbarInfo" ) ) { hasCrowbar = true; break; }
             }
             if( !hasCrowbar ) { params.addDebugMessage( "  No crowbar -> FALSE" ); return false; }
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" ); if( !connectors ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            for( auto g : *connectors )
+            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
+            for( auto g : connectors )
             {
                 auto c = ctx.entity( g );
-                if( *c->property( "Locked" )->getBool() || *c->property( "Blocked" )->getBool() || *c->property( "Barred" )->getBool() ) { params.addDebugMessage( "  Blocked connector found -> TRUE" ); return true; }
+                if( *c->property( "Locked" )->getBool() || (c->property( "Blocked" ) && *c->property( "Blocked" )->getBool()) || (c->property( "Barred" ) && *c->property( "Barred" )->getBool()) ) { params.addDebugMessage( "  Blocked connector found -> TRUE" ); return true; }
             }
             params.addDebugMessage( "  Nothing to break -> FALSE" );
             return false;
@@ -938,14 +810,14 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
         {
             params.addDebugMessage( "BreakConnector::simulate" );
             auto& ctx = params.simulation.context();
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" ); if( !connectors ) return false;
+            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) return false;
             std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
             auto agent = params.simulation.context().entity( params.agent.guid() ); glm::vec3 from = *agent->property( "Location" )->getVec3();
             gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : *connectors )
+            for( auto g : connectors )
             {
                 auto c = ctx.entity( g );
-                if( !( *c->property( "Locked" )->getBool() || *c->property( "Blocked" )->getBool() || *c->property( "Barred" )->getBool() ) ) continue;
+                if( !( *c->property( "Locked" )->getBool() || (c->property( "Blocked" ) && *c->property( "Blocked" )->getBool()) || (c->property( "Barred" ) && *c->property( "Barred" )->getBool()) ) ) continue;
                 if( auto loc = c->property( "Location" ) )
                 {
                     auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() );
@@ -955,8 +827,8 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             if( !best ) { params.addDebugMessage( "  No target -> FALSE" ); return false; }
             MoveAgentAlongPath( params, from, best, wp );
             best->property( "Locked" )->value = false;
-            best->property( "Blocked" )->value = false;
-            best->property( "Barred" )->value = false;
+            if( best->property( "Blocked" ) ) best->property( "Blocked" )->value = false;
+            if( best->property( "Barred" ) ) best->property( "Barred" )->value = false;
             if( auto a = std::make_shared< BreakConnectorAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
             return false;
         }
@@ -977,13 +849,13 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
             if( *agent->property( "CurrentRoom" )->getGuid() != gie::NullGuid ) { params.addDebugMessage( "  Already inside -> FALSE" ); return false; }
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" ); if( !connectors ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
+            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
             bool alarmArmed = true; for( const auto& kv : ctx.entities() ) { const auto& ent = kv.second; if( gie::stringRegister().get( ent.nameHash() ) == "AlarmSystem" ) { auto a = ctx.entity( kv.first ); alarmArmed = *a->property( "Armed" )->getBool(); break; } }
-            for( auto g : *connectors )
+            for( auto g : connectors )
             {
                 auto c = ctx.entity( g );
-                bool blocked = *c->property( "Locked" )->getBool() || *c->property( "Blocked" )->getBool() || *c->property( "Barred" )->getBool();
-                bool alarmed = *c->property( "Alarmed" )->getBool();
+                bool blocked = *c->property( "Locked" )->getBool() || (c->property( "Blocked" ) && *c->property( "Blocked" )->getBool()) || (c->property( "Barred" ) && *c->property( "Barred" )->getBool());
+                bool alarmed = c->property( "Alarmed" ) && *c->property( "Alarmed" )->getBool();
                 if( !blocked && !( alarmArmed && alarmed ) ) { params.addDebugMessage( "  Free connector -> TRUE" ); return true; }
             }
             params.addDebugMessage( "  All entries blocked/alarmed -> FALSE" );
@@ -994,16 +866,16 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             params.addDebugMessage( "EnterThrough::simulate" );
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
-            auto connectors = ctx.entityTagRegister().tagSet( "Connector" ); if( !connectors ) return false;
+            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) return false;
             bool alarmArmed = true; for( const auto& kv : ctx.entities() ) { const auto& ent = kv.second; if( gie::stringRegister().get( ent.nameHash() ) == "AlarmSystem" ) { auto a = ctx.entity( kv.first ); alarmArmed = *a->property( "Armed" )->getBool(); break; } }
             std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
             glm::vec3 from = *agent->property( "Location" )->getVec3();
             gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : *connectors )
+            for( auto g : connectors )
             {
                 auto c = ctx.entity( g );
-                bool blocked = *c->property( "Locked" )->getBool() || *c->property( "Blocked" )->getBool() || *c->property( "Barred" )->getBool();
-                bool alarmed = *c->property( "Alarmed" )->getBool();
+                bool blocked = *c->property( "Locked" )->getBool() || (c->property( "Blocked" ) && *c->property( "Blocked" )->getBool()) || (c->property( "Barred" ) && *c->property( "Barred" )->getBool());
+                bool alarmed = c->property( "Alarmed" ) && *c->property( "Alarmed" )->getBool();
                 if( blocked || ( alarmArmed && alarmed ) ) continue;
                 if( auto loc = c->property( "Location" ) )
                 {
@@ -1014,11 +886,26 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             if( !best ) { params.addDebugMessage( "  No viable entry -> FALSE" ); return false; }
             MoveAgentAlongPath( params, from, best, wp );
             // set current room and move location to room center
-            auto toGuid = *best->property( "To" )->getGuid();
-            agent->property( "CurrentRoom" )->value = toGuid;
-            if( auto room = ctx.entity( toGuid ) )
+            // For waypoint-based approach, we need to determine which room this waypoint leads to
+            // This is a simplified approach - in a real implementation, waypoints would have From/To properties
+            auto agentLoc = *agent->property( "Location" )->getVec3();
+            gie::Entity* targetRoom = nullptr;
+            // Find the room that contains this waypoint location
+            for( const auto& kv : ctx.entities() )
             {
-                if( auto loc = room->property( "Location" ) ) { *agent->property( "Location" )->getVec3() = *loc->getVec3(); }
+                const auto& ent = kv.second;
+                if( gie::stringRegister().get( ent.nameHash() ) == std::string_view( "Entrance" ) ||
+                    gie::stringRegister().get( ent.nameHash() ) == std::string_view( "Garage" ) ||
+                    gie::stringRegister().get( ent.nameHash() ) == std::string_view( "Kitchen" ) )
+                {
+                    targetRoom = ctx.entity( kv.first );
+                    break;
+                }
+            }
+            if( targetRoom )
+            {
+                agent->property( "CurrentRoom" )->value = targetRoom->guid();
+                if( auto loc = targetRoom->property( "Location" ) ) { *agent->property( "Location" )->getVec3() = *loc->getVec3(); }
             }
             if( auto a = std::make_shared< EnterThroughAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
             return false;
@@ -1295,9 +1182,9 @@ static void ResetHeistWorldFromToggles( gie::World& world )
         return nullptr;
     };
 
-    auto cFront = get( "FrontDoorConnector" );
-    auto cBack  = get( "BackDoorConnector" );
-    auto cKWin  = get( "KitchenWindowConnector" );
+    auto cFront = get( "FrontDoor" );
+    auto cBack  = get( "BackDoor" );
+    auto cKWin  = get( "KitchenWindow" );
 
     if( cFront )
     {
