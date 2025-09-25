@@ -71,21 +71,21 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 	}
 
 	// Helper lambdas
-	auto getDrawSet = [ & ]() -> const std::set< gie::Guid >*
+	auto getSelectableSet = [ & ]() -> const std::set< gie::Guid >*
 	{
-		return g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Draw" ) } );
+		return g_WorldPtr->context().entityTagRegister().tagSet( { gie::stringHasher( "Selectable" ) } );
 	};
 
-	auto nearestDrawEntityUnderMouse = [ & ]() -> gie::Guid
+	auto nearestSelectableEntityUnderMouse = [ & ]() -> gie::Guid
 	{
-		const auto* drawSet = getDrawSet();
-		if( !drawSet || drawSet->empty() )
+		const auto* selectableSet = getSelectableSet();
+		if( !selectableSet || selectableSet->empty() )
 			return gie::NullGuid;
 		float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx; // reuse pick radius
 		gie::Guid best = gie::NullGuid;
 		glm::vec3 offset = -g_DrawingLimits.center;
 		glm::vec3 scale = g_DrawingLimits.scale;
-		for( auto guid : *drawSet )
+		for( auto guid : *selectableSet )
 		{
 			const auto* e = g_WorldPtr->entity( guid );
 			if( !e )
@@ -144,7 +144,7 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 	// CTRL-click: toggle entity in multi-selection
 	if( ImGui::IsMouseClicked( 0 ) && ( ImGui::GetIO().KeyCtrl ) )
 	{
-		gie::Guid nearGuid = nearestDrawEntityUnderMouse();
+		gie::Guid nearGuid = nearestSelectableEntityUnderMouse();
 		if( nearGuid != gie::NullGuid )
 		{
 			// No selection yet: select this as single
@@ -185,7 +185,7 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 	if( ImGui::IsMouseClicked( 0 ) && !ImGui::GetIO().KeyCtrl && g_selectedEntityGuids.size() <= 1 )
 	{
 		// Single-click select the entity under the mouse
-		gie::Guid nearGuid = nearestDrawEntityUnderMouse();
+		gie::Guid nearGuid = nearestSelectableEntityUnderMouse();
 		if( nearGuid != gie::NullGuid )
 		{
 			g_selectedEntityGuids.clear();
@@ -203,7 +203,7 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 		g_RectSelectionEndLocal = s_ClickStartLocal;
 
 		// If clicking on an already selected entity that's part of a multi-selection, start multi-drag
-		gie::Guid nearGuid = nearestDrawEntityUnderMouse();
+		gie::Guid nearGuid = nearestSelectableEntityUnderMouse();
 		if( nearGuid != gie::NullGuid && g_selectedEntityGuids.find( nearGuid ) != g_selectedEntityGuids.end()
 			&& g_selectedEntityGuids.size() > 1 )
 		{
@@ -282,13 +282,13 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 			const float y0 = std::min( g_RectSelectionStartLocal.y, g_RectSelectionEndLocal.y );
 			const float y1 = std::max( g_RectSelectionStartLocal.y, g_RectSelectionEndLocal.y );
 
-			const auto* drawSet = getDrawSet();
-			if( drawSet && !drawSet->empty() )
+			const auto* selectableSet = getSelectableSet();
+			if( selectableSet && !selectableSet->empty() )
 			{
 				g_selectedEntityGuids.clear();
 				glm::vec3 offset = -g_DrawingLimits.center;
 				glm::vec3 scale = g_DrawingLimits.scale;
-				for( auto guid : *drawSet )
+				for( auto guid : *selectableSet )
 				{
 					const auto* e = g_WorldPtr->entity( guid );
 					if( !e )
@@ -334,9 +334,9 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 		if( s_RectPrimed )
 		{
 			s_RectPrimed = false;
-			// Pick nearest entity among those tagged for drawing and having a Location
-			const auto* drawSet = getDrawSet();
-			if( !drawSet || drawSet->empty() )
+			// Pick nearest entity among those tagged for selection and having a Location
+			const auto* selectableSet = getSelectableSet();
+			if( !selectableSet || selectableSet->empty() )
 				return;
 
 			float bestDist2 = g_WaypointPickRadiusPx * g_WaypointPickRadiusPx; // reuse pick radius
@@ -345,7 +345,7 @@ static void handleEntitySelectionOnWorldView( ImVec2 pos, float windowWidth, flo
 			glm::vec3 offset = -g_DrawingLimits.center;
 			glm::vec3 scale = g_DrawingLimits.scale;
 
-			for( auto guid : *drawSet )
+			for( auto guid : *selectableSet )
 			{
 				const auto* e = g_WorldPtr->entity( guid );
 				if( !e )
