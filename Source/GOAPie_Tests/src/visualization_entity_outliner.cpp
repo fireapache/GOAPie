@@ -281,3 +281,38 @@ bool CancelEntityOutlinerOngoingOperation()
     }
     return false;
 }
+
+void StartOutlinerInlineRename(gie::Guid guid)
+{
+    s_InlineRenameGuid = guid;
+    std::string curName;
+    if( guid != gie::NullGuid && g_WorldPtr )
+    {
+        if( auto* e = g_WorldPtr->entity( guid ) )
+        {
+            auto nh = e->nameHash();
+            if( nh != gie::InvalidStringHash )
+                curName = std::string( gie::stringRegister().get( nh ) );
+        }
+    }
+    std::strncpy( s_InlineRenameBuf, curName.c_str(), sizeof( s_InlineRenameBuf ) - 1 );
+    s_InlineRenameBuf[ sizeof( s_InlineRenameBuf ) - 1 ] = '\0';
+    s_InlineRenameFocus = true;
+    CancelNameDialog();
+}
+
+void CancelOutlinerInlineRename()
+{
+    CancelInlineRename();
+}
+
+bool GetOutlinerInlineRenameState(gie::Guid* outGuid, const char** outBuf)
+{
+    if( s_InlineRenameGuid == gie::NullGuid )
+        return false;
+    if( outGuid )
+        *outGuid = s_InlineRenameGuid;
+    if( outBuf )
+        *outBuf = s_InlineRenameBuf;
+    return true;
+}

@@ -600,6 +600,16 @@ void drawWorldViewWindow( gie::World& world, const gie::Planner& planner )
 		g_WorldViewWindowHovered = worldHovered;
 		bool allowWorldInput = worldHovered;
 
+		// F2 key handling for inline rename
+		if( allowWorldInput && ImGui::IsKeyPressed( ImGuiKey_F2 ) )
+		{
+			if( g_selectedEntityGuids.size() == 1 )
+			{
+				gie::Guid guid = *g_selectedEntityGuids.begin();
+				StartOutlinerInlineRename( guid );
+			}
+		}
+
 		drawWaypointGuidSuffixOverlay( world, planner, pos, windowWidth, windowHeight );
 		drawRoomNamesOverlay( world, planner, pos, windowWidth, windowHeight );
 
@@ -675,10 +685,22 @@ void drawWaypointGuidSuffixOverlay(
 
 			std::string idxLabel = "wp?";
 
-			auto nameHash = e->nameHash();
-			if( nameHash != gie::InvalidStringHash )
+			std::string name;
+			gie::Guid inlineGuid;
+			const char* inlineBuf;
+			if( GetOutlinerInlineRenameState( &inlineGuid, &inlineBuf ) && inlineGuid == waypointGuid )
 			{
-				std::string name( gie::stringRegister().get( nameHash ) );
+				name = std::string( inlineBuf );
+			}
+			else
+			{
+				auto nameHash = e->nameHash();
+				if( nameHash != gie::InvalidStringHash )
+					name = std::string( gie::stringRegister().get( nameHash ) );
+			}
+
+			if( !name.empty() )
+			{
 				size_t j = name.size();
 				if( name.find( "waypoint" ) == 0 )
 				{

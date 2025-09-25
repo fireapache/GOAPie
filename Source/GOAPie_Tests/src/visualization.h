@@ -171,3 +171,8 @@ bool CancelDetailsPanelOngoingOperation();
 // Entity factory helpers
 // Cancel current archetype placement selection
 bool CancelEntityFactory();
+
+// Outliner inline rename API (shared with World View)
+void StartOutlinerInlineRename(gie::Guid guid);
+void CancelOutlinerInlineRename();
+bool GetOutlinerInlineRenameState(gie::Guid* outGuid, const char** outBuf);
