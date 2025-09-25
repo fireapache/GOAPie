@@ -177,88 +177,96 @@ gie::Agent* heistOpenSafe_world( ExampleParameters& params )
     agent->createProperty( "CurrentRoom", gie::NullGuid );
     agent->createProperty( "Inventory", gie::Property::GuidVector{} );
 
-    // Define archetypes used in this example (only once per world)
-    if( world.archetypes().empty() )
-    {
-        // Waypoint archetype
-        if( auto* a = world.createArchetype( "Waypoint" ) )
-        {
-            a->addTag( "Waypoint" );
-            a->addTag( "Draw" );
-            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-            a->addProperty( "Links", gie::Property::GuidVector{} );
-        }
-        // Room archetype
-        if( auto* a = world.createArchetype( "Room" ) )
-        {
-            a->addTag( "Room" );
-            a->addTag( "Draw" );
-            a->addProperty( "Vertices", std::vector< glm::vec3 >{} );
-            a->addProperty( "Discovered", true );
-            a->addProperty( "DisplayName", true );
-            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-        }
+    auto selectableTagHash = H( "Selectable" );
+	auto drawTagHash = H( "Draw" );
 
-        // Item archetype (carryable items)
-        if( auto* a = world.createArchetype( "Item" ) )
-        {
-            a->addTag( "Item" );
-            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-            a->addProperty( "Info", gie::NullGuid );
-        }
-        // Info archetype (descriptor entities)
-        if( auto* a = world.createArchetype( "Info" ) )
-        {
-            a->addTag( "Info" );
-			a->addProperty( "Name", gie::NullGuid );
-        }
-        // Safe archetype
-        if( auto* a = world.createArchetype( "Safe" ) )
-        {
-            a->addProperty( "Open", false );
-            a->addProperty( "InRoom", gie::NullGuid );
-            a->addProperty( "LockMode", 0.f );
-            a->addProperty( "RequiredCodePieces", 0.f );
-        }
-        // Alarm system and panels
-        if( auto* a = world.createArchetype( "AlarmSystem" ) )
-        {
-            a->addProperty( "Armed", false );
-        }
-        if( auto* a = world.createArchetype( "AlarmPanel" ) )
-        {
-            a->addTag( "AlarmPanel" );
-            a->addTag( "Item" );
-            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-        }
-        if( auto* a = world.createArchetype( "FuseBoxEntity" ) )
-        {
-            a->addTag( "FuseBox" );
-            a->addTag( "Item" );
-            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-        }
-        // RoomAccess archetype (doors/windows)
-        if( auto* a = world.createArchetype( "RoomAccess" ) )
-        {
-            a->addTag( "Waypoint" );
-            a->addTag( "Draw" );
-            a->addTag( "Access" );
-            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-            a->addProperty( "Links", gie::Property::GuidVector{} );
-            a->addProperty( "Locked", false );
-            a->addProperty( "Blocked", false );
-            a->addProperty( "Barred", false );
-            a->addProperty( "Alarmed", false );
-            a->addProperty( "RequiredKey", gie::NullGuid );
-        }
-        // Agent archetype (thief)
-        if( auto* a = world.createArchetype( "Agent" ) )
-        {
-            a->addTag( "Agent" );
-            a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-            a->addProperty( "CurrentRoom", gie::NullGuid );
-            a->addProperty( "Inventory", gie::Property::GuidVector{} );
-        }
+    // Waypoint archetype
+    if( auto* a = world.createArchetype( "Waypoint" ) )
+    {
+		a->addTag( selectableTagHash );
+        a->addTag( "Waypoint" );
+		a->addTag( drawTagHash );
+        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+        a->addProperty( "Links", gie::Property::GuidVector{} );
+    }
+    // Room archetype
+    if( auto* a = world.createArchetype( "Room" ) )
+    {
+        a->addTag( "Room" );
+        a->addTag( "Draw" );
+        a->addProperty( "Vertices", std::vector< glm::vec3 >{} );
+        a->addProperty( "Discovered", true );
+        a->addProperty( "DisplayName", true );
+        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+    }
+
+    // Item archetype (carryable items)
+    if( auto* a = world.createArchetype( "Item" ) )
+    {
+		a->addTag( selectableTagHash );
+        a->addTag( "Item" );
+        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+        a->addProperty( "Info", gie::NullGuid );
+    }
+    // Info archetype (descriptor entities)
+    if( auto* a = world.createArchetype( "Info" ) )
+    {
+        a->addTag( "Info" );
+        a->addProperty( "Name", gie::NullGuid );
+    }
+    // Safe archetype
+    if( auto* a = world.createArchetype( "Safe" ) )
+    {
+		a->addTag( selectableTagHash );
+		a->addTag( drawTagHash );
+        a->addProperty( "Open", false );
+        a->addProperty( "InRoom", gie::NullGuid );
+        a->addProperty( "LockMode", 0.f );
+        a->addProperty( "RequiredCodePieces", 0.f );
+    }
+    // Alarm system and panels
+    if( auto* a = world.createArchetype( "AlarmSystem" ) )
+    {
+        a->addProperty( "Armed", false );
+    }
+    if( auto* a = world.createArchetype( "AlarmPanel" ) )
+    {
+		a->addTag( selectableTagHash );
+		a->addTag( drawTagHash );
+        a->addTag( "AlarmPanel" );
+        a->addTag( "Item" );
+        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+    }
+    if( auto* a = world.createArchetype( "FuseBoxEntity" ) )
+    {
+		a->addTag( selectableTagHash );
+		a->addTag( drawTagHash );
+        a->addTag( "FuseBox" );
+        a->addTag( "Item" );
+        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+    }
+    // RoomAccess archetype (doors/windows)
+    if( auto* a = world.createArchetype( "RoomAccess" ) )
+    {
+        a->addTag( "Waypoint" );
+		a->addTag( selectableTagHash );
+		a->addTag( drawTagHash );
+        a->addTag( "Access" );
+        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+        a->addProperty( "Links", gie::Property::GuidVector{} );
+        a->addProperty( "Locked", false );
+        a->addProperty( "Blocked", false );
+        a->addProperty( "Barred", false );
+        a->addProperty( "Alarmed", false );
+        a->addProperty( "RequiredKey", gie::NullGuid );
+    }
+    // Agent archetype (thief)
+    if( auto* a = world.createArchetype( "Agent" ) )
+    {
+        a->addTag( "Agent" );
+        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+        a->addProperty( "CurrentRoom", gie::NullGuid );
+        a->addProperty( "Inventory", gie::Property::GuidVector{} );
     }
 
     // Room and POI names
@@ -268,7 +276,7 @@ gie::Agent* heistOpenSafe_world( ExampleParameters& params )
     const gie::StringHash BedroomAHash      = H( "BedroomA" );
     const gie::StringHash BedroomBHash      = H( "BedroomB" );
     const gie::StringHash CorridorHash      = H( "Corridor" );
-const gie::StringHash EntranceHash      = H( "Entrance" );
+    const gie::StringHash EntranceHash      = H( "Entrance" );
     const gie::StringHash FrontDoorHash     = H( "FrontDoor" );
     const gie::StringHash FuseBoxHash       = H( "FuseBox" );
     const gie::StringHash GarageHash        = H( "Garage" );
@@ -278,13 +286,13 @@ const gie::StringHash EntranceHash      = H( "Entrance" );
     const gie::StringHash LivingRoomHash    = H( "LivingRoom" );
     const gie::StringHash OutsideBackHash   = H( "OutsideBack" );
     const gie::StringHash OutsideFrontHash  = H( "OutsideFront" );
-const gie::StringHash WholeHouseHash    = H( "WholeHouse" );
+    const gie::StringHash WholeHouseHash    = H( "WholeHouse" );
 
     struct RoomInfo
-{
-gie::StringHash name;
-glm::vec3 vertices[ 4 ] = {};
-};
+    {
+        gie::StringHash name;
+        glm::vec3 vertices[ 4 ] = {};
+    };
 
     const RoomInfo rooms[] = {
     { WholeHouseHash,  { {  -30.f,  -20.f,   0.f }, {   30.f,  -20.f,   0.f }, {   30.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
@@ -300,27 +308,21 @@ glm::vec3 vertices[ 4 ] = {};
     };
 
     std::vector< gie::Entity* > roomEntities;
-roomEntities.reserve( std::size( rooms ) );
+    roomEntities.reserve( std::size( rooms ) );
 
     for( const auto& room : rooms )
     {
         auto roomEntity = world.createEntity( gie::stringRegister().get( room.name ) );
         roomEntity->createProperty( "Vertices", std::vector< glm::vec3 >( std::begin( room.vertices ), std::end( room.vertices ) ) );
-roomEntity->createProperty( "Discovered", true );
-roomEntity->createProperty( "DisplayName", true );
+        roomEntity->createProperty( "Discovered", true );
+        roomEntity->createProperty( "DisplayName", true );
         roomEntity->createProperty( "Location", ( room.vertices[ 0 ] + room.vertices[ 1 ] + room.vertices[ 2 ] + room.vertices[ 3 ] ) * 0.25f );
-world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) } );
+        world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) } );
         roomEntities.push_back( roomEntity );
     }
 
     *( roomEntities[ 0 ]->property( "Discovered" )->getBool() ) = true; // WholeHouse known from start
-*( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false; // don't display WholeHouse name in visualization
-
-
-
-
-
-
+    *( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false; // don't display WholeHouse name in visualization
 
     // House systems
     auto alarmSystem = world.createEntity( "AlarmSystem" );
