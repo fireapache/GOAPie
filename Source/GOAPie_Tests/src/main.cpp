@@ -9,6 +9,7 @@
 
 extern void RunLuaIntegrationTest();
 extern void RunLuaEditorIntegrationTest();
+extern int RunAutomatedTests();
 
 // found in visualization.h
 // TODO: Rename g_exampleName to g_projectName (frontend mapping)
@@ -67,6 +68,7 @@ static void printUsage()
 	std::string msg;
 	msg.reserve( 512 );
 	msg += "usage: <exe> [options]\n\n";
+	msg += "Running with no arguments will execute the automated test suite.\n\n";
 	msg += "OPTIONS\n";
 	msg += "    -e, --example <N>       Run native example numbered N (1.." + std::to_string( exampleFunctions.size() ) + ") and exit.\n";
 	msg += "    -lua                    Use the Lua variant of the selected example.\n";
@@ -156,11 +158,10 @@ int main( int argc, char** argv )
 		RunLuaEditorIntegrationTest();
 	}
 
-	// If neither flag is provided, print usage and quit
+	// If neither flag is provided, run automated tests
 	if( ex == -1 && !visualize && !runTests )
 	{
-		printUsage();
-		return 0;
+		return RunAutomatedTests();
 	}
 
 	if( runTests && ex == -1 && !visualize )
