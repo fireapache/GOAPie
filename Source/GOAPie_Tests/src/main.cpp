@@ -199,9 +199,51 @@ int main( int argc, char** argv )
 		if( ex != -1 )
 		{
 			// simply run the planner (example already set up)
-			planner.plan();
+			planner.plan( true );
 
-			// printing simulated nodes
+			// print the planned (winning) action sequence
+			std::printf( "=== Planned Actions (A* result) ===\n" );
+			auto& planned = planner.planActions();
+			if( planned.empty() )
+			{
+				std::printf( "No plan found (goal not reached within depth limit).\n" );
+			}
+			else
+			{
+				for( auto it = planned.rbegin(); it != planned.rend(); ++it )
+				{
+					if( *it )
+				{
+					auto n = ( *it )->name();
+					std::printf( "  -> %.*s\n", (int)n.size(), n.data() );
+				}
+				}
+			}
+			std::printf( "===================================\n" );
+
+			// print total simulations explored
+			std::printf( "Total simulations: %zu\n", planner.simulations().size() );
+
+			// print simulation tree info for debugging
+			size_t maxDepth = 0;
+			size_t leafCount = 0;
+			for( auto& [guid, sim] : planner.simulations() )
+			{
+				if( sim.depth > maxDepth ) maxDepth = sim.depth;
+				if( sim.outgoing.empty() ) leafCount++;
+			}
+			std::printf( "Max depth reached: %zu, Leaf nodes: %zu\n", maxDepth, leafCount );
+			// Print first few simulations with cost/heuristic
+			size_t printed = 0;
+			for( auto& [guid, sim] : planner.simulations() )
+			{
+				if( printed++ >= 20 ) break;
+				std::printf( "  depth=%zu cost=%.1f h=%.1f f=%.1f actions=%zu\n",
+					sim.depth, sim.cost, sim.heuristic.value,
+					sim.cost + sim.heuristic.value, sim.actions.size() );
+			}
+
+			// print leaf simulation paths
 			printSimulatedActions( planner );
 		}
 	}

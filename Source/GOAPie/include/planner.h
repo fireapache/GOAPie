@@ -296,6 +296,19 @@ expandNodeLoop:
 
 			if( _useHeuristics )
 			{
+				// A* termination: check if the node being dequeued (lowest f-score)
+				// is itself a goal state. This guarantees we return the optimal plan,
+				// since any other path to the goal would have a higher f-score.
+				if( goal()->reached( **openedNodesItr ) )
+				{
+					if( logSteps )
+						_logContent.append( "Goal node dequeued (optimal A*), stopping!\n" );
+					_goalSimulationGuid = ( *openedNodesItr )->guid();
+					newNodes.clear();
+					openedNodes.clear();
+					goto heuristicDone;
+				}
+
 				expandNode( *openedNodesItr, newNodes );
 
 				// removing just expanded node from opened nodes
@@ -306,20 +319,17 @@ expandNodeLoop:
 
 				if( logSteps ) _logContent.append( "New nodes count: " ).append( std::to_string( newNodes.size() ) ).append( "\n" );
 
-				// adding new nodes to opened nodes
-				if( !newNodes.empty() )
-				{
-					openedNodes.reserve( openedNodes.size() + newNodes.size() );
-					openedNodes.insert( openedNodes.end(), newNodes.begin(), newNodes.end() );
-				}
-
+				// insert new nodes into the sorted open list (maintains f-score ordering)
 				if( logSteps ) _logContent.append( "Sorting nodes.\n" );
 				for( auto newNode : newNodes )
 				{
 					auto insertPos = std::upper_bound( openedNodes.begin(), openedNodes.end(), newNode, &Simulation::smallerThan );
 					openedNodes.insert( insertPos, newNode );
 				}
-				openedNodesItr = openedNodes.begin();
+
+				// heuristic mode maintains openedNodes in-place, skip the assignment below
+				newNodes.clear();
+				continue;
 			}
 			// go through all opened nodes
 			else
@@ -355,6 +365,7 @@ expandNodeLoop:
 			openedNodes = newNodes;
 		}
 
+heuristicDone:
 		if( logSteps ) _logContent.append( "Simulation finished, no more opened nodes.\n" );
 
 		SET_SIMULATE_STAGE( ExpandingNode, Done );
@@ -461,6 +472,9 @@ expandNodeLoop:
 				{
 					newSimulationPair.second->heuristic.value = 0.f;
 				}
+				// Accumulate parent's g-cost: A* requires g(n) = g(parent) + step_cost
+				float parentCost = ( baseSimulation->cost == MaxCost ) ? 0.f : baseSimulation->cost;
+				newSimulationPair.second->cost += parentCost;
 			}
 
 			// cannot expand this node if it has reached simulation depth limit
@@ -475,12 +489,25 @@ expandNodeLoop:
 				newNodes.push_back( newSimulationPair.second );
 			}
 
-			// stopping simulation loop if goal has been reached here
+			// If goal is reached, ensure this node is on the expansion list.
+			// In heuristic (A*) mode, we do NOT stop here — the node goes onto
+			// the open list and only terminates search when it's dequeued with
+			// the lowest f-score, guaranteeing the optimal plan is found.
+			// In non-heuristic (BFS) mode, stop immediately (first-found).
 			if( goal()->reached( *newSimulationPair.second ) )
 			{
-				if( logSteps ) _logContent.append( "* Goal reached, stopped expanding node!\n" );
-				expandNodeStage = ExpandNodeStage::Done;
-				break;
+				if( newNodes.empty() || newNodes.back() != newSimulationPair.second )
+				{
+					newNodes.push_back( newSimulationPair.second );
+				}
+				if( !_useHeuristics )
+				{
+					if( logSteps ) _logContent.append( "* Goal reached (BFS), stopped expanding node!\n" );
+					_goalSimulationGuid = newSimulationPair.second->guid();
+					expandNodeStage = ExpandNodeStage::Done;
+					break;
+				}
+				if( logSteps ) _logContent.append( "* Goal reached — node added to open list for A* ordering.\n" );
 			}
 
 			actionSetItr++;
