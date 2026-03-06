@@ -192,7 +192,18 @@ static int goapie_lua_set_property_func(lua_State* L)
     }
     else if( lua_isinteger( L, 3 ) )
     {
-        int32_t v = static_cast< int32_t >( lua_tointeger( L, 3 ) );
+        lua_Integer raw = lua_tointeger( L, 3 );
+        // If the property already exists as a GUID type, preserve that type.
+        // GUIDs are 64-bit and would be truncated by int32_t.
+        Property* existing = ent->property( std::string_view( propName ) );
+        if( existing && existing->type() == Property::GUID )
+        {
+            Guid v = static_cast< Guid >( raw );
+            Property* ppt = ent->createProperty( std::string_view( propName ), v );
+            lua_pushboolean( L, ppt ? 1 : 0 );
+            return 1;
+        }
+        int32_t v = static_cast< int32_t >( raw );
         Property* ppt = ent->createProperty( std::string_view( propName ), v );
         lua_pushboolean( L, ppt ? 1 : 0 );
         return 1;
@@ -209,7 +220,11 @@ static int goapie_lua_set_property_func(lua_State* L)
         lua_len( L, 3 );
         int len = static_cast<int>( lua_tointeger( L, -1 ) );
         lua_pop( L, 1 );
-        if( len == 3 )
+        // Disambiguate Vec3 vs GuidArray: check existing property type first.
+        // A 3-element table could be either, so we check what the property was before.
+        Property* existing = ent->property( std::string_view( propName ) );
+        bool isGuidArray = existing && existing->type() == Property::GUIDArray;
+        if( len == 3 && !isGuidArray )
         {
             double x, y, z;
             lua_rawgeti( L, 3, 1 ); x = lua_tonumber( L, -1 ); lua_pop( L, 1 );
@@ -307,6 +322,26 @@ static int goapie_lua_tag_set_func(lua_State* L)
         lua_pushinteger( L, static_cast< lua_Integer >( g ) );
         lua_rawseti( L, -2, idx++ );
     }
+    return 1;
+}
+
+// set_cost(value) — sets the current simulation node's cost (g-cost component for A*)
+static int goapie_lua_set_cost_func(lua_State* L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
+    void* ud = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if(!ud) { lua_pushboolean(L, 0); return 1; }
+    Simulation* sim = static_cast< Simulation* >( ud );
+
+    if( !lua_isnumber( L, 1 ) )
+    {
+        lua_pushboolean( L, 0 );
+        return 1;
+    }
+
+    sim->cost = static_cast< float >( lua_tonumber( L, 1 ) );
+    lua_pushboolean( L, 1 );
     return 1;
 }
 
@@ -474,6 +509,9 @@ public:
         lua_pushcfunction( L, goapie_lua_move_agent_to_entity_func );
         lua_setfield( L, -2, "move_agent_to_entity" );
 
+        lua_pushcfunction( L, goapie_lua_set_cost_func );
+        lua_setfield( L, -2, "set_cost" );
+
 
 
         // Store env in registry under name so later lookups work.
@@ -634,6 +672,10 @@ public:
 
     void pushEvaluateParams( lua_State* L, const EvaluateSimulationParams& params ) const
     {
+        // Store simulation pointer so bridge functions (get_property, etc.) can access it
+        lua_pushlightuserdata( L, const_cast< Simulation* >( &params.simulation ) );
+        lua_setfield( L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION" );
+
         lua_newtable( L ); // params
 
         lua_pushstring( L, "simulation" );
@@ -657,6 +699,10 @@ public:
 
     void pushSimulateParams( lua_State* L, const SimulateSimulationParams& params ) const
     {
+        // Store simulation pointer so bridge functions (get_property, etc.) can access it
+        lua_pushlightuserdata( L, const_cast< Simulation* >( &params.simulation ) );
+        lua_setfield( L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION" );
+
         lua_newtable( L ); // params
 
         lua_pushstring( L, "simulation" );
@@ -722,6 +768,17 @@ public:
 
 #endif // GIE_WITH_LUA
 
+// Lightweight Action produced by Lua-backed simulators so that backtrack()
+// can identify which action was performed at each simulation node.
+class LuaAction : public Action
+{
+	std::string m_name;
+public:
+	LuaAction( const std::string& name ) : m_name( name ) {}
+	std::string_view name() const override { return m_name; }
+	StringHash hash() const override { return stringHasher( m_name ); }
+};
+
 // Lua-backed ActionSimulator. Stores the source (or chunk names) and calls
 // into LuaSandbox when available. Header-only stub returns permissive defaults.
 class LuaActionSimulator : public ActionSimulator
@@ -757,7 +814,12 @@ public:
     bool simulate( SimulateSimulationParams params ) const override
     {
 #if GIE_WITH_LUA
-        return m_sandbox->executeSimulate( m_chunkName, params );
+        bool ok = m_sandbox->executeSimulate( m_chunkName, params );
+        if( ok )
+        {
+            params.simulation.actions.emplace_back( std::make_shared< LuaAction >( m_name ) );
+        }
+        return ok;
 #else
         (void)params;
         return true;
