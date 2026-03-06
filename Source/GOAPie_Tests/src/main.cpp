@@ -42,6 +42,8 @@ struct ExampleFunctionEntry
 	ExampleFunc func;
 	const char* name;
 	const char* description;
+	ExampleFunc luaFunc;		// optional Lua variant (nullptr if none)
+	const char* luaFuncName;	// optional Lua variant name
 };
 
 // used to draw elements using OpenGL
@@ -52,13 +54,12 @@ extern void printSimulatedActions( const gie::Planner& planner );
 
 // TODO: Rename exampleFunctions to projectFunctions (frontend mapping)
 std::vector< ExampleFunctionEntry > exampleFunctions{
-	{ fundamentals,			fundamentalsName, fundamentalsDescription() },
-	{ openDoor,			openDoorName, openDoorDescription() },
-	{ cutDownTrees,			cutDownTreesName, cutDownTreesDescription() },
-	{ treesOnHill,			treesOnHillName, treesOnHillDescription() },
-	{ survivalOnHill,		survivalOnHillName, survivalOnHillDescription() },
-	{ heistOpenSafe,		heistOpenSafeName, heistOpenSafeDescription() },
-	{ heistOpenSafe_Lua,	heistOpenSafe_LuaName, heistOpenSafe_LuaDescription() }
+	{ fundamentals,			fundamentalsName, fundamentalsDescription(),		nullptr, nullptr },
+	{ openDoor,			openDoorName, openDoorDescription(),			nullptr, nullptr },
+	{ cutDownTrees,			cutDownTreesName, cutDownTreesDescription(),		nullptr, nullptr },
+	{ treesOnHill,			treesOnHillName, treesOnHillDescription(),		nullptr, nullptr },
+	{ survivalOnHill,		survivalOnHillName, survivalOnHillDescription(),	nullptr, nullptr },
+	{ heistOpenSafe,		heistOpenSafeName, heistOpenSafeDescription(),		heistOpenSafe_Lua, heistOpenSafe_LuaName },
 };
 
 static void printUsage()
@@ -68,6 +69,7 @@ static void printUsage()
 	msg += "usage: <exe> [options]\n\n";
 	msg += "OPTIONS\n";
 	msg += "    -e, --example <N>       Run native example numbered N (1.." + std::to_string( exampleFunctions.size() ) + ") and exit.\n";
+	msg += "    -lua                    Use the Lua variant of the selected example.\n";
 	msg += "    -v, --visualization     Launch visualization GUI. If combined with -e,\n";
 	msg += "                            the example will be loaded before showing GUI.\n";
 	msg += "    -le, --list-examples    List available examples with short descriptions.\n";
@@ -75,6 +77,8 @@ static void printUsage()
 	msg += "EXAMPLES\n";
 	msg += "    <exe> -e 1               Run example 1 and exit.\n";
 	msg += "    <exe> -e 2 -v            Load example 2 and show GUI.\n";
+	msg += "    <exe> -e 6 -lua          Run the Lua variant of example 6.\n";
+	msg += "    <exe> -e 6 -lua -v       Load Lua variant of example 6 and show GUI.\n";
 	msg += "    <exe> -v                 Show GUI without loading any example.\n";
 	msg += "    <exe> -t                 Run Lua tests and exit.\n";
 	msg += "    <exe> -t -v              Run Lua tests then show GUI.\n";
@@ -88,6 +92,7 @@ int main( int argc, char** argv )
 	bool visualize = false;
 	bool listExamples = false;
 	bool runTests = false;
+	bool useLua = false;
 
 	// Simple command-line parsing for -e/--example, -v/--visualization, -le/--list-examples and -t/--tests
 	for( int i = 1; i < argc; ++i )
@@ -114,6 +119,10 @@ int main( int argc, char** argv )
 		{
 			listExamples = true;
 		}
+		else if( std::strcmp( argv[ i ], "-lua" ) == 0 )
+		{
+			useLua = true;
+		}
 		else if( std::strcmp( argv[ i ], "-t" ) == 0 || std::strcmp( argv[ i ], "--tests" ) == 0 )
 		{
 			runTests = true;
@@ -130,7 +139,8 @@ int main( int argc, char** argv )
 		std::printf( "Available examples (use -e N to run):\n" );
 		for( size_t i = 0; i < exampleFunctions.size(); ++i )
 		{
-			std::printf( "  %zu) %s\n", i + 1, exampleFunctions[ i ].name );
+			std::printf( "  %zu) %s%s\n", i + 1, exampleFunctions[ i ].name,
+				exampleFunctions[ i ].luaFunc ? " [lua]" : "" );
 			if( exampleFunctions[ i ].description )
 			{
 				std::printf( "     %s\n", exampleFunctions[ i ].description );
@@ -167,6 +177,18 @@ int main( int argc, char** argv )
 			printUsage();
 			return 1;
 		}
+
+		if( useLua && !exampleFunctions[ ex - 1 ].luaFunc )
+		{
+			std::printf( "Example %d (%s) does not have a Lua variant.\n", ex, exampleFunctions[ ex - 1 ].name );
+			return 1;
+		}
+	}
+	else if( useLua )
+	{
+		std::printf( "-lua requires an example number (-e N).\n" );
+		printUsage();
+		return 1;
 	}
 
 	// instantiating essential objects for any possible usage
@@ -179,9 +201,19 @@ int main( int argc, char** argv )
 
 	if( ex != -1 )
 	{
-		g_exampleName = exampleFunctions[ ex - 1 ].name;
-		int exResult = exampleFunctions[ ex - 1 ].func( exampleParams );
-		( void )exResult;
+		auto& entry = exampleFunctions[ ex - 1 ];
+		if( useLua )
+		{
+			g_exampleName = entry.luaFuncName;
+			int exResult = entry.luaFunc( exampleParams );
+			( void )exResult;
+		}
+		else
+		{
+			g_exampleName = entry.name;
+			int exResult = entry.func( exampleParams );
+			( void )exResult;
+		}
 	}
 	else
 	{
