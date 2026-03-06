@@ -205,6 +205,14 @@ static float EstimateHeistHeuristic( const gie::Simulation& sim, const gie::Enti
         }
     }
 
+    // Alarm penalty: if the alarm is still armed, the agent will need to disable it
+    // (required for code-lock safe). Estimate the extra travel + action cost.
+    auto alarm = FindEntityByName( sim.context(), "AlarmSystem" );
+    if( alarm && *alarm->property( "Armed" )->getBool() && lockMode == 1.f )
+    {
+        h += 10.f; // estimated cost to reach and disable the alarm panel
+    }
+
     return h;
 }
 
@@ -1336,6 +1344,8 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
 
     // Open safe using code pieces — agent must collect enough pieces (RequiredCodePieces)
     // scattered around the property before this action becomes available.
+    // The electronic code lock also requires the alarm/security system to be disabled
+    // first (it's wired into the same security circuit).
     class OpenSafeWithCodeSimulator : public gie::ActionSimulator
     {
     public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "OpenSafeWithCode" ); }
@@ -1349,6 +1359,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             if( !safe ) { params.addDebugMessage( "  Safe not found -> FALSE" ); return false; }
             if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) { params.addDebugMessage( "  Already open -> FALSE" ); return false; }
             if( *const_cast< gie::Entity* >( safe )->property( "LockMode" )->getFloat() != 1.f ) { params.addDebugMessage( "  Not code-lock -> FALSE" ); return false; }
+            // Code lock is wired into the security system — alarm must be disabled first
+            auto alarm = FindEntityByName( ctx, "AlarmSystem" );
+            if( alarm && *alarm->property( "Armed" )->getBool() ) { params.addDebugMessage( "  Alarm still armed -> FALSE" ); return false; }
             int required = static_cast< int >( *const_cast< gie::Entity* >( safe )->property( "RequiredCodePieces" )->getFloat() );
             auto agent = ctx.entity( params.agent.guid() );
             auto inv = agent->property( "Inventory" )->getGuidArray();
