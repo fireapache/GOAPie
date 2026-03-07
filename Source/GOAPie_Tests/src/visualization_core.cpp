@@ -325,6 +325,7 @@ int visualization( ExampleParameters& params )
             drawTrees( world, planner );
             drawSelectedSimulationPath( world, planner );
             drawAgentCrosshair( world, planner );
+            if( params.glDrawFunc ) params.glDrawFunc( world, planner );
         }
 
         // and unbind it again

@@ -10,6 +10,7 @@ namespace gie
 }
 
 typedef void ( *ImGuiDrawFunc )( gie::World&, gie::Planner&, gie::Goal&, gie::Guid );
+typedef void ( *GLDrawFunc )( gie::World&, gie::Planner& );
 
 // TODO: Rename ExampleParameters to ProjectParameters (frontend mapping)
 struct ExampleParameters
@@ -18,6 +19,7 @@ gie::World& world;
 gie::Planner& planner;
 gie::Goal& goal;
 ImGuiDrawFunc imGuiDrawFunc{ nullptr };
+GLDrawFunc glDrawFunc{ nullptr };
 };
 
 // Validation check macro for example validateResult functions.
