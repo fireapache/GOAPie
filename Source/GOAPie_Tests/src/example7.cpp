@@ -91,7 +91,8 @@ struct GameplayCycleEntry
 	int cycle{ 0 };
 	std::string goalType;          // "Primary" or "Explore"
 	bool planFound{ false };
-	std::vector<std::string> actionNames; // execution order (first to last)
+	std::vector<std::string> actionNames;   // execution order (first to last)
+	std::vector<std::string> actionDetails; // detailed description per action
 	glm::vec3 agentPosBefore{ 0.f };
 	glm::vec3 agentPosAfter{ 0.f };
 	int knownCountBefore{ 0 };
@@ -902,32 +903,42 @@ static void RegisterActions( gie::Planner& planner )
 // Execute functions — apply actions to the real world (not simulation)
 // ---------------------------------------------------------------------------
 
-static void ExecuteObserve( gie::World& world, gie::Agent* agent )
+static std::string ExecuteObserve( gie::World& world, gie::Agent* agent )
 {
 	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
 	auto wpSet = world.context().entityTagRegister().tagSet( "Waypoint" );
 	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
-	if( !wpSet || !knownSet ) return;
+	std::string wpName = "?";
+	std::vector<std::string> revealed;
 
-	for( auto g : *wpSet )
+	if( wpSet && knownSet )
 	{
-		if( !knownSet->count( g ) ) continue;
-		auto wp = world.entity( g );
-		if( !wp ) continue;
-		auto loc = wp->property( "Location" );
-		if( !loc ) continue;
-		if( glm::distance( agentLoc, *loc->getVec3() ) < 1.f )
+		for( auto g : *wpSet )
 		{
-			auto reveals = wp->property( "Reveals" );
-			if( reveals )
+			if( !knownSet->count( g ) ) continue;
+			auto wp = world.entity( g );
+			if( !wp ) continue;
+			auto loc = wp->property( "Location" );
+			if( !loc ) continue;
+			if( glm::distance( agentLoc, *loc->getVec3() ) < 1.f )
 			{
-				auto revArr = reveals->getGuidArray();
-				if( revArr )
+				wpName = gie::stringRegister().get( wp->nameHash() );
+				auto reveals = wp->property( "Reveals" );
+				if( reveals )
 				{
-					for( Guid rg : *revArr )
+					auto revArr = reveals->getGuidArray();
+					if( revArr )
 					{
-						auto ent = world.entity( rg );
-						if( ent ) world.context().entityTagRegister().tag( ent, { H( "Known" ) } );
+						for( Guid rg : *revArr )
+						{
+							auto ent = world.entity( rg );
+							if( ent )
+							{
+								if( !knownSet->count( rg ) )
+									revealed.push_back( std::string( gie::stringRegister().get( ent->nameHash() ) ) );
+								world.context().entityTagRegister().tag( ent, { H( "Known" ) } );
+							}
+						}
 					}
 				}
 			}
@@ -935,14 +946,26 @@ static void ExecuteObserve( gie::World& world, gie::Agent* agent )
 	}
 	agent->property( "ExploredNewArea" )->value = true;
 	agent->property( "DiscoveryCount" )->value = static_cast<float>( CountKnown( world.context() ) );
+
+	std::string detail = "at " + wpName;
+	if( !revealed.empty() )
+	{
+		detail += " -> discovered ";
+		for( size_t i = 0; i < revealed.size(); i++ )
+		{
+			if( i > 0 ) detail += ", ";
+			detail += revealed[i];
+		}
+	}
+	return detail;
 }
 
-static void ExecuteMoveTo( gie::World& world, gie::Agent* agent )
+static std::string ExecuteMoveTo( gie::World& world, gie::Agent* agent )
 {
 	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
 	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
 	auto wpSet = world.context().entityTagRegister().tagSet( "Waypoint" );
-	if( !knownSet || !wpSet ) return;
+	if( !knownSet || !wpSet ) return "";
 	gie::Entity* bestTarget = nullptr;
 	float bestScore = std::numeric_limits<float>::max();
 	for( auto g : *wpSet )
@@ -968,15 +991,19 @@ static void ExecuteMoveTo( gie::World& world, gie::Agent* agent )
 		if( score < bestScore ) { bestScore = score; bestTarget = wp; }
 	}
 	if( bestTarget )
+	{
 		*agent->property( "Location" )->getVec3() = *bestTarget->property( "Location" )->getVec3();
+		return "-> " + std::string( gie::stringRegister().get( bestTarget->nameHash() ) );
+	}
+	return "";
 }
 
-static void ExecuteInspect( gie::World& world, gie::Agent* agent )
+static std::string ExecuteInspect( gie::World& world, gie::Agent* agent )
 {
 	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
 	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
 	auto clueSet = world.context().entityTagRegister().tagSet( "Clue" );
-	if( !knownSet || !clueSet ) return;
+	if( !knownSet || !clueSet ) return "";
 	gie::Entity* bestClue = nullptr;
 	float bestDist = std::numeric_limits<float>::max();
 	for( auto g : *clueSet )
@@ -991,25 +1018,35 @@ static void ExecuteInspect( gie::World& world, gie::Agent* agent )
 		float dist = glm::distance( agentLoc, *loc->getVec3() );
 		if( dist < bestDist ) { bestDist = dist; bestClue = clue; }
 	}
-	if( !bestClue ) return;
+	if( !bestClue ) return "";
+	std::string clueName{ gie::stringRegister().get( bestClue->nameHash() ) };
 	*agent->property( "Location" )->getVec3() = *bestClue->property( "Location" )->getVec3();
 	bestClue->property( "Inspected" )->value = true;
+	std::string detail = clueName;
+	auto isFalse = bestClue->property( "IsFalseClue" );
+	if( isFalse && *isFalse->getBool() )
+		detail += " (false clue!)";
 	auto revealTarget = bestClue->property( "RevealTarget" );
 	if( revealTarget && *revealTarget->getGuid() != gie::NullGuid )
 	{
 		auto targetEnt = world.entity( *revealTarget->getGuid() );
-		if( targetEnt ) world.context().entityTagRegister().tag( targetEnt, { H( "Known" ) } );
+		if( targetEnt )
+		{
+			world.context().entityTagRegister().tag( targetEnt, { H( "Known" ) } );
+			detail += " -> revealed " + std::string( gie::stringRegister().get( targetEnt->nameHash() ) );
+		}
 	}
 	agent->property( "ExploredNewArea" )->value = true;
+	return detail;
 }
 
-static void ExecutePickUp( gie::World& world, gie::Agent* agent )
+static std::string ExecutePickUp( gie::World& world, gie::Agent* agent )
 {
 	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
 	auto inv = agent->property( "Inventory" )->getGuidArray();
 	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
 	auto itemSet = world.context().entityTagRegister().tagSet( "Item" );
-	if( !knownSet || !itemSet ) return;
+	if( !knownSet || !itemSet ) return "";
 	gie::Entity* best = nullptr;
 	float bestDist = std::numeric_limits<float>::max();
 	for( auto g : *itemSet )
@@ -1023,52 +1060,58 @@ static void ExecutePickUp( gie::World& world, gie::Agent* agent )
 		float dist = glm::distance( agentLoc, *loc->getVec3() );
 		if( dist < bestDist ) { bestDist = dist; best = e; }
 	}
-	if( !best ) return;
+	if( !best ) return "";
 	*agent->property( "Location" )->getVec3() = *best->property( "Location" )->getVec3();
 	inv->push_back( best->guid() );
+	return std::string( gie::stringRegister().get( best->nameHash() ) );
 }
 
-static void ExecuteForgeKey( gie::World& world, gie::Agent* agent )
+static std::string ExecuteForgeKey( gie::World& world, gie::Agent* agent )
 {
 	auto forge = FindEntityByName( world.context(), "Blacksmith" );
-	if( !forge ) return;
+	if( !forge ) return "";
 	*agent->property( "Location" )->getVec3() = *forge->property( "Location" )->getVec3();
 	auto keyInfo = FindEntityByName( world.context(), "TreasureKeyInfo" );
-	if( !keyInfo ) return;
+	if( !keyInfo ) return "";
 	auto keyItem = world.createEntity( "TreasureKey" );
 	world.context().entityTagRegister().tag( keyItem, { H( "Item" ), H( "Known" ) } );
 	keyItem->createProperty( "Location", *forge->property( "Location" )->getVec3() );
 	keyItem->createProperty( "Info", keyInfo->guid() );
 	agent->property( "Inventory" )->getGuidArray()->push_back( keyItem->guid() );
+	return "IronOre -> TreasureKey at Blacksmith";
 }
 
-static void ExecuteOpenChest( gie::World& world, gie::Agent* agent )
+static std::string ExecuteOpenChest( gie::World& world, gie::Agent* agent )
 {
 	auto chest = FindEntityByName( world.context(), "LockedChest" );
-	if( !chest ) return;
+	if( !chest ) return "";
 	*agent->property( "Location" )->getVec3() = *chest->property( "Location" )->getVec3();
 	chest->property( "Open" )->value = true;
+	return "LockedChest with TreasureKey";
 }
 
-static void ExecuteAction( gie::World& world, gie::Agent* agent, const std::string& actionName )
+static std::string ExecuteAction( gie::World& world, gie::Agent* agent, const std::string& actionName )
 {
-	if( actionName == "Observe" )        ExecuteObserve( world, agent );
-	else if( actionName == "MoveTo" )    ExecuteMoveTo( world, agent );
-	else if( actionName == "Inspect" )   ExecuteInspect( world, agent );
-	else if( actionName == "PickUp" )    ExecutePickUp( world, agent );
-	else if( actionName == "ForgeKey" )  ExecuteForgeKey( world, agent );
-	else if( actionName == "OpenChest" ) ExecuteOpenChest( world, agent );
+	if( actionName == "Observe" )        return ExecuteObserve( world, agent );
+	else if( actionName == "MoveTo" )    return ExecuteMoveTo( world, agent );
+	else if( actionName == "Inspect" )   return ExecuteInspect( world, agent );
+	else if( actionName == "PickUp" )    return ExecutePickUp( world, agent );
+	else if( actionName == "ForgeKey" )  return ExecuteForgeKey( world, agent );
+	else if( actionName == "OpenChest" ) return ExecuteOpenChest( world, agent );
+	return "";
 }
 
 // ---------------------------------------------------------------------------
-// Gameplay loop — runs the full planning/execution cycle
+// Gameplay loop — single cycle and full loop
 // ---------------------------------------------------------------------------
-static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner )
-{
-	g_GameplayLog = {};
-	g_GameplayLog.started = true;
-	g_GameplayLog.agentTrail.push_back( *agent->property( "Location" )->getVec3() );
 
+// Result of a single gameplay cycle
+enum class CycleResult { Continued, GoalReached, Stuck };
+
+// Execute one planning cycle: try primary goal, then explore, then stuck.
+// Appends the cycle entry to g_GameplayLog.
+static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent )
+{
 	auto getInventoryNames = [&]() -> std::vector<std::string>
 	{
 		std::vector<std::string> names;
@@ -1081,111 +1124,122 @@ static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner&
 	};
 
 	auto chest = FindEntityByName( world.context(), "LockedChest" );
+	if( chest && *chest->property( "Open" )->getBool() )
+	{
+		g_GameplayLog.primaryGoalReached = true;
+		return CycleResult::GoalReached;
+	}
+
 	Guid chestOpenPropGuid = chest ? chest->property( "Open" )->guid() : gie::NullGuid;
 	Guid exploredPropGuid = agent->property( "ExploredNewArea" )->guid();
 
-	const int maxCycles = 30;
+	int cycleNum = static_cast<int>( g_GameplayLog.cycles.size() ) + 1;
+	GameplayCycleEntry entry;
+	entry.cycle = cycleNum;
+	entry.agentPosBefore = *agent->property( "Location" )->getVec3();
+	entry.knownCountBefore = CountKnown( world.context() );
 
-	for( int cycle = 1; cycle <= maxCycles; cycle++ )
+	// --- Try primary goal: open chest ---
 	{
-		if( chest && *chest->property( "Open" )->getBool() )
+		gie::Goal primaryGoal{ world };
+		if( chestOpenPropGuid != gie::NullGuid )
+			primaryGoal.targets.emplace_back( chestOpenPropGuid, true );
+
+		gie::Planner primaryPlanner{};
+		RegisterActions( primaryPlanner );
+		primaryPlanner.depthLimitMutator() = 8;
+		primaryPlanner.logStepsMutator() = false;
+		primaryPlanner.simulate( primaryGoal, *agent );
+		primaryPlanner.plan( true );
+
+		auto& planned = primaryPlanner.planActions();
+		if( !planned.empty() )
 		{
-			g_GameplayLog.primaryGoalReached = true;
+			entry.goalType = "Primary";
+			entry.planFound = true;
+			entry.simulationCount = primaryPlanner.simulations().size();
+			for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
+				entry.actionNames.push_back( std::string( planned[i]->name() ) );
+
+			for( auto& name : entry.actionNames )
+				entry.actionDetails.push_back( ExecuteAction( world, agent, name ) );
+
+			entry.agentPosAfter = *agent->property( "Location" )->getVec3();
+			entry.knownCountAfter = CountKnown( world.context() );
+			entry.inventoryAfter = getInventoryNames();
+			entry.plannerPtr = std::make_unique<gie::Planner>( std::move( primaryPlanner ) );
+			g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
+			g_GameplayLog.cycles.push_back( std::move( entry ) );
+
+			chest = FindEntityByName( world.context(), "LockedChest" );
+			if( chest && *chest->property( "Open" )->getBool() )
+			{
+				g_GameplayLog.primaryGoalReached = true;
+				return CycleResult::GoalReached;
+			}
+			return CycleResult::Continued;
+		}
+	}
+
+	// --- Primary unreachable, try exploration goal ---
+	agent->property( "ExploredNewArea" )->value = false;
+
+	{
+		gie::Goal exploreGoal{ world };
+		exploreGoal.targets.emplace_back( exploredPropGuid, true );
+
+		gie::Planner explorePlanner{};
+		RegisterActions( explorePlanner );
+		explorePlanner.depthLimitMutator() = 4;
+		explorePlanner.logStepsMutator() = false;
+		explorePlanner.simulate( exploreGoal, *agent );
+		explorePlanner.plan( true );
+
+		auto& planned = explorePlanner.planActions();
+		if( !planned.empty() )
+		{
+			entry.goalType = "Explore";
+			entry.planFound = true;
+			entry.simulationCount = explorePlanner.simulations().size();
+			for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
+				entry.actionNames.push_back( std::string( planned[i]->name() ) );
+
+			for( auto& name : entry.actionNames )
+				entry.actionDetails.push_back( ExecuteAction( world, agent, name ) );
+
+			entry.agentPosAfter = *agent->property( "Location" )->getVec3();
+			entry.knownCountAfter = CountKnown( world.context() );
+			entry.inventoryAfter = getInventoryNames();
+			entry.plannerPtr = std::make_unique<gie::Planner>( std::move( explorePlanner ) );
+			g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
+			g_GameplayLog.cycles.push_back( std::move( entry ) );
+			return CycleResult::Continued;
+		}
+	}
+
+	// --- Stuck: neither goal produced a plan ---
+	entry.goalType = "Stuck";
+	entry.planFound = false;
+	entry.agentPosAfter = entry.agentPosBefore;
+	entry.knownCountAfter = entry.knownCountBefore;
+	entry.inventoryAfter = getInventoryNames();
+	g_GameplayLog.cycles.push_back( std::move( entry ) );
+	return CycleResult::Stuck;
+}
+
+// Run all cycles until goal reached, stuck, or max cycles exceeded.
+static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner )
+{
+	g_GameplayLog = {};
+	g_GameplayLog.started = true;
+	g_GameplayLog.agentTrail.push_back( *agent->property( "Location" )->getVec3() );
+
+	const int maxCycles = 30;
+	for( int i = 0; i < maxCycles; i++ )
+	{
+		CycleResult result = RunGameplayCycle( world, agent );
+		if( result != CycleResult::Continued )
 			break;
-		}
-
-		GameplayCycleEntry entry;
-		entry.cycle = cycle;
-		entry.agentPosBefore = *agent->property( "Location" )->getVec3();
-		entry.knownCountBefore = CountKnown( world.context() );
-
-		// --- Try primary goal: open chest ---
-		{
-			gie::Goal primaryGoal{ world };
-			if( chestOpenPropGuid != gie::NullGuid )
-				primaryGoal.targets.emplace_back( chestOpenPropGuid, true );
-
-			gie::Planner primaryPlanner{};
-			RegisterActions( primaryPlanner );
-			primaryPlanner.depthLimitMutator() = 8;
-			primaryPlanner.logStepsMutator() = false;
-			primaryPlanner.simulate( primaryGoal, *agent );
-			primaryPlanner.plan( true );
-
-			auto& planned = primaryPlanner.planActions();
-			if( !planned.empty() )
-			{
-				entry.goalType = "Primary";
-				entry.planFound = true;
-				entry.simulationCount = primaryPlanner.simulations().size();
-				for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
-					entry.actionNames.push_back( std::string( planned[i]->name() ) );
-
-				for( auto& name : entry.actionNames )
-					ExecuteAction( world, agent, name );
-
-				entry.agentPosAfter = *agent->property( "Location" )->getVec3();
-				entry.knownCountAfter = CountKnown( world.context() );
-				entry.inventoryAfter = getInventoryNames();
-				entry.plannerPtr = std::make_unique<gie::Planner>( std::move( primaryPlanner ) );
-				g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
-				g_GameplayLog.cycles.push_back( std::move( entry ) );
-
-				// Re-check chest
-				chest = FindEntityByName( world.context(), "LockedChest" );
-				if( chest && *chest->property( "Open" )->getBool() )
-				{
-					g_GameplayLog.primaryGoalReached = true;
-					break;
-				}
-				continue;
-			}
-		}
-
-		// --- Primary unreachable, try exploration goal ---
-		agent->property( "ExploredNewArea" )->value = false;
-
-		{
-			gie::Goal exploreGoal{ world };
-			exploreGoal.targets.emplace_back( exploredPropGuid, true );
-
-			gie::Planner explorePlanner{};
-			RegisterActions( explorePlanner );
-			explorePlanner.depthLimitMutator() = 4;
-			explorePlanner.logStepsMutator() = false;
-			explorePlanner.simulate( exploreGoal, *agent );
-			explorePlanner.plan( true );
-
-			auto& planned = explorePlanner.planActions();
-			if( !planned.empty() )
-			{
-				entry.goalType = "Explore";
-				entry.planFound = true;
-				entry.simulationCount = explorePlanner.simulations().size();
-				for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
-					entry.actionNames.push_back( std::string( planned[i]->name() ) );
-
-				for( auto& name : entry.actionNames )
-					ExecuteAction( world, agent, name );
-
-				entry.agentPosAfter = *agent->property( "Location" )->getVec3();
-				entry.knownCountAfter = CountKnown( world.context() );
-				entry.inventoryAfter = getInventoryNames();
-				entry.plannerPtr = std::make_unique<gie::Planner>( std::move( explorePlanner ) );
-				g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
-				g_GameplayLog.cycles.push_back( std::move( entry ) );
-				continue;
-			}
-		}
-
-		// --- Stuck: neither goal produced a plan ---
-		entry.goalType = "Stuck";
-		entry.planFound = false;
-		entry.agentPosAfter = entry.agentPosBefore;
-		entry.knownCountAfter = entry.knownCountBefore;
-		entry.inventoryAfter = getInventoryNames();
-		g_GameplayLog.cycles.push_back( std::move( entry ) );
-		break;
 	}
 }
 
@@ -1422,16 +1476,41 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 
 	ImGui::Separator();
 
-	// Start Gameplay button (deferred execution in visualization mode)
+	// Step execution mode
+	static bool stepExecution = false;
+	bool finished = g_GameplayLog.primaryGoalReached
+		|| ( !g_GameplayLog.cycles.empty() && g_GameplayLog.cycles.back().goalType == "Stuck" );
+
+	// Before gameplay starts: checkbox + Start button
 	if( !g_GameplayLog.started )
 	{
+		ImGui::Checkbox( "Step Execution", &stepExecution );
 		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.6f, 0.2f, 1.0f ) );
 		ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.3f, 0.8f, 0.3f, 1.0f ) );
 		if( ImGui::Button( "Start Gameplay", ImVec2( -1.f, 40.f ) ) )
 		{
 			auto* agentPtr = planner.agent();
 			if( agentPtr )
-				RunGameplayLoop( world, agentPtr, planner );
+			{
+				g_GameplayLog = {};
+				g_GameplayLog.started = true;
+				g_GameplayLog.agentTrail.push_back( *agentPtr->property( "Location" )->getVec3() );
+
+				if( stepExecution )
+				{
+					RunGameplayCycle( world, agentPtr );
+				}
+				else
+				{
+					const int maxCycles = 30;
+					for( int i = 0; i < maxCycles; i++ )
+					{
+						CycleResult result = RunGameplayCycle( world, agentPtr );
+						if( result != CycleResult::Continued )
+							break;
+					}
+				}
+			}
 		}
 		ImGui::PopStyleColor( 2 );
 		ImGui::TextWrapped( "Click to run the plan-execute-replan gameplay loop. "
@@ -1442,7 +1521,10 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 	// Gameplay log
 	if( ImGui::CollapsingHeader( "Gameplay Log", ImGuiTreeNodeFlags_DefaultOpen ) )
 	{
-		ImGui::Text( "Goal reached: %s", g_GameplayLog.primaryGoalReached ? "YES" : "No" );
+		if( g_GameplayLog.primaryGoalReached )
+			ImGui::TextColored( ImVec4( 0.4f, 1.0f, 0.4f, 1.0f ), "Goal reached: YES" );
+		else
+			ImGui::Text( "Goal reached: No" );
 		ImGui::Text( "Total cycles: %zu", g_GameplayLog.cycles.size() );
 		ImGui::Separator();
 
@@ -1465,7 +1547,7 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 
 			if( nodeOpen )
 			{
-				// Executed actions list
+				// Executed actions list with details
 				ImGui::TextUnformatted( "Executed Actions:" );
 				ImGui::Indent();
 				for( size_t ai = 0; ai < c.actionNames.size(); ai++ )
@@ -1473,7 +1555,12 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 					bool isLast = ( i == g_GameplayLog.cycles.size() - 1 && ai == c.actionNames.size() - 1 );
 					if( isLast && g_GameplayLog.primaryGoalReached )
 						ImGui::PushStyleColor( ImGuiCol_Text, ImVec4( 1.0f, 0.85f, 0.0f, 1.0f ) );
-					ImGui::Text( "%zu. %s", ai + 1, c.actionNames[ai].c_str() );
+
+					std::string detail = ( ai < c.actionDetails.size() && !c.actionDetails[ai].empty() )
+						? c.actionNames[ai] + " — " + c.actionDetails[ai]
+						: c.actionNames[ai];
+					ImGui::Text( "%zu. %s", ai + 1, detail.c_str() );
+
 					if( isLast && g_GameplayLog.primaryGoalReached )
 						ImGui::PopStyleColor();
 				}
@@ -1513,6 +1600,43 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 				ImGui::TreePop();
 			}
 		}
+	}
+
+	// Run / Step buttons (shown when step execution is active and goal not yet reached)
+	if( stepExecution && !finished )
+	{
+		ImGui::Separator();
+		float buttonWidth = ( ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x ) * 0.5f;
+
+		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.6f, 0.2f, 1.0f ) );
+		ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.3f, 0.8f, 0.3f, 1.0f ) );
+		if( ImGui::Button( "Run", ImVec2( buttonWidth, 30.f ) ) )
+		{
+			auto* agentPtr = planner.agent();
+			if( agentPtr )
+			{
+				const int maxCycles = 30 - static_cast<int>( g_GameplayLog.cycles.size() );
+				for( int i = 0; i < maxCycles; i++ )
+				{
+					CycleResult result = RunGameplayCycle( world, agentPtr );
+					if( result != CycleResult::Continued )
+						break;
+				}
+			}
+		}
+		ImGui::PopStyleColor( 2 );
+
+		ImGui::SameLine();
+
+		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.4f, 0.7f, 1.0f ) );
+		ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.3f, 0.5f, 0.9f, 1.0f ) );
+		if( ImGui::Button( "Step", ImVec2( buttonWidth, 30.f ) ) )
+		{
+			auto* agentPtr = planner.agent();
+			if( agentPtr )
+				RunGameplayCycle( world, agentPtr );
+		}
+		ImGui::PopStyleColor( 2 );
 	}
 
 	// Resolve selectedSimulationGuid across all cycle planners for blackboard view
