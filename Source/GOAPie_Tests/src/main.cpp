@@ -10,6 +10,7 @@
 extern void RunLuaIntegrationTest();
 extern void RunLuaEditorIntegrationTest();
 extern int RunAutomatedTests();
+extern int RunVisualizationTests();
 
 // found in visualization.h
 // TODO: Rename g_exampleName to g_projectName (frontend mapping)
@@ -19,6 +20,7 @@ std::string g_exampleName;
 #define EXAMPLE_FUNCTION( x ) \
 	extern int x( ExampleParameters& params ); \
 	extern const char* x##Description(); \
+	extern int x##ValidateResult( std::string& failMsg ); \
 	const char* x##Name = #x;
 
 // example 1
@@ -36,6 +38,7 @@ EXAMPLE_FUNCTION( heistOpenSafe )
 EXAMPLE_FUNCTION( heistOpenSafe_Lua )
 // TODO: Rename ExampleFunc to ProjectFunc (frontend mapping)
 typedef int ( *ExampleFunc )( ExampleParameters& );
+typedef int ( *ValidateFunc )( std::string& failMsg );
 
 // TODO: Rename ExampleFunctionEntry to ProjectFunctionEntry (frontend mapping)
 struct ExampleFunctionEntry
@@ -45,6 +48,7 @@ struct ExampleFunctionEntry
 	const char* description;
 	ExampleFunc luaFunc;		// optional Lua variant (nullptr if none)
 	const char* luaFuncName;	// optional Lua variant name
+	ValidateFunc validateFunc;	// validation function for automated testing
 };
 
 // used to draw elements using OpenGL
@@ -55,13 +59,70 @@ extern void printSimulatedActions( const gie::Planner& planner );
 
 // TODO: Rename exampleFunctions to projectFunctions (frontend mapping)
 std::vector< ExampleFunctionEntry > exampleFunctions{
-	{ fundamentals,			fundamentalsName, fundamentalsDescription(),		nullptr, nullptr },
-	{ openDoor,			openDoorName, openDoorDescription(),			nullptr, nullptr },
-	{ cutDownTrees,			cutDownTreesName, cutDownTreesDescription(),		nullptr, nullptr },
-	{ treesOnHill,			treesOnHillName, treesOnHillDescription(),		nullptr, nullptr },
-	{ survivalOnHill,		survivalOnHillName, survivalOnHillDescription(),	nullptr, nullptr },
-	{ heistOpenSafe,		heistOpenSafeName, heistOpenSafeDescription(),		heistOpenSafe_Lua, heistOpenSafe_LuaName },
+	{ fundamentals,			fundamentalsName, fundamentalsDescription(),		nullptr, nullptr, fundamentalsValidateResult },
+	{ openDoor,			openDoorName, openDoorDescription(),			nullptr, nullptr, openDoorValidateResult },
+	{ cutDownTrees,			cutDownTreesName, cutDownTreesDescription(),		nullptr, nullptr, cutDownTreesValidateResult },
+	{ treesOnHill,			treesOnHillName, treesOnHillDescription(),		nullptr, nullptr, treesOnHillValidateResult },
+	{ survivalOnHill,		survivalOnHillName, survivalOnHillDescription(),	nullptr, nullptr, survivalOnHillValidateResult },
+	{ heistOpenSafe,		heistOpenSafeName, heistOpenSafeDescription(),		heistOpenSafe_Lua, heistOpenSafe_LuaName, heistOpenSafeValidateResult },
 };
+
+int RunExampleValidation()
+{
+	std::printf( "\n" );
+	std::printf( "========================================\n" );
+	std::printf( "  GOAPie Example Validation\n" );
+	std::printf( "========================================\n\n" );
+	std::fflush( stdout );
+
+	int passed = 0;
+	int failed = 0;
+
+	for( size_t i = 0; i < exampleFunctions.size(); ++i )
+	{
+		auto& entry = exampleFunctions[ i ];
+		if( !entry.validateFunc )
+		{
+			std::printf( "  SKIP  %s (no validate function)\n", entry.name );
+			continue;
+		}
+
+		std::string failMsg;
+		int result = entry.validateFunc( failMsg );
+		if( result == 0 )
+		{
+			std::printf( "  PASS  %s\n", entry.name );
+			passed++;
+		}
+		else
+		{
+			std::printf( "  FAIL  %s\n", entry.name );
+			if( !failMsg.empty() )
+			{
+				std::printf( "        %s\n", failMsg.c_str() );
+			}
+			failed++;
+		}
+	}
+
+	std::printf( "\n" );
+	std::printf( "----------------------------------------\n" );
+	std::printf( "  Results: %d passed, %d failed, %d total\n", passed, failed, passed + failed );
+	std::printf( "----------------------------------------\n" );
+
+	if( failed > 0 )
+	{
+		std::printf( "  SOME EXAMPLES FAILED\n" );
+	}
+	else
+	{
+		std::printf( "  ALL EXAMPLES PASSED\n" );
+	}
+
+	std::printf( "========================================\n\n" );
+
+	return failed;
+}
 
 static void printUsage()
 {
@@ -158,10 +219,13 @@ int main( int argc, char** argv )
 		RunLuaEditorIntegrationTest();
 	}
 
-	// If neither flag is provided, run automated tests
+	// If neither flag is provided, run automated tests followed by example validation
 	if( ex == -1 && !visualize && !runTests )
 	{
-		return RunAutomatedTests();
+		int failures = RunAutomatedTests();
+		failures += RunVisualizationTests();
+		failures += RunExampleValidation();
+		return failures;
 	}
 
 	if( runTests && ex == -1 && !visualize )
