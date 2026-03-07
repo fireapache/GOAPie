@@ -8,6 +8,11 @@
 #include <goapie_main.h>
 #include <persistency.h>
 
+#if GIE_WITH_LUA
+#include <goapie_lua.h>
+#include "worldsetup_persistency.h"
+#endif
+
 using namespace gie;
 
 // ---------------------------------------------------------------------------
@@ -1352,6 +1357,638 @@ static void testPersistency()
 }
 
 // ---------------------------------------------------------------------------
+// Lua Integration Tests (only when GIE_WITH_LUA=1)
+// ---------------------------------------------------------------------------
+
+#if GIE_WITH_LUA
+
+static void testLuaSandbox()
+{
+	TEST_SUITE( "LuaSandbox" );
+
+	beginTest( "create sandbox and load chunk" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params)\n"
+			"  return true\n"
+			"end\n"
+			"function simulate(params)\n"
+			"  return true\n"
+			"end\n"
+			"function heuristic(params)\n"
+			"  return 0\n"
+			"end\n";
+		bool ok = sandbox.loadChunk( "test_basic", src );
+		CHECK( ok );
+	} endTest();
+
+	beginTest( "load chunk with syntax error fails" ); {
+		LuaSandbox sandbox;
+		const std::string badSrc = "function evaluate( SYNTAX ERROR !!!\nend\n";
+		bool ok = sandbox.loadChunk( "test_bad", badSrc );
+		CHECK( !ok );
+		CHECK( !sandbox.lastError().empty() );
+	} endTest();
+
+	beginTest( "load multiple chunks independently" ); {
+		LuaSandbox sandbox;
+		const std::string src1 =
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 1 end\n";
+		const std::string src2 =
+			"function evaluate(params) return false end\n"
+			"function simulate(params) return false end\n"
+			"function heuristic(params) return 2 end\n";
+		CHECK( sandbox.loadChunk( "chunk_a", src1 ) );
+		CHECK( sandbox.loadChunk( "chunk_b", src2 ) );
+	} endTest();
+}
+
+static void testLuaEvaluateSimulateHeuristic()
+{
+	TEST_SUITE( "LuaEvalSimHeuristic" );
+
+	beginTest( "evaluate returns true" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "eval_true", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		CHECK_NOT_NULL( a );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		bool result = sandbox.executeEvaluate( "eval_true", evalParams );
+		CHECK( result );
+	} endTest();
+
+	beginTest( "evaluate returns false" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params) return false end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "eval_false", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		bool result = sandbox.executeEvaluate( "eval_false", evalParams );
+		CHECK( !result );
+	} endTest();
+
+	beginTest( "simulate returns true" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "sim_true", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		SimulateSimulationParams simParams( sim, simAgent, goal );
+		bool result = sandbox.executeSimulate( "sim_true", simParams );
+		CHECK( result );
+	} endTest();
+
+	beginTest( "heuristic sets value" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 42 end\n";
+		CHECK( sandbox.loadChunk( "heur_42", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		sim.heuristic.value = -1.f;
+		CalculateHeuristicParams heurParams( sim, simAgent, goal );
+		sandbox.executeHeuristic( "heur_42", heurParams );
+		CHECK_FLOAT_EQ( sim.heuristic.value, 42.f );
+	} endTest();
+}
+
+static void testLuaBridgeFunctions()
+{
+	TEST_SUITE( "LuaBridgeFunctions" );
+
+	beginTest( "get_property reads bool" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params)\n"
+			"  local v = get_property(params.agent.guid, \"Alive\")\n"
+			"  return v == true\n"
+			"end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_bool", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		a->createProperty( "Alive", true );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		CHECK( sandbox.executeEvaluate( "bridge_bool", evalParams ) );
+	} endTest();
+
+	beginTest( "get_property reads float" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params)\n"
+			"  local v = get_property(params.agent.guid, \"Health\")\n"
+			"  return v > 99.0 and v < 101.0\n"
+			"end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_float", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		a->createProperty( "Health", 100.f );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		CHECK( sandbox.executeEvaluate( "bridge_float", evalParams ) );
+	} endTest();
+
+	beginTest( "get_property reads integer" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params)\n"
+			"  local v = get_property(params.agent.guid, \"Ammo\")\n"
+			"  return v == 7\n"
+			"end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_int", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		a->createProperty( "Ammo", int32_t( 7 ) );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		CHECK( sandbox.executeEvaluate( "bridge_int", evalParams ) );
+	} endTest();
+
+	beginTest( "get_property reads vec3" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params)\n"
+			"  local v = get_property(params.agent.guid, \"Position\")\n"
+			"  if type(v) ~= 'table' then return false end\n"
+			"  return v[1] == 1.0 and v[2] == 2.0 and v[3] == 3.0\n"
+			"end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_vec3", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		a->createProperty( "Position", glm::vec3{ 1.f, 2.f, 3.f } );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		CHECK( sandbox.executeEvaluate( "bridge_vec3", evalParams ) );
+	} endTest();
+
+	beginTest( "set_property writes bool" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params) return true end\n"
+			"function simulate(params)\n"
+			"  set_property(params.agent.guid, \"DoorOpen\", true)\n"
+			"  return true\n"
+			"end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_set_bool", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		a->createProperty( "DoorOpen", false );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		SimulateSimulationParams simParams( sim, simAgent, goal );
+		CHECK( sandbox.executeSimulate( "bridge_set_bool", simParams ) );
+
+		// set_property writes through sim context or world; check via entity lookup
+		const Entity* ent = sim.context().entity( a->guid() );
+		if( !ent ) ent = world.entity( a->guid() );
+		CHECK_NOT_NULL( ent );
+		auto* ppt = ent->property( "DoorOpen" );
+		CHECK_NOT_NULL( ppt );
+		CHECK( *ppt->getBool() == true );
+	} endTest();
+
+	beginTest( "set_property writes float" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params) return true end\n"
+			"function simulate(params)\n"
+			"  set_property(params.agent.guid, \"Score\", 99.5)\n"
+			"  return true\n"
+			"end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_set_float", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		a->createProperty( "Score", 0.f );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		SimulateSimulationParams simParams( sim, simAgent, goal );
+		CHECK( sandbox.executeSimulate( "bridge_set_float", simParams ) );
+		// set_property writes through sim context or world; check via entity lookup
+		const Entity* ent = sim.context().entity( a->guid() );
+		if( !ent ) ent = world.entity( a->guid() );
+		CHECK_NOT_NULL( ent );
+		auto* ppt = ent->property( "Score" );
+		CHECK_NOT_NULL( ppt );
+		CHECK_FLOAT_EQ( *ppt->getFloat(), 99.5f );
+	} endTest();
+
+	beginTest( "set_cost sets simulation cost" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params) return true end\n"
+			"function simulate(params)\n"
+			"  set_cost(25.0)\n"
+			"  return true\n"
+			"end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_set_cost", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		SimulateSimulationParams simParams( sim, simAgent, goal );
+		CHECK( sandbox.executeSimulate( "bridge_set_cost", simParams ) );
+		CHECK_FLOAT_EQ( sim.cost, 25.f );
+	} endTest();
+
+	beginTest( "entity_by_name finds entity" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params)\n"
+			"  local id = entity_by_name(\"Door\")\n"
+			"  return id ~= nil\n"
+			"end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_entity_name", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		world.createEntity( "Door" );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		CHECK( sandbox.executeEvaluate( "bridge_entity_name", evalParams ) );
+	} endTest();
+
+	beginTest( "entity_by_name returns nil for missing" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params)\n"
+			"  local id = entity_by_name(\"NonExistent\")\n"
+			"  return id == nil\n"
+			"end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_no_entity", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		CHECK( sandbox.executeEvaluate( "bridge_no_entity", evalParams ) );
+	} endTest();
+
+	beginTest( "tag_set returns tagged entities" ); {
+		LuaSandbox sandbox;
+		const std::string src =
+			"function evaluate(params)\n"
+			"  local set = tag_set(\"Tree\")\n"
+			"  if set == nil then return false end\n"
+			"  return #set == 3\n"
+			"end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		CHECK( sandbox.loadChunk( "bridge_tag_set", src ) );
+
+		World world{};
+		Agent* a = world.createAgent( "test_agent" );
+		for( int i = 0; i < 3; i++ )
+		{
+			auto* e = world.createEntity( std::string( "tree" ) + std::to_string( i ) );
+			world.context().entityTagRegister().tag( e, { stringHasher( "Tree" ) } );
+		}
+		SimAgent simAgent( a );
+		Simulation sim( randGuid(), &world, &world.context(), simAgent );
+		Goal goal( world );
+
+		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		CHECK( sandbox.executeEvaluate( "bridge_tag_set", evalParams ) );
+	} endTest();
+}
+
+static void testLuaActionSetEntry()
+{
+	TEST_SUITE( "LuaActionSetEntry" );
+
+	beginTest( "compile valid source" ); {
+		auto sandbox = std::make_shared< LuaSandbox >();
+		auto entry = std::make_shared< LuaActionSetEntry >( sandbox, "TestAction", "test.TestAction" );
+		entry->setSource(
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n" );
+		CHECK( entry->compile() );
+		CHECK( entry->lastCompileError().empty() );
+	} endTest();
+
+	beginTest( "compile missing evaluate fails" ); {
+		auto sandbox = std::make_shared< LuaSandbox >();
+		auto entry = std::make_shared< LuaActionSetEntry >( sandbox, "BadAction", "test.BadAction" );
+		entry->setSource(
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n" );
+		CHECK( !entry->compile() );
+		CHECK( entry->lastCompileError().find( "evaluate" ) != std::string::npos );
+	} endTest();
+
+	beginTest( "compile missing simulate fails" ); {
+		auto sandbox = std::make_shared< LuaSandbox >();
+		auto entry = std::make_shared< LuaActionSetEntry >( sandbox, "BadAction2", "test.BadAction2" );
+		entry->setSource(
+			"function evaluate(params) return true end\n"
+			"function heuristic(params) return 0 end\n" );
+		CHECK( !entry->compile() );
+		CHECK( entry->lastCompileError().find( "simulate" ) != std::string::npos );
+	} endTest();
+
+	beginTest( "compile missing heuristic fails" ); {
+		auto sandbox = std::make_shared< LuaSandbox >();
+		auto entry = std::make_shared< LuaActionSetEntry >( sandbox, "BadAction3", "test.BadAction3" );
+		entry->setSource(
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n" );
+		CHECK( !entry->compile() );
+		CHECK( entry->lastCompileError().find( "heuristic" ) != std::string::npos );
+	} endTest();
+
+	beginTest( "simulator produces LuaActionSimulator" ); {
+		auto sandbox = std::make_shared< LuaSandbox >();
+		auto entry = std::make_shared< LuaActionSetEntry >( sandbox, "MyAction", "test.MyAction" );
+		entry->setSource(
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 5 end\n" );
+		CHECK( entry->compile() );
+
+		auto sim = entry->simulator( NamedArguments{} );
+		CHECK_NOT_NULL( sim.get() );
+		CHECK_EQ( sim->name(), std::string_view( "MyAction" ) );
+	} endTest();
+
+	beginTest( "empty source compiles as no-op" ); {
+		auto sandbox = std::make_shared< LuaSandbox >();
+		auto entry = std::make_shared< LuaActionSetEntry >( sandbox, "EmptyAction", "test.EmptyAction" );
+		// No setSource call — source is empty
+		CHECK( entry->compile() );
+	} endTest();
+}
+
+static void testLuaWorldSetupPersistency()
+{
+	TEST_SUITE( "LuaWorldSetup" );
+
+	beginTest( "save and load WorldSetupData roundtrip" ); {
+		WorldSetupData data;
+		WorldSetupAction action;
+		action.name = "TestAction";
+		action.active = true;
+		action.luaSource =
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 1 end\n";
+		data.actions.emplace_back( std::move( action ) );
+
+		const std::string fileName = "automated_test_worldsetup.json";
+		CHECK( SaveWorldSetupToJson( data, fileName ) );
+
+		WorldSetupData loaded;
+		CHECK( LoadWorldSetupFromJson( loaded, fileName ) );
+		CHECK_EQ( loaded.actions.size(), size_t( 1 ) );
+		CHECK_EQ( loaded.actions[ 0 ].name, std::string( "TestAction" ) );
+		CHECK( loaded.actions[ 0 ].active );
+		CHECK( loaded.actions[ 0 ].luaSource.find( "evaluate" ) != std::string::npos );
+		CHECK( loaded.actions[ 0 ].luaSource.find( "simulate" ) != std::string::npos );
+		CHECK( loaded.actions[ 0 ].luaSource.find( "heuristic" ) != std::string::npos );
+	} endTest();
+
+	beginTest( "BuildLuaActionEntriesFromSetup skips inactive" ); {
+		WorldSetupData data;
+		WorldSetupAction active;
+		active.name = "Active";
+		active.active = true;
+		active.luaSource =
+			"function evaluate(params) return true end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n";
+		WorldSetupAction inactive;
+		inactive.name = "Inactive";
+		inactive.active = false;
+		inactive.luaSource = active.luaSource;
+		data.actions.emplace_back( std::move( active ) );
+		data.actions.emplace_back( std::move( inactive ) );
+
+		auto entries = BuildLuaActionEntriesFromSetup( data );
+		CHECK_EQ( entries.size(), size_t( 1 ) );
+		CHECK_EQ( entries[ 0 ]->name(), std::string_view( "Active" ) );
+	} endTest();
+}
+
+static void testLuaPlanning()
+{
+	TEST_SUITE( "LuaPlanning" );
+
+	beginTest( "single Lua action reaches goal" ); {
+		World world{};
+		Planner planner{};
+		Goal goal( world );
+
+		Agent* agent = world.createAgent( "planner_agent" );
+		auto* doorPpt = world.createEntity( "Door" )->createProperty( "Open", false );
+		goal.targets.emplace_back( doorPpt->guid(), true );
+
+		auto sandbox = std::make_shared< LuaSandbox >();
+		auto entry = std::make_shared< LuaActionSetEntry >( sandbox, "OpenDoor", "lua_plan.OpenDoor" );
+		entry->setSource(
+			"function evaluate(params)\n"
+			"  local door = entity_by_name(\"Door\")\n"
+			"  if not door then return false end\n"
+			"  local open = get_property(door, \"Open\")\n"
+			"  return open == false\n"
+			"end\n"
+			"function simulate(params)\n"
+			"  local door = entity_by_name(\"Door\")\n"
+			"  set_property(door, \"Open\", true)\n"
+			"  set_cost(5.0)\n"
+			"  return true\n"
+			"end\n"
+			"function heuristic(params)\n"
+			"  local door = entity_by_name(\"Door\")\n"
+			"  local open = get_property(door, \"Open\")\n"
+			"  if open then return 0 end\n"
+			"  return 10\n"
+			"end\n" );
+		CHECK( entry->compile() );
+
+		planner.actionSet().emplace_back( entry );
+		planner.simulate( goal, *agent );
+		planner.plan( true );
+
+		auto& planned = planner.planActions();
+		CHECK_EQ( planned.size(), size_t( 1 ) );
+		if( !planned.empty() )
+		{
+			CHECK_EQ( planned[ 0 ]->name(), std::string_view( "OpenDoor" ) );
+		}
+	} endTest();
+
+	beginTest( "two Lua actions chain to reach goal" ); {
+		World world{};
+		Planner planner{};
+		Goal goal( world );
+
+		Agent* agent = world.createAgent( "agent" );
+		agent->createProperty( "HasKey", false );
+		auto* door = world.createEntity( "Door" );
+		door->createProperty( "Open", false );
+		auto* doorPpt = door->property( "Open" );
+		goal.targets.emplace_back( doorPpt->guid(), true );
+
+		auto sandbox = std::make_shared< LuaSandbox >();
+
+		// GetKey action: sets HasKey = true
+		auto getKeyEntry = std::make_shared< LuaActionSetEntry >( sandbox, "GetKey", "lua_chain.GetKey" );
+		getKeyEntry->setSource(
+			"function evaluate(params)\n"
+			"  local hasKey = get_property(params.agent.guid, \"HasKey\")\n"
+			"  return hasKey == false\n"
+			"end\n"
+			"function simulate(params)\n"
+			"  set_property(params.agent.guid, \"HasKey\", true)\n"
+			"  set_cost(3.0)\n"
+			"  return true\n"
+			"end\n"
+			"function heuristic(params) return 0 end\n" );
+		CHECK( getKeyEntry->compile() );
+
+		// UnlockDoor action: requires HasKey, sets Door.Open = true
+		auto unlockEntry = std::make_shared< LuaActionSetEntry >( sandbox, "UnlockDoor", "lua_chain.UnlockDoor" );
+		unlockEntry->setSource(
+			"function evaluate(params)\n"
+			"  local hasKey = get_property(params.agent.guid, \"HasKey\")\n"
+			"  if hasKey ~= true then return false end\n"
+			"  local door = entity_by_name(\"Door\")\n"
+			"  local open = get_property(door, \"Open\")\n"
+			"  return open == false\n"
+			"end\n"
+			"function simulate(params)\n"
+			"  local door = entity_by_name(\"Door\")\n"
+			"  set_property(door, \"Open\", true)\n"
+			"  set_cost(2.0)\n"
+			"  return true\n"
+			"end\n"
+			"function heuristic(params) return 0 end\n" );
+		CHECK( unlockEntry->compile() );
+
+		planner.actionSet().emplace_back( getKeyEntry );
+		planner.actionSet().emplace_back( unlockEntry );
+		planner.simulate( goal, *agent );
+		planner.plan();
+
+		auto& planned = planner.planActions();
+		CHECK_EQ( planned.size(), size_t( 2 ) );
+		// Backtrack: leaf action is UnlockDoor, parent is GetKey
+		if( planned.size() == 2 )
+		{
+			CHECK_EQ( planned[ 0 ]->name(), std::string_view( "UnlockDoor" ) );
+			CHECK_EQ( planned[ 1 ]->name(), std::string_view( "GetKey" ) );
+		}
+	} endTest();
+
+	beginTest( "Lua action with no valid evaluate produces no plan" ); {
+		World world{};
+		Planner planner{};
+		Goal goal( world );
+
+		Agent* agent = world.createAgent( "agent" );
+		auto* ppt = agent->createProperty( "Done", false );
+		goal.targets.emplace_back( ppt->guid(), true );
+
+		auto sandbox = std::make_shared< LuaSandbox >();
+		auto entry = std::make_shared< LuaActionSetEntry >( sandbox, "Noop", "lua_noplan.Noop" );
+		entry->setSource(
+			"function evaluate(params) return false end\n"
+			"function simulate(params) return true end\n"
+			"function heuristic(params) return 0 end\n" );
+		CHECK( entry->compile() );
+
+		planner.actionSet().emplace_back( entry );
+		planner.simulate( goal, *agent );
+		planner.plan();
+
+		CHECK( planner.planActions().empty() );
+	} endTest();
+}
+
+#endif // GIE_WITH_LUA
+
+// ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
 
@@ -1379,6 +2016,15 @@ int RunAutomatedTests()
 	testPlanner();
 	testActionSystem();
 	testPersistency();
+
+#if GIE_WITH_LUA
+	testLuaSandbox();
+	testLuaEvaluateSimulateHeuristic();
+	testLuaBridgeFunctions();
+	testLuaActionSetEntry();
+	testLuaWorldSetupPersistency();
+	testLuaPlanning();
+#endif
 
 	// Print results
 	int passed = 0;

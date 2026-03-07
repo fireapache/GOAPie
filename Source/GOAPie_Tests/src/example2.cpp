@@ -164,3 +164,24 @@ int openDoor( ExampleParameters& params )
 
 	return 0;
 }
+
+int openDoorValidateResult( std::string& failMsg )
+{
+	gie::World world{};
+	gie::Planner planner{};
+	gie::Goal goal{ world };
+	ExampleParameters params{ world, planner, goal };
+
+	VALIDATE( openDoor( params ) == 0, "openDoor() setup failed" );
+
+	auto& planned = planner.planActions();
+	VALIDATE_EQ( planned.size(), size_t( 2 ), "planned action count" );
+
+	// Verify action names: Move then OpenDoor (backtrack order from single simulation node)
+	VALIDATE_STR_EQ( planned[ 0 ]->name(), "Move", "planned action[0]" );
+	VALIDATE_STR_EQ( planned[ 1 ]->name(), "OpenDoor", "planned action[1]" );
+
+	VALIDATE_EQ( planner.simulations().size(), size_t( 2 ), "simulation count" );
+
+	return 0;
+}

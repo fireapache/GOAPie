@@ -1535,6 +1535,33 @@ int heistOpenSafe( ExampleParameters& params )
     return heistOpenSafe_actions( params, agent );
 }
 
+int heistOpenSafeValidateResult( std::string& failMsg )
+{
+    gie::World world{};
+    gie::Planner planner{};
+    gie::Goal goal{ world };
+    ExampleParameters params{ world, planner, goal };
+
+    VALIDATE( heistOpenSafe( params ) == 0, "heistOpenSafe() setup failed" );
+
+    // Run the planner with heuristic mode
+    planner.plan( true );
+
+    // Plan should have 6 actions (leaf-to-root backtrack order):
+    // OpenSafeWithCode, MoveInside, DisableAlarm, EnterThrough, SearchForItem, SearchForItem
+    auto& planned = planner.planActions();
+    VALIDATE_EQ( planned.size(), size_t( 6 ), "planned action count" );
+
+    const char* expectedActions[] = { "OpenSafeWithCode", "MoveInside", "DisableAlarm", "EnterThrough", "SearchForItem", "SearchForItem" };
+    for( size_t i = 0; i < planned.size(); ++i )
+    {
+        VALIDATE_STR_EQ( planned[ i ]->name(), expectedActions[ i ],
+            std::string( "planned action[" ) + std::to_string( i ) + "]" );
+    }
+
+    return 0;
+}
+
 // Apply UI toggles
 static void ResetHeistWorldFromToggles( gie::World& world )
 {

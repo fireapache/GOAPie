@@ -35,6 +35,28 @@ int insertingDataEntities( gie::World& world )
 	return 0;
 }
 
+int fundamentalsValidateResult( std::string& failMsg )
+{
+	gie::World world{};
+	gie::Planner planner{};
+	gie::Goal goal{ world };
+	ExampleParameters params{ world, planner, goal };
+
+	// Run the sub-functions directly to validate entity/property creation
+	VALIDATE( insertingDataEntities( params.world ) == 0, "insertingDataEntities failed" );
+	VALIDATE( insertingParameters( params.world ) == 0, "insertingParameters failed" );
+
+	// insertingDataEntities creates 10 entities, insertingParameters creates 1 more = 11 total
+	size_t entityCount = 0;
+	for( auto& [guid, entity] : world.context().entities() )
+	{
+		entityCount++;
+	}
+	VALIDATE_EQ( entityCount, size_t( 11 ), "entity count mismatch" );
+
+	return 0;
+}
+
 int insertingParameters( gie::World& world )
 {
 	auto entity = world.createEntity();

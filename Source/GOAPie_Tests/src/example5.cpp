@@ -1249,6 +1249,22 @@ int survivalOnHill( ExampleParameters& params )
     return 0;
 }
 
+int survivalOnHillValidateResult( std::string& failMsg )
+{
+	gie::World world{};
+	gie::Planner planner{};
+	gie::Goal goal{ world };
+	ExampleParameters params{ world, planner, goal };
+
+	VALIDATE( survivalOnHill( params ) == 0, "survivalOnHill() setup failed" );
+
+	VALIDATE_EQ( planner.actionSet().size(), size_t( 7 ), "action set entry count" );
+	VALIDATE( !goal.targets.empty(), "goal should have at least one target" );
+	VALIDATE( planner.agent() != nullptr, "planner should have an assigned agent" );
+
+	return 0;
+}
+
 inline float remapRange( float source, float sourceFrom, float sourceTo, float targetFrom, float targetTo )
 {
     return targetFrom + ( source - sourceFrom ) * ( targetTo - targetFrom ) / ( sourceTo - sourceFrom );

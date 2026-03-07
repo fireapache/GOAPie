@@ -428,3 +428,21 @@ int cutDownTrees( ExampleParameters& params )
 
 	return 0;
 }
+
+int cutDownTreesValidateResult( std::string& failMsg )
+{
+	gie::World world{};
+	gie::Planner planner{};
+	gie::Goal goal{ world };
+	ExampleParameters params{ world, planner, goal };
+
+	VALIDATE( cutDownTrees( params ) == 0, "cutDownTrees() setup failed" );
+
+	// Goal is WoodHouse=true but no BuildHouse action exists, so plan is empty
+	auto& planned = planner.planActions();
+	VALIDATE( planned.empty(), "plan should be empty (no BuildHouse action available)" );
+
+	VALIDATE_EQ( planner.simulations().size(), size_t( 11 ), "simulation count (depth limit 10 chain)" );
+
+	return 0;
+}

@@ -27,7 +27,7 @@ workspace "GOAPie"
 	startproject "Tests"
 	defaultplatform "x64"
 
-	flags { "MultiProcessorCompile" }
+	multiprocessorcompile "On"
 
 	filter { "platforms:Win32" }
 		system "Windows"
@@ -360,7 +360,7 @@ removefiles {
 
 	-- Mark lua files as non-build items in Visual Studio (optional)
 	filter { "files:%{prj.location}/scripts/**.lua" }
-		flags { "ExcludeFromBuild" }
+		excludefrombuild "On"
 
 	filter "system:windows"
 		cppdialect "C++17"

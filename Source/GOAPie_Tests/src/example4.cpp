@@ -24,6 +24,21 @@ int treesOnHill( ExampleParameters& params )
 	return 0;
 }
 
+int treesOnHillValidateResult( std::string& failMsg )
+{
+	gie::World world{};
+	gie::Planner planner{};
+	gie::Goal goal{ world };
+	ExampleParameters params{ world, planner, goal };
+
+	VALIDATE( treesOnHill( params ) == 0, "treesOnHill() setup failed" );
+
+	// Example 4 is a stub — no planner setup, no simulations
+	VALIDATE_EQ( planner.simulations().size(), size_t( 0 ), "simulation count (stub example)" );
+
+	return 0;
+}
+
 inline float remapRange( float source, float sourceFrom, float sourceTo, float targetFrom, float targetTo )
 {
 	return targetFrom + ( source - sourceFrom ) * ( targetTo - targetFrom ) / ( sourceTo - sourceFrom );
