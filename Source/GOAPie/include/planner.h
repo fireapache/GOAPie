@@ -85,6 +85,10 @@ namespace gie
     public:
 		Planner() = default;
 		Planner( Goal& goal, Agent& agent ) : _goal( &goal ), _agent( &agent ) { }
+		Planner( Planner&& ) = default;
+		Planner& operator=( Planner&& ) = default;
+		Planner( const Planner& ) = delete;
+		Planner& operator=( const Planner& ) = delete;
 		~Planner() = default;
 
 		World* world() const { return _goal->world(); }

@@ -20,6 +20,7 @@ gie::Planner& planner;
 gie::Goal& goal;
 ImGuiDrawFunc imGuiDrawFunc{ nullptr };
 GLDrawFunc glDrawFunc{ nullptr };
+bool visualize{ false };
 };
 
 // Validation check macro for example validateResult functions.

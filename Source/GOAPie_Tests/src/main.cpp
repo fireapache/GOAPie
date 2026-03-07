@@ -266,6 +266,7 @@ int main( int argc, char** argv )
 
 	// running example function if requested
 	ExampleParameters exampleParams{ world, planner, goal };
+	exampleParams.visualize = visualize;
 
 	if( ex != -1 )
 	{

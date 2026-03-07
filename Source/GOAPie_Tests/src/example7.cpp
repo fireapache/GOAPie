@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <random>
 #include <set>
+#include <memory>
 
 #include <goapie.h>
 
@@ -97,6 +98,7 @@ struct GameplayCycleEntry
 	int knownCountAfter{ 0 };
 	std::vector<std::string> inventoryAfter;
 	size_t simulationCount{ 0 };
+	std::unique_ptr<gie::Planner> plannerPtr; // preserved planner with full simulation tree
 };
 
 struct GameplayLog
@@ -105,6 +107,7 @@ struct GameplayLog
 	std::vector<glm::vec3> agentTrail; // breadcrumb trail of positions
 	bool primaryGoalReached{ false };
 	int selectedCycle{ -1 }; // for UI highlight
+	bool started{ false };   // has the gameplay loop been executed?
 };
 
 static GameplayLog g_GameplayLog;
@@ -1062,6 +1065,7 @@ static void ExecuteAction( gie::World& world, gie::Agent* agent, const std::stri
 static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner )
 {
 	g_GameplayLog = {};
+	g_GameplayLog.started = true;
 	g_GameplayLog.agentTrail.push_back( *agent->property( "Location" )->getVec3() );
 
 	auto getInventoryNames = [&]() -> std::vector<std::string>
@@ -1122,8 +1126,9 @@ static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner&
 				entry.agentPosAfter = *agent->property( "Location" )->getVec3();
 				entry.knownCountAfter = CountKnown( world.context() );
 				entry.inventoryAfter = getInventoryNames();
+				entry.plannerPtr = std::make_unique<gie::Planner>( std::move( primaryPlanner ) );
 				g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
-				g_GameplayLog.cycles.push_back( entry );
+				g_GameplayLog.cycles.push_back( std::move( entry ) );
 
 				// Re-check chest
 				chest = FindEntityByName( world.context(), "LockedChest" );
@@ -1165,8 +1170,9 @@ static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner&
 				entry.agentPosAfter = *agent->property( "Location" )->getVec3();
 				entry.knownCountAfter = CountKnown( world.context() );
 				entry.inventoryAfter = getInventoryNames();
+				entry.plannerPtr = std::make_unique<gie::Planner>( std::move( explorePlanner ) );
 				g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
-				g_GameplayLog.cycles.push_back( entry );
+				g_GameplayLog.cycles.push_back( std::move( entry ) );
 				continue;
 			}
 		}
@@ -1177,7 +1183,7 @@ static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner&
 		entry.agentPosAfter = entry.agentPosBefore;
 		entry.knownCountAfter = entry.knownCountBefore;
 		entry.inventoryAfter = getInventoryNames();
-		g_GameplayLog.cycles.push_back( entry );
+		g_GameplayLog.cycles.push_back( std::move( entry ) );
 		break;
 	}
 }
@@ -1200,8 +1206,11 @@ int treasureHunt( ExampleParameters& params )
 
 	params.planner.simulate( params.goal, *agent );
 
-	// Run the gameplay loop
-	RunGameplayLoop( params.world, agent, params.planner );
+	// Run the gameplay loop (deferred in visualization mode — triggered by GUI button)
+	if( !params.visualize )
+	{
+		RunGameplayLoop( params.world, agent, params.planner );
+	}
 
 	return 0;
 }
@@ -1360,7 +1369,7 @@ static void GLDrawFunc7( gie::World& world, gie::Planner& planner )
 // ---------------------------------------------------------------------------
 // ImGui panel — gameplay log and world state
 // ---------------------------------------------------------------------------
-static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimulationGuid )
+static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimGuid )
 {
 	ImGui::TextUnformatted( "Treasure Hunt - Gameplay Loop (Example 7)" );
 	ImGui::Separator();
@@ -1412,48 +1421,112 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 
 	ImGui::Separator();
 
+	// Start Gameplay button (deferred execution in visualization mode)
+	if( !g_GameplayLog.started )
+	{
+		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.6f, 0.2f, 1.0f ) );
+		ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.3f, 0.8f, 0.3f, 1.0f ) );
+		if( ImGui::Button( "Start Gameplay", ImVec2( -1.f, 40.f ) ) )
+		{
+			auto* agentPtr = planner.agent();
+			if( agentPtr )
+				RunGameplayLoop( world, agentPtr, planner );
+		}
+		ImGui::PopStyleColor( 2 );
+		ImGui::TextWrapped( "Click to run the plan-execute-replan gameplay loop. "
+			"Each cycle's planner and simulation tree will be recorded." );
+		return;
+	}
+
 	// Gameplay log
 	if( ImGui::CollapsingHeader( "Gameplay Log", ImGuiTreeNodeFlags_DefaultOpen ) )
 	{
 		ImGui::Text( "Goal reached: %s", g_GameplayLog.primaryGoalReached ? "YES" : "No" );
 		ImGui::Text( "Total cycles: %zu", g_GameplayLog.cycles.size() );
+		ImGui::Separator();
 
 		for( size_t i = 0; i < g_GameplayLog.cycles.size(); i++ )
 		{
 			auto& c = g_GameplayLog.cycles[i];
+
+			// Color-code by goal type
 			ImVec4 color = ( c.goalType == "Primary" ) ? ImVec4( 0.4f, 1.0f, 0.4f, 1.0f )
 				: ( c.goalType == "Explore" ) ? ImVec4( 0.4f, 0.6f, 1.0f, 1.0f )
 				: ImVec4( 1.0f, 0.4f, 0.4f, 1.0f );
 			ImGui::PushStyleColor( ImGuiCol_Text, color );
 
-			char label[64];
-			std::snprintf( label, sizeof( label ), "Cycle %d [%s] (%zu sims)###cycle%zu",
-				c.cycle, c.goalType.c_str(), c.simulationCount, i );
+			char label[128];
+			std::snprintf( label, sizeof( label ), "Cycle %d [%s] %zu sims, %zu actions###cycle%zu",
+				c.cycle, c.goalType.c_str(), c.simulationCount, c.actionNames.size(), i );
 
-			if( ImGui::TreeNode( label ) )
+			bool nodeOpen = ImGui::TreeNodeEx( label, ImGuiTreeNodeFlags_DefaultOpen );
+			ImGui::PopStyleColor();
+
+			if( nodeOpen )
 			{
-				ImGui::PopStyleColor();
-				ImGui::Text( "Actions:" );
+				// Executed actions list
+				ImGui::TextUnformatted( "Executed Actions:" );
 				ImGui::Indent();
-				for( auto& a : c.actionNames )
-					ImGui::Text( "-> %s", a.c_str() );
+				for( size_t ai = 0; ai < c.actionNames.size(); ai++ )
+				{
+					bool isLast = ( i == g_GameplayLog.cycles.size() - 1 && ai == c.actionNames.size() - 1 );
+					if( isLast && g_GameplayLog.primaryGoalReached )
+						ImGui::PushStyleColor( ImGuiCol_Text, ImVec4( 1.0f, 0.85f, 0.0f, 1.0f ) );
+					ImGui::Text( "%zu. %s", ai + 1, c.actionNames[ai].c_str() );
+					if( isLast && g_GameplayLog.primaryGoalReached )
+						ImGui::PopStyleColor();
+				}
 				ImGui::Unindent();
-				ImGui::Text( "Pos: (%.0f,%.0f) -> (%.0f,%.0f)", c.agentPosBefore.x, c.agentPosBefore.y,
+
+				// Cycle metadata
+				ImGui::Text( "Pos: (%.0f,%.0f) -> (%.0f,%.0f)",
+					c.agentPosBefore.x, c.agentPosBefore.y,
 					c.agentPosAfter.x, c.agentPosAfter.y );
 				ImGui::Text( "Known: %d -> %d", c.knownCountBefore, c.knownCountAfter );
 				if( !c.inventoryAfter.empty() )
 				{
 					ImGui::Text( "Inventory:" );
+					ImGui::Indent();
 					for( auto& item : c.inventoryAfter )
-						ImGui::Text( "  %s", item.c_str() );
+						ImGui::Text( "%s", item.c_str() );
+					ImGui::Unindent();
 				}
+
+				// Simulation tree (from preserved planner)
+				if( c.plannerPtr )
+				{
+					auto* rootSim = c.plannerPtr->rootSimulation();
+					if( rootSim )
+					{
+						char treeLabel[64];
+						std::snprintf( treeLabel, sizeof( treeLabel ), "Simulation Tree (%zu nodes)###simtree%zu",
+							c.simulationCount, i );
+						if( ImGui::TreeNode( treeLabel ) )
+						{
+							drawSimulationTreeView( *c.plannerPtr, rootSim );
+							ImGui::TreePop();
+						}
+					}
+				}
+
 				ImGui::TreePop();
 			}
-			else
-			{
-				ImGui::PopStyleColor();
-			}
 		}
+	}
+
+	// Resolve selectedSimulationGuid across all cycle planners for blackboard view
+	{
+		const gie::Simulation* selectedSim = nullptr;
+		for( auto& c : g_GameplayLog.cycles )
+		{
+			if( !c.plannerPtr ) continue;
+			selectedSim = c.plannerPtr->simulation( selectedSimGuid );
+			if( selectedSim ) break;
+		}
+		if( !selectedSim )
+			selectedSim = planner.simulation( selectedSimGuid );
+		if( selectedSim )
+			drawBlackboardPropertiesWindow( selectedSim );
 	}
 
 	if( ImGui::CollapsingHeader( "Known Entities" ) )
