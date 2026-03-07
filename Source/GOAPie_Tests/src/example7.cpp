@@ -1455,7 +1455,10 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 			for( auto g : *inv )
 			{
 				if( auto e = ctx->entity( g ) )
-					ImGui::Text( "- %s", gie::stringRegister().get( e->nameHash() ) );
+				{
+					auto n = gie::stringRegister().get( e->nameHash() );
+					ImGui::Text( "- %.*s", (int)n.size(), n.data() );
+				}
 			}
 			ImGui::Unindent();
 		}
@@ -1666,9 +1669,9 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 					auto nm = gie::stringRegister().get( e->nameHash() );
 					auto loc = e->property( "Location" );
 					if( loc )
-						ImGui::Text( "  %s (%.0f, %.0f)", nm, loc->getVec3()->x, loc->getVec3()->y );
+						ImGui::Text( "  %.*s (%.0f, %.0f)", (int)nm.size(), nm.data(), loc->getVec3()->x, loc->getVec3()->y );
 					else
-						ImGui::Text( "  %s", nm );
+						ImGui::Text( "  %.*s", (int)nm.size(), nm.data() );
 				}
 			}
 		}
