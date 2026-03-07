@@ -36,6 +36,8 @@ EXAMPLE_FUNCTION( survivalOnHill )
 // example 6
 EXAMPLE_FUNCTION( heistOpenSafe )
 EXAMPLE_FUNCTION( heistOpenSafe_Lua )
+// example 7
+EXAMPLE_FUNCTION( treasureHunt )
 // TODO: Rename ExampleFunc to ProjectFunc (frontend mapping)
 typedef int ( *ExampleFunc )( ExampleParameters& );
 typedef int ( *ValidateFunc )( std::string& failMsg );
@@ -65,6 +67,7 @@ std::vector< ExampleFunctionEntry > exampleFunctions{
 	{ treesOnHill,			treesOnHillName, treesOnHillDescription(),		nullptr, nullptr, treesOnHillValidateResult },
 	{ survivalOnHill,		survivalOnHillName, survivalOnHillDescription(),	nullptr, nullptr, survivalOnHillValidateResult },
 	{ heistOpenSafe,		heistOpenSafeName, heistOpenSafeDescription(),		heistOpenSafe_Lua, heistOpenSafe_LuaName, heistOpenSafeValidateResult },
+	{ treasureHunt,			treasureHuntName, treasureHuntDescription(),		nullptr, nullptr, treasureHuntValidateResult },
 };
 
 int RunExampleValidation()
