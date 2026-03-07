@@ -21,6 +21,7 @@ gie::Goal& goal;
 ImGuiDrawFunc imGuiDrawFunc{ nullptr };
 GLDrawFunc glDrawFunc{ nullptr };
 bool visualize{ false };
+bool isGameplayExample{ false };
 };
 
 // Validation check macro for example validateResult functions.

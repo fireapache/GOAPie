@@ -79,6 +79,14 @@ void drawGoapieVisualizationWindow( bool& useHeuristics, ExampleParameters& para
             return;
         }
 
+        // Gameplay examples render their own UI (start button, cycle log, trees)
+        if( params.isGameplayExample && params.imGuiDrawFunc )
+        {
+            params.imGuiDrawFunc( params.world, params.planner, params.goal, selectedSimulationGuid );
+            ImGui::End();
+            return;
+        }
+
         ImGui::Checkbox( "Use Heuristics", &useHeuristics );
         ImGui::Checkbox( "Log Plan", &planner.logStepsMutator() );
         ImGui::SliderInt( "Depth Limit", &simultationDepth, 10, 50 );

@@ -7,8 +7,12 @@ void drawWorldSettingsWindow( ExampleParameters& params )
     if( ImGui::Begin( "World Settings", &g_ShowWorldSettingsWindow ) )
     {
         if( g_IsLoading ) { DrawWindowLoadingOverlay(); ImGui::End(); return; }
-        // If the example provided a draw function, render it here
-        if( params.imGuiDrawFunc )
+        // Gameplay examples render their imGuiDrawFunc in GOAPie Visualization instead
+        if( params.isGameplayExample )
+        {
+            ImGui::TextUnformatted( "Gameplay example — see GOAPie Visualization window." );
+        }
+        else if( params.imGuiDrawFunc )
         {
             params.imGuiDrawFunc( params.world, params.planner, params.goal, selectedSimulationGuid );
         }

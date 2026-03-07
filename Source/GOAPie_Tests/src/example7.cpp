@@ -229,6 +229,7 @@ static gie::Agent* treasureHunt_world( ExampleParameters& params )
 	gie::World& world = params.world;
 	params.imGuiDrawFunc = &ImGuiFunc7;
 	params.glDrawFunc = &GLDrawFunc7;
+	params.isGameplayExample = true;
 
 	auto selectableTag = H( "Selectable" );
 	auto drawTag = H( "Draw" );
