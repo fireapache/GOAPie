@@ -61,13 +61,13 @@ extern void printSimulatedActions( const gie::Planner& planner );
 
 // TODO: Rename exampleFunctions to projectFunctions (frontend mapping)
 std::vector< ExampleFunctionEntry > exampleFunctions{
-	{ fundamentals,			fundamentalsName, fundamentalsDescription(),		nullptr, nullptr, fundamentalsValidateResult },
-	{ openDoor,			openDoorName, openDoorDescription(),			nullptr, nullptr, openDoorValidateResult },
-	{ cutDownTrees,			cutDownTreesName, cutDownTreesDescription(),		nullptr, nullptr, cutDownTreesValidateResult },
-	{ treesOnHill,			treesOnHillName, treesOnHillDescription(),		nullptr, nullptr, treesOnHillValidateResult },
-	{ survivalOnHill,		survivalOnHillName, survivalOnHillDescription(),	nullptr, nullptr, survivalOnHillValidateResult },
-	{ heistOpenSafe,		heistOpenSafeName, heistOpenSafeDescription(),		heistOpenSafe_Lua, heistOpenSafe_LuaName, heistOpenSafeValidateResult },
-	{ treasureHunt,			treasureHuntName, treasureHuntDescription(),		nullptr, nullptr, treasureHuntValidateResult },
+	{ fundamentals,			fundamentalsName,	fundamentalsDescription(),		nullptr,			nullptr,				fundamentalsValidateResult },
+	{ openDoor,				openDoorName,		openDoorDescription(),			nullptr,			nullptr,				openDoorValidateResult },
+	{ cutDownTrees,			cutDownTreesName,	cutDownTreesDescription(),		nullptr,			nullptr,				cutDownTreesValidateResult },
+	{ treesOnHill,			treesOnHillName,	treesOnHillDescription(),		nullptr,			nullptr,				treesOnHillValidateResult },
+	{ survivalOnHill,		survivalOnHillName,	survivalOnHillDescription(),	nullptr,			nullptr,				survivalOnHillValidateResult },
+	{ heistOpenSafe,		heistOpenSafeName,	heistOpenSafeDescription(),		heistOpenSafe_Lua,	heistOpenSafe_LuaName,	heistOpenSafeValidateResult },
+	{ treasureHunt,			treasureHuntName,	treasureHuntDescription(),		nullptr,			nullptr,				treasureHuntValidateResult },
 };
 
 int RunExampleValidation()
