@@ -1,57 +1,77 @@
 # GOAPie
 
-Header-only C++ library for Goal Oriented Action Planning (GOAP). Agents find action sequences to achieve goals by evaluating preconditions and effects using A* search.
+Header-only C++20 library for Goal Oriented Action Planning (GOAP). Agents find optimal action sequences to achieve goals via A* search over preconditions and effects.
 
-## Features
+## Core Concepts
 
-- Header-only core library (C++20, namespace `gie`)
+- **World** -- owns entities, properties, and archetypes (blackboard pattern)
+- **Entity / Agent** -- data containers identified by GUID, with typed properties and tags
+- **ActionSimulator** -- defines `evaluate()` (preconditions) and `simulate()` (effects) for the planner, with optional `calculateHeuristic()`
+- **Planner** -- runs A* search expanding simulations through available actions, backtracks to build the plan
+- **Goal** -- target property values the planner tries to satisfy
+
+Actions can be defined as **lambdas** (inline) or **class overrides** (subclassing `ActionSimulator`). Both styles work through the same base class.
+
+### Lambda example
+
+```cpp
+planner.addLambdaAction( "OpenDoor",
+    // evaluate: check preconditions
+    []( gie::EvaluateSimulationParams params ) -> bool {
+        auto door = params.simulation.world()->entity( /* guid */ );
+        return door && !*door->property("Opened")->getBool();
+    },
+    // simulate: apply effects
+    []( gie::SimulateSimulationParams params ) -> bool {
+        auto ppt = params.simulation.context().property( /* guid */ );
+        ppt->value = true;
+        return true; // action auto-pushed when simulate succeeds
+    }
+);
+```
+
+### Features
+
+- Header-only core (`Source/GOAPie/include/`, namespace `gie`)
 - A* planner with heuristic support and configurable depth limits
-- Entity/property blackboard system with parent-chain isolation for simulation
-- Lua 5.4 integration for hot-reloadable actions
-- Visual testing environment (ImGui/OpenGL) with world view, planner debugger, entity outliner, and waypoint editor
-- JSON serialization for world state persistence
+- Blackboard with parent-chain isolation for simulation branching
+- Lua 5.4 integration for hot-reloadable actions (`GIE_WITH_LUA`)
+- JSON serialization for world state
+- Visual test environment (ImGui/OpenGL) with planner debugger and entity outliner
 
 ## Building
 
-Requires [Premake5](https://premake.github.io/) (v5.0.0-beta8).
+Requires [Premake5](https://premake.github.io/) (v5.0.0-beta8). Windows / Visual Studio only.
 
 ```bash
-# Generate project files
-./premake5.exe vs2022    # or vs2026
+./premake5.exe vs2026       # generates .slnx (use vs2022 for .sln)
 
-# Build
-msbuild GOAPie.sln /p:Configuration=Debug /p:Platform=x64
+msbuild GOAPie.slnx /p:Configuration=Debug /p:Platform=x64
 
-# Run tests (no arguments runs automated + visualization + example validation)
-./Binaries/Tests-Debug-windows-x86_64/Tests.exe
-
-# Run with visualization GUI
-./Binaries/Tests-Debug-windows-x86_64/Tests.exe -v
-
-# Run a specific example
-./Binaries/Tests-Debug-windows-x86_64/Tests.exe -e 6 -v
+./Binaries/Tests-Debug-windows-x86_64/Tests.exe       # automated tests
+./Binaries/Tests-Debug-windows-x86_64/Tests.exe -v     # visualization GUI
+./Binaries/Tests-Debug-windows-x86_64/Tests.exe -e 6 -v  # specific example
 ```
 
 ## Project Structure
 
 ```
-Source/GOAPie/include/    Core library headers
-Source/GOAPie_Tests/      Test app (examples, visualization, automated tests)
-Source/GOAPie_Tests/scripts/  Lua action scripts
+Source/GOAPie/include/          Core library headers
+Source/GOAPie_Tests/src/        Test app, examples, visualization
+Source/GOAPie_Tests/scripts/    Lua action scripts
 ```
 
-### Dependencies (git submodules)
-
-GLFW, GLAD, ImGui, ImGuiColorTextEdit, Lua 5.4, GLM, UUID_V4
+Dependencies (git submodules): GLFW, GLAD, ImGui, ImGuiColorTextEdit, Lua 5.4, GLM, UUID_V4
 
 ## Examples
 
-1. **fundamentals** - Basic action planning
-2. **openDoor** - Simple precondition/effect chain
-3. **cutDownTrees** - Resource gathering with purchases
-4. **treesOnHill** - Pathfinding with waypoint graph
-5. **survivalOnHill** - Multi-goal survival scenario
-6. **heistOpenSafe** - Complex heist with rooms, connectors, alarms, and safe cracking (also available as Lua variant with `-lua`)
+1. **fundamentals** -- world, entity, and property basics (no planner)
+2. **openDoor** -- single-action plan with distance cost
+3. **cutDownTrees** -- resource gathering, purchasing, money management
+4. **treesOnHill** -- waypoint navigation + resource gathering
+5. **survivalOnHill** -- multi-goal survival (energy, hunger, thirst)
+6. **heistOpenSafe** -- rooms, alarms, tools, safe cracking (also available as Lua variant with `-lua`)
+7. **treasureHunt** -- exploration, clue following, discovery
 
 ## License
 
