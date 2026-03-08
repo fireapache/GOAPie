@@ -35,22 +35,13 @@ int openDoor( ExampleParameters& params )
 	agentEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
 	doorEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 1.f } );
 
-	// defining a move action to be used by open door action
-	DEFINE_DUMMY_ACTION_CLASS( Move )
+	// setting up planner passing goal and agent to reach the goal
+	planner.simulate( goal, *agentEntity );
 
-	// defining action to open door
-	DEFINE_DUMMY_ACTION_CLASS( OpenDoor )
-
-	// defining simulator for action open door
-	class OpenDoorSimulator : public gie::ActionSimulator
-	{
-	public:
-		
-		using gie::ActionSimulator::ActionSimulator;
-		gie::StringHash hash() const override { return gie::stringRegister().add( "OpenDoor" ); }
-
+	// defining available action simulator for OpenDoor
+	planner.addLambdaAction( "OpenDoor",
 		// define conditions for action
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+		[]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			// checking if world context agent has property telling which door entity is the target
 			auto targetDoorEntityPpt = params.agent.worldContextAgent()->property( "TargetDoorEntity" );
@@ -80,10 +71,9 @@ int openDoor( ExampleParameters& params )
 			}
 
 			return true;
-		}
-
+		},
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		[]( gie::SimulateSimulationParams params ) -> bool
 		{
 			// setting base cost as starting point
 			constexpr float baseCost = 10.f;
@@ -111,7 +101,7 @@ int openDoor( ExampleParameters& params )
 			}
 
 			params.simulation.context().property( openedPpt->guid() )->value = true;
-			
+
 			// adding distance cost in case there are location properties
 			auto doorLocationPpt = doorEntity->property( "Location" );
 			auto agentLocationPpt = params.agent.worldContextAgent()->property( "Location" );
@@ -123,38 +113,22 @@ int openDoor( ExampleParameters& params )
 				params.simulation.cost += dist;
 
 				// creating move action as door is far from agent
-				if( auto moveAction = std::make_shared< MoveAction >() )
-				{
-					// passing target location as argument for action
-					moveAction->arguments().add( { gie::stringHasher( "TargetLocation" ), doorLocationPpt->guid() } );
-					// queueing move action
-					params.simulation.actions.emplace_back( moveAction );
-				}
+				auto moveAction = std::make_shared< gie::Action >( gie::stringHasher( "Move" ) );
+				// passing target location as argument for action
+				moveAction->arguments().add( { gie::stringHasher( "TargetLocation" ), doorLocationPpt->guid() } );
+				// queueing move action
+				params.simulation.actions.emplace_back( moveAction );
 			}
 
 			// creating open door action
-			if( auto openDoorAction = std::make_shared< OpenDoorAction >( arguments() ) )
-			{
-				// passing door entity as argument for action
-				openDoorAction->arguments().add( { gie::stringHasher( "DoorEntity" ), doorEntity->guid() } );
-				// queueing open door action
-				params.simulation.actions.emplace_back( openDoorAction );
-				return true;
-			}
-
-			return false;
+			auto openDoorAction = std::make_shared< gie::Action >( gie::stringHasher( "OpenDoor" ) );
+			// passing door entity as argument for action
+			openDoorAction->arguments().add( { gie::stringHasher( "DoorEntity" ), doorEntity->guid() } );
+			// queueing open door action
+			params.simulation.actions.emplace_back( openDoorAction );
+			return true;
 		}
-
-	};
-
-	// setting up planner passing goal and agent to reach the goal
-	planner.simulate( goal, *agentEntity );
-
-	// defining available action and its simulator for planner
-	DEFINE_ACTION_SET_ENTRY( OpenDoor )
-
-	// setting available actions
-	planner.addActionSetEntry< OpenDoorActionSetEntry >( gie::stringHasher( "OpenDoor" ) );
+	);
 
 	// finally planner doing its thing
 	planner.plan();

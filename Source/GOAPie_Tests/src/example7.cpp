@@ -429,29 +429,21 @@ static gie::Agent* treasureHunt_world( ExampleParameters& params )
 
 static void RegisterActions( gie::Planner& planner )
 {
-	DEFINE_DUMMY_ACTION_CLASS( Observe )
-	DEFINE_DUMMY_ACTION_CLASS( MoveTo )
-	DEFINE_DUMMY_ACTION_CLASS( Inspect )
-	DEFINE_DUMMY_ACTION_CLASS( PickUp )
-	DEFINE_DUMMY_ACTION_CLASS( ForgeKey )
-	DEFINE_DUMMY_ACTION_CLASS( OpenChest )
-
-	// -----------------------------------------------------------------------
-	// Observe: stand at a Known waypoint and reveal what it shows
-	// During planning, Observe does NOT reveal specific entities — the agent
-	// cannot predict what it will discover. Only sets ExploredNewArea = true.
-	// Actual reveals happen during gameplay execution.
-	// Forced leaf: further planning past Observe is meaningless because the
-	// world state it reveals (new waypoints, entities) only exists after
-	// gameplay execution — the planner cannot anticipate those changes.
-	// -----------------------------------------------------------------------
-	class ObserveSimulator : public gie::ActionSimulator
+	// Shared heuristic for treasure goal
+	auto treasureHeuristic = []( gie::CalculateHeuristicParams params )
 	{
-	public:
-		ObserveSimulator( const gie::NamedArguments& args ) : ActionSimulator( args ) { setForceLeaf( true ); }
-		gie::StringHash hash() const override { return H( "Observe" ); }
+		auto agentEnt = params.simulation.context().entity( params.agent.guid() );
+		params.simulation.heuristic.value = EstimateTreasureHeuristic( params.simulation, agentEnt );
+	};
 
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+	// -----------------------------------------------------------------------
+	// Observe: stand at a Known waypoint and reveal what it shows.
+	// Opaque during planning (no reveals), sets ExploredNewArea = true.
+	// Forced leaf: world changes only materialize during gameplay execution.
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "Observe",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "Observe::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -492,9 +484,9 @@ static void RegisterActions( gie::Planner& planner )
 			}
 			params.addDebugMessage( "  Nothing new to observe -> FALSE" );
 			return false;
-		}
-
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "Observe::simulate (opaque — no reveals during planning)" );
 			auto& ctx = params.simulation.context();
@@ -503,27 +495,18 @@ static void RegisterActions( gie::Planner& planner )
 			if( explored ) explored->value = true;
 
 			SetSimulationCost( params.simulation, 0.f, 2.f );
-			if( auto a = std::make_shared< ObserveAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-			return false;
-		}
-
-		void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-		{
-			auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-			params.simulation.heuristic.value = EstimateTreasureHeuristic( params.simulation, agentEnt );
-		}
-	};
+			return true;
+		},
+		treasureHeuristic,
+		true // forceLeaf
+	);
 
 	// -----------------------------------------------------------------------
 	// MoveTo: move to a Known waypoint (prefer unexplored neighbors)
 	// -----------------------------------------------------------------------
-	class MoveToSimulator : public gie::ActionSimulator
-	{
-	public:
-		using gie::ActionSimulator::ActionSimulator;
-		gie::StringHash hash() const override { return H( "MoveTo" ); }
-
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+	planner.addLambdaAction( "MoveTo",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "MoveTo::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -550,9 +533,9 @@ static void RegisterActions( gie::Planner& planner )
 			}
 			params.addDebugMessage( "  Already at all known waypoints -> FALSE" );
 			return false;
-		}
-
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "MoveTo::simulate" );
 			auto& ctx = params.simulation.context();
@@ -593,31 +576,18 @@ static void RegisterActions( gie::Planner& planner )
 			float len = MoveAgentAlongPath( params, agentLoc, bestTarget, allWp );
 
 			SetSimulationCost( params.simulation, len, 1.f );
-			if( auto a = std::make_shared< MoveToAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-			return false;
-		}
-
-		void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-		{
-			auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-			params.simulation.heuristic.value = EstimateTreasureHeuristic( params.simulation, agentEnt );
-		}
-	};
+			return true;
+		},
+		treasureHeuristic
+	);
 
 	// -----------------------------------------------------------------------
-	// Inspect: inspect a Known, un-inspected Clue
-	// During planning, Inspect does NOT reveal the clue's target. Opaque.
-	// Forced leaf: the clue's effect on the world (revealing new locations,
-	// items) only materializes during gameplay execution, so expanding
-	// further in the planner would be based on stale context.
+	// Inspect: inspect a Known, un-inspected Clue.
+	// Opaque during planning (no reveals). Forced leaf.
 	// -----------------------------------------------------------------------
-	class InspectSimulator : public gie::ActionSimulator
-	{
-	public:
-		InspectSimulator( const gie::NamedArguments& args ) : ActionSimulator( args ) { setForceLeaf( true ); }
-		gie::StringHash hash() const override { return H( "Inspect" ); }
-
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+	planner.addLambdaAction( "Inspect",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "Inspect::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -639,9 +609,9 @@ static void RegisterActions( gie::Planner& planner )
 			}
 			params.addDebugMessage( "  No un-inspected clues -> FALSE" );
 			return false;
-		}
-
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "Inspect::simulate (opaque — no reveals during planning)" );
 			auto& ctx = params.simulation.context();
@@ -678,27 +648,18 @@ static void RegisterActions( gie::Planner& planner )
 			if( explored ) explored->value = true;
 
 			SetSimulationCost( params.simulation, len, 3.f );
-			if( auto a = std::make_shared< InspectAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-			return false;
-		}
-
-		void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-		{
-			auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-			params.simulation.heuristic.value = EstimateTreasureHeuristic( params.simulation, agentEnt );
-		}
-	};
+			return true;
+		},
+		treasureHeuristic,
+		true // forceLeaf
+	);
 
 	// -----------------------------------------------------------------------
 	// PickUp: collect a Known Item not already in inventory
 	// -----------------------------------------------------------------------
-	class PickUpSimulator : public gie::ActionSimulator
-	{
-	public:
-		using gie::ActionSimulator::ActionSimulator;
-		gie::StringHash hash() const override { return H( "PickUp" ); }
-
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+	planner.addLambdaAction( "PickUp",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "PickUp::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -717,9 +678,9 @@ static void RegisterActions( gie::Planner& planner )
 			}
 			params.addDebugMessage( "  No pickable items -> FALSE" );
 			return false;
-		}
-
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "PickUp::simulate" );
 			auto& ctx = params.simulation.context();
@@ -753,27 +714,17 @@ static void RegisterActions( gie::Planner& planner )
 			inv->push_back( best->guid() );
 
 			SetSimulationCost( params.simulation, len, 1.f );
-			if( auto a = std::make_shared< PickUpAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-			return false;
-		}
-
-		void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-		{
-			auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-			params.simulation.heuristic.value = EstimateTreasureHeuristic( params.simulation, agentEnt );
-		}
-	};
+			return true;
+		},
+		treasureHeuristic
+	);
 
 	// -----------------------------------------------------------------------
 	// ForgeKey: at the Blacksmith, convert IronOre into TreasureKey
 	// -----------------------------------------------------------------------
-	class ForgeKeySimulator : public gie::ActionSimulator
-	{
-	public:
-		using gie::ActionSimulator::ActionSimulator;
-		gie::StringHash hash() const override { return H( "ForgeKey" ); }
-
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+	planner.addLambdaAction( "ForgeKey",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "ForgeKey::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -795,9 +746,9 @@ static void RegisterActions( gie::Planner& planner )
 			}
 			params.addDebugMessage( "  Can forge key -> TRUE" );
 			return true;
-		}
-
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "ForgeKey::simulate" );
 			auto& ctx = params.simulation.context();
@@ -820,27 +771,17 @@ static void RegisterActions( gie::Planner& planner )
 			agentEnt->property( "Inventory" )->getGuidArray()->push_back( keyItem->guid() );
 
 			SetSimulationCost( params.simulation, len, 5.f );
-			if( auto a = std::make_shared< ForgeKeyAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-			return false;
-		}
-
-		void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-		{
-			auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-			params.simulation.heuristic.value = EstimateTreasureHeuristic( params.simulation, agentEnt );
-		}
-	};
+			return true;
+		},
+		treasureHeuristic
+	);
 
 	// -----------------------------------------------------------------------
 	// OpenChest: open the LockedChest if agent has TreasureKey
 	// -----------------------------------------------------------------------
-	class OpenChestSimulator : public gie::ActionSimulator
-	{
-	public:
-		using gie::ActionSimulator::ActionSimulator;
-		gie::StringHash hash() const override { return H( "OpenChest" ); }
-
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+	planner.addLambdaAction( "OpenChest",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "OpenChest::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -860,9 +801,9 @@ static void RegisterActions( gie::Planner& planner )
 			}
 			params.addDebugMessage( "  Can open chest -> TRUE" );
 			return true;
-		}
-
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
 		{
 			params.addDebugMessage( "OpenChest::simulate" );
 			auto& ctx = params.simulation.context();
@@ -878,31 +819,10 @@ static void RegisterActions( gie::Planner& planner )
 			chest->property( "Open" )->value = true;
 
 			SetSimulationCost( params.simulation, len, 2.f );
-			if( auto a = std::make_shared< OpenChestAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-			return false;
-		}
-
-		void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-		{
-			auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-			params.simulation.heuristic.value = EstimateTreasureHeuristic( params.simulation, agentEnt );
-		}
-	};
-
-	// Register action set entries
-	DEFINE_ACTION_SET_ENTRY( Observe )
-	DEFINE_ACTION_SET_ENTRY( MoveTo )
-	DEFINE_ACTION_SET_ENTRY( Inspect )
-	DEFINE_ACTION_SET_ENTRY( PickUp )
-	DEFINE_ACTION_SET_ENTRY( ForgeKey )
-	DEFINE_ACTION_SET_ENTRY( OpenChest )
-
-	planner.addActionSetEntry< ObserveActionSetEntry >( H( "Observe" ) );
-	planner.addActionSetEntry< MoveToActionSetEntry >( H( "MoveTo" ) );
-	planner.addActionSetEntry< InspectActionSetEntry >( H( "Inspect" ) );
-	planner.addActionSetEntry< PickUpActionSetEntry >( H( "PickUp" ) );
-	planner.addActionSetEntry< ForgeKeyActionSetEntry >( H( "ForgeKey" ) );
-	planner.addActionSetEntry< OpenChestActionSetEntry >( H( "OpenChest" ) );
+			return true;
+		},
+		treasureHeuristic
+	);
 }
 
 // ---------------------------------------------------------------------------

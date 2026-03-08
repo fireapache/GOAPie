@@ -268,7 +268,7 @@ int survivalOnHill( ExampleParameters& params )
 
     // money earn from work
     constexpr float workSalary = 20.0;
-    // brand new axe integrity 
+    // brand new axe integrity
     static constexpr float newAxeIntegrityValue = 3.f;
 
     // setting goal targets (agent's wood house must exist)
@@ -299,20 +299,46 @@ int survivalOnHill( ExampleParameters& params )
     construct->createProperty( "Location", waypointLocations[ 4 ] );
     world.context().entityTagRegister().tag( construct, { gie::stringHasher( "ConstructionSite" ) } );
 
-    DEFINE_DUMMY_ACTION_CLASS( CutDownTree )
-
     // minimal amount of integrity an axe need to have to cut down a tree, so there is no need to buy another one
     constexpr float minAxeIntegrity = 1.f;
 
-    // defining simulator for action cut down tree
-    class CutDownTreeSimulator : public gie::ActionSimulator
-    {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override { return gie::stringRegister().add( "CutDownTree" ); }
+    // minimum logs (cut down trees) required to build a house
+    constexpr int32_t minLogsForHouse = 5;
 
-        // define conditions for action
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    // setting tree positions
+    constexpr size_t treeCount = 6;
+    std::array< glm::vec3, treeCount > treeLocations
+    {
+        glm::vec3{  -6.f,   0.f,  0.f },
+        glm::vec3{  12.f,  -3.f,  0.f },
+        glm::vec3{  25.f,   2.f,  0.f },
+        glm::vec3{   8.f,  -4.f,  0.f },
+        glm::vec3{   0.f,  -3.f,  0.f },
+        glm::vec3{ -12.f,  -4.f,  0.f }
+    };
+
+    const auto treeTag = gie::stringHasher( "Tree" );
+	const auto treeUpTag = gie::stringHasher( "TreeUp" );
+
+	// adding trees to world
+	for( size_t i = 0; i < treeCount; i++ )
+	{
+		auto treeEntity = world.createEntity( std::string( "tree" + std::to_string( i ) ) );
+		treeEntity->createProperty( "Location", treeLocations[ i ] );
+		world.context().entityTagRegister().tag( treeEntity, { treeTag, treeUpTag, drawTag } );
+	}
+
+    // setting up planner passing goal and agent to reach the goal
+    planner.simulate( goal, *agentEntity );
+
+    // defining available actions via lambda-based API
+
+    // -----------------------------------------------------------------------
+    // CutDownTree: cut down nearest tree if agent has axe integrity
+    // -----------------------------------------------------------------------
+    planner.addLambdaAction( "CutDownTree",
+        // evaluate
+        [=]( gie::EvaluateSimulationParams params ) -> bool
         {
             auto& context            = params.simulation.context();
             auto agentEntity        = context.entity( params.agent.guid() );
@@ -382,9 +408,9 @@ int survivalOnHill( ExampleParameters& params )
 
             params.addDebugMessage( "Has axe integrity and trees up, returning TRUE" );
             return true;
-        }
-
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        [=]( gie::SimulateSimulationParams params ) -> bool
         {
             auto& context                = params.simulation.context();
             auto agentEntity            = context.entity( params.agent.guid() );
@@ -472,22 +498,16 @@ int survivalOnHill( ExampleParameters& params )
             entityTagRegister.untag( treeEntity, { gie::stringHasher( "TreeUp" ) } );
             entityTagRegister.tag( treeEntity, { gie::stringHasher( "TreeDown" ) } );
 
-            // creating cut down tree action
-            if( auto cutDownTreeAction = std::make_shared< CutDownTreeAction >() )
-            {
-                cutDownTreeAction->arguments().add( { gie::stringHasher( "TargetTree" ), chosenTreeGuid } );
-                params.simulation.actions.emplace_back( cutDownTreeAction );
-                params.addDebugMessage( "CutDownTreeAction added, returning TRUE" );
-                return true;
-            }
-
-            params.addDebugMessage( "CutDownTreeAction not added, returning FALSE" );
-            return false;
-        }
-
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
+            // creating cut down tree action with target argument
+            auto cutDownTreeAction = std::make_shared< gie::Action >( gie::stringHasher( "CutDownTree" ) );
+            cutDownTreeAction->arguments().add( { gie::stringHasher( "TargetTree" ), chosenTreeGuid } );
+            params.simulation.actions.emplace_back( cutDownTreeAction );
+            params.addDebugMessage( "CutDownTreeAction added, returning TRUE" );
+            return true;
+        },
+        // heuristic: path length from agent to nearest tree
+        []( gie::CalculateHeuristicParams params ) -> void
         {
-            // default heuristic: path length from agent to nearest tree
             auto& context = params.simulation.context();
             auto agentEntity = context.entity( params.agent.guid() );
             if( !agentEntity ) return;
@@ -525,25 +545,14 @@ int survivalOnHill( ExampleParameters& params )
             }
             params.simulation.heuristic.value = bestLength;
         }
-    };
+    );
 
-    DEFINE_DUMMY_ACTION_CLASS( NewThingToBuy )
-    DEFINE_DUMMY_ACTION_CLASS( BuyThing )
-    DEFINE_DUMMY_ACTION_CLASS( BuildHouse )
-
-    // minimum logs (cut down trees) required to build a house
-    constexpr int32_t minLogsForHouse = 5;
-
-    class BuildHouseSimulator : public gie::ActionSimulator
-    {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override
-        {
-            return gie::stringRegister().add( "BuildHouse" );
-        }
-
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    // -----------------------------------------------------------------------
+    // BuildHouse: build a wood house if enough logs are available
+    // -----------------------------------------------------------------------
+    planner.addLambdaAction( "BuildHouse",
+        // evaluate
+        [=]( gie::EvaluateSimulationParams params ) -> bool
         {
             auto& context = params.simulation.context();
             auto agentEntity = context.entity( params.agent.guid() );
@@ -590,9 +599,9 @@ int survivalOnHill( ExampleParameters& params )
 
             params.addDebugMessage( "Not enough logs to build house, returning FALSE" );
             return false;
-        }
-
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        [=]( gie::SimulateSimulationParams params ) -> bool
         {
             auto& context = params.simulation.context();
             auto agentEntity = context.entity( params.agent.guid() );
@@ -679,30 +688,22 @@ int survivalOnHill( ExampleParameters& params )
                     }
                 }
 
-                // creating build house action
-                if( auto buildHouseAction = std::make_shared< BuildHouseAction >() )
-                {
-                    params.simulation.actions.emplace_back( buildHouseAction );
-                    params.addDebugMessage( "BuildHouseAction added, house built successfully! Returning TRUE" );
-                    return true;
-                }
+                // planner auto-pushes the action for simple cases
+                params.addDebugMessage( "BuildHouseAction added, house built successfully! Returning TRUE" );
+                return true;
             }
 
             params.addDebugMessage( "BuildHouseAction not added, returning FALSE" );
             return false;
         }
-    };
+    );
 
-    class BuyThingSimulator : public gie::ActionSimulator
-    {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override
-        {
-            return gie::stringRegister().add( "BuyThing" );
-        }
-
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    // -----------------------------------------------------------------------
+    // BuyThing: buy an item (axe) if agent has enough money
+    // -----------------------------------------------------------------------
+    planner.addLambdaAction( "BuyThing",
+        // evaluate
+        [=]( gie::EvaluateSimulationParams params ) -> bool
         {
             auto& context            = params.simulation.context();
             auto agentEntity        = context.entity( params.agent.guid() );
@@ -747,9 +748,9 @@ int survivalOnHill( ExampleParameters& params )
 
             params.addDebugMessage( "Axe is not in things to buy, returning FALSE" );
             return false;
-        }
-
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        [=]( gie::SimulateSimulationParams params ) -> bool
         {
             auto& context = params.simulation.context();
             auto agentEntity = context.entity( params.agent.guid() );
@@ -779,13 +780,9 @@ int survivalOnHill( ExampleParameters& params )
                 float zeroPath = 0.f;
                 ApplyTravelAndBaseDeltas( agentEntity, /*baseEnergy*/ 2.f, /*baseHunger*/ 1.f, /*baseThirst*/ 1.f, zeroPath, kEnergyPerPath, kHungerPerPath, kThirstPerPath, kMaxEnergy, kMaxHunger, kMaxThirst, params, "BuyThing" );
 
-                // creating buy axe action
-                if( auto buyThingAction = std::make_shared< BuyThingAction >( arguments() ) )
-                {
-                    params.simulation.actions.emplace_back( buyThingAction );
-                    params.addDebugMessage( "BuyThingAction added, returning TRUE" );
-                    return true;
-                }
+                // planner auto-pushes the action for simple cases
+                params.addDebugMessage( "BuyThingAction added, returning TRUE" );
+                return true;
             }
             else
             {
@@ -808,28 +805,22 @@ int survivalOnHill( ExampleParameters& params )
                 gie::NamedArguments actionArguments{};
                 actionArguments.add( { gie::stringHasher( "ThingToBuy" ), axeInfoEntityGuid } );
 
-                if( auto raiseMoneyNeededAction = std::make_shared< NewThingToBuyAction >( actionArguments ) )
-                {
-                    params.simulation.actions.emplace_back( raiseMoneyNeededAction );
-                    params.addDebugMessage( "NewThingToBuyAction added, returning TRUE" );
-                    return true;
-                }
+                auto raiseMoneyNeededAction = std::make_shared< gie::Action >( gie::stringHasher( "NewThingToBuy" ), actionArguments );
+                params.simulation.actions.emplace_back( raiseMoneyNeededAction );
+                params.addDebugMessage( "NewThingToBuyAction added, returning TRUE" );
+                return true;
             }
 
             return false;
         }
-    };
+    );
 
-    DEFINE_DUMMY_ACTION_CLASS( Work )
-
-    class WorkSimulator : public gie::ActionSimulator
-    {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override { return gie::stringRegister().add( "Work" ); }
-
-        // define conditions for action
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    // -----------------------------------------------------------------------
+    // Work: earn money to afford things to buy
+    // -----------------------------------------------------------------------
+    planner.addLambdaAction( "Work",
+        // evaluate
+        [=]( gie::EvaluateSimulationParams params ) -> bool
         {
             auto& context                = params.simulation.context();
             auto agentEntity            = context.entity( params.agent.guid() );
@@ -895,10 +886,9 @@ int survivalOnHill( ExampleParameters& params )
 
             params.addDebugMessage( "Not enough money, need to work, returning TRUE" );
             return true;
-        }
-
-        // calculate cost and necessary steps (other actions) to achieve the action being simulated
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate (calculate cost and necessary steps to achieve the action)
+        [=]( gie::SimulateSimulationParams params ) -> bool
         {
             auto& context        = params.simulation.context();
             auto agentEntity    = context.entity( params.agent.guid() );
@@ -956,31 +946,18 @@ int survivalOnHill( ExampleParameters& params )
             params.addDebugMessage( "WorkSimulator::simulate" );
             params.addDebugMessage( "Working, adding " + std::to_string( workSalary ) + " to money" );
 
-            // creating work action
-            if( auto workAction = std::make_shared< WorkAction >( arguments() ) )
-            {
-                params.simulation.actions.emplace_back( workAction );
-                params.addDebugMessage( "WorkAction added, returning TRUE" );
-                return true;
-            }
-
-            params.addDebugMessage( "WorkAction not added, returning FALSE" );
-            return false;
+            // planner auto-pushes the action for simple cases
+            params.addDebugMessage( "WorkAction added, returning TRUE" );
+            return true;
         }
-    };
+    );
 
-    // Survival actions
-    DEFINE_DUMMY_ACTION_CLASS( EatFood )
-    DEFINE_DUMMY_ACTION_CLASS( DrinkWater )
-    DEFINE_DUMMY_ACTION_CLASS( Sleep )
-
-    class EatFoodSimulator : public gie::ActionSimulator
-    {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override { return gie::stringRegister().add( "EatFood" ); }
-
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    // -----------------------------------------------------------------------
+    // EatFood: eat at nearest food source when hunger is high
+    // -----------------------------------------------------------------------
+    planner.addLambdaAction( "EatFood",
+        // evaluate
+        [=]( gie::EvaluateSimulationParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -993,9 +970,9 @@ int survivalOnHill( ExampleParameters& params )
             const bool ok = foodSet && !foodSet->empty();
             params.addDebugMessage( std::string( "Food sources available: " ) + ( ok ? "YES" : "NO" ) );
             return ok;
-        }
-
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        [=]( gie::SimulateSimulationParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1056,25 +1033,21 @@ int survivalOnHill( ExampleParameters& params )
             }
             params.addDebugMessage( "EatFood effect -> Hunger: " + std::to_string( hungerBefore ) + " -> " + std::to_string( *agent->property( "Hunger" )->getFloat() ) );
 
-            if( auto act = std::make_shared< EatFoodAction >() )
-            {
-                act->arguments().add( { gie::stringHasher( "Target" ), bestFood } );
-                params.simulation.actions.emplace_back( act );
-                params.addDebugMessage( "EatFoodAction added, returning TRUE" );
-                return true;
-            }
-            params.addDebugMessage( "EatFoodAction not added, returning FALSE" );
-            return false;
+            // push action with target argument
+            auto eatAction = std::make_shared< gie::Action >( gie::stringHasher( "EatFood" ) );
+            eatAction->arguments().add( { gie::stringHasher( "Target" ), bestFood } );
+            params.simulation.actions.emplace_back( eatAction );
+            params.addDebugMessage( "EatFoodAction added, returning TRUE" );
+            return true;
         }
-    };
+    );
 
-    class DrinkWaterSimulator : public gie::ActionSimulator
-    {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override { return gie::stringRegister().add( "DrinkWater" ); }
-
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    // -----------------------------------------------------------------------
+    // DrinkWater: drink at nearest water source when thirst is high
+    // -----------------------------------------------------------------------
+    planner.addLambdaAction( "DrinkWater",
+        // evaluate
+        [=]( gie::EvaluateSimulationParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1087,9 +1060,9 @@ int survivalOnHill( ExampleParameters& params )
             const bool ok = waterSet && !waterSet->empty();
             params.addDebugMessage( std::string( "Water sources available: " ) + ( ok ? "YES" : "NO" ) );
             return ok;
-        }
-
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        [=]( gie::SimulateSimulationParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1150,25 +1123,21 @@ int survivalOnHill( ExampleParameters& params )
             }
             params.addDebugMessage( "DrinkWater effect -> Thirst: " + std::to_string( thirstBefore ) + " -> " + std::to_string( *agent->property( "Thirst" )->getFloat() ) );
 
-            if( auto act = std::make_shared< DrinkWaterAction >() )
-            {
-                act->arguments().add( { gie::stringHasher( "Target" ), bestWater } );
-                params.simulation.actions.emplace_back( act );
-                params.addDebugMessage( "DrinkWaterAction added, returning TRUE" );
-                return true;
-            }
-            params.addDebugMessage( "DrinkWaterAction not added, returning FALSE" );
-            return false;
+            // push action with target argument
+            auto drinkAction = std::make_shared< gie::Action >( gie::stringHasher( "DrinkWater" ) );
+            drinkAction->arguments().add( { gie::stringHasher( "Target" ), bestWater } );
+            params.simulation.actions.emplace_back( drinkAction );
+            params.addDebugMessage( "DrinkWaterAction added, returning TRUE" );
+            return true;
         }
-    };
+    );
 
-    class SleepSimulator : public gie::ActionSimulator
-    {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override { return gie::stringRegister().add( "Sleep" ); }
-
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    // -----------------------------------------------------------------------
+    // Sleep: rest to restore energy (increases hunger/thirst slightly)
+    // -----------------------------------------------------------------------
+    planner.addLambdaAction( "Sleep",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1179,9 +1148,9 @@ int survivalOnHill( ExampleParameters& params )
             const bool ok = *energy->getFloat() <= 60.f;
             params.addDebugMessage( std::string( "Should sleep: " ) + ( ok ? "YES" : "NO" ) );
             return ok;
-        }
-
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1191,60 +1160,11 @@ int survivalOnHill( ExampleParameters& params )
             float pathLen = 0.f;
             ApplyTravelAndBaseDeltas( agent, /*baseEnergy*/ -60.f, /*baseHunger*/ 5.f, /*baseThirst*/ 5.f, pathLen, kEnergyPerPath, kHungerPerPath, kThirstPerPath, kMaxEnergy, kMaxHunger, kMaxThirst, params, "Sleep(rest)" );
 
-            if( auto act = std::make_shared< SleepAction >() )
-            {
-                params.simulation.actions.emplace_back( act );
-                params.addDebugMessage( "SleepAction added, returning TRUE" );
-                return true;
-            }
-            params.addDebugMessage( "SleepAction not added, returning FALSE" );
-            return false;
+            // planner auto-pushes the action for simple cases
+            params.addDebugMessage( "SleepAction added, returning TRUE" );
+            return true;
         }
-    };
-
-    // setting tree positions
-    constexpr size_t treeCount = 6;
-    std::array< glm::vec3, treeCount > treeLocations
-    {
-        glm::vec3{  -6.f,   0.f,  0.f },
-        glm::vec3{  12.f,  -3.f,  0.f },
-        glm::vec3{  25.f,   2.f,  0.f },
-        glm::vec3{   8.f,  -4.f,  0.f },
-        glm::vec3{   0.f,  -3.f,  0.f },
-        glm::vec3{ -12.f,  -4.f,  0.f }
-    };
-
-    const auto treeTag = gie::stringHasher( "Tree" );
-	const auto treeUpTag = gie::stringHasher( "TreeUp" );
-
-	// adding trees to world
-	for( size_t i = 0; i < treeCount; i++ )
-	{
-		auto treeEntity = world.createEntity( std::string( "tree" + std::to_string( i ) ) );
-		treeEntity->createProperty( "Location", treeLocations[ i ] );
-		world.context().entityTagRegister().tag( treeEntity, { treeTag, treeUpTag, drawTag } );
-	}
-
-    // setting up planner passing goal and agent to reach the goal
-    planner.simulate( goal, *agentEntity );
-
-    // defining available actions and their simulators for planner
-    DEFINE_ACTION_SET_ENTRY( CutDownTree )
-    DEFINE_ACTION_SET_ENTRY( BuyThing )
-    DEFINE_ACTION_SET_ENTRY( Work )
-    DEFINE_ACTION_SET_ENTRY( BuildHouse )
-    DEFINE_ACTION_SET_ENTRY( EatFood )
-    DEFINE_ACTION_SET_ENTRY( DrinkWater )
-    DEFINE_ACTION_SET_ENTRY( Sleep )
-
-    // setting available actions
-    planner.addActionSetEntry< CutDownTreeActionSetEntry >( gie::stringHasher( "CutDownTree" ) );
-    planner.addActionSetEntry< BuyThingActionSetEntry >( gie::stringHasher( "BuyThing" ) );
-    planner.addActionSetEntry< WorkActionSetEntry >( gie::stringHasher( "Work" ) );
-    planner.addActionSetEntry< BuildHouseActionSetEntry >( gie::stringHasher( "BuildHouse" ) );
-    planner.addActionSetEntry< EatFoodActionSetEntry >( gie::stringHasher( "EatFood" ) );
-    planner.addActionSetEntry< DrinkWaterActionSetEntry >( gie::stringHasher( "DrinkWater" ) );
-    planner.addActionSetEntry< SleepActionSetEntry >( gie::stringHasher( "Sleep" ) );
+    );
 
     return 0;
 }
@@ -1307,24 +1227,24 @@ static void ImGuiFunc5( gie::World& world, gie::Planner& planner, gie::Goal& goa
     ImGui::Text( "Agent Money: %.2f", *agentEntity->property( "Money" )->getFloat() );
     ImGui::Text( "Axe Integrity: %.2f", *agentEntity->property( "AxeIntegrity" )->getFloat() );
     ImGui::Text( "Has Wood House: %s", *agentEntity->property( "WoodHouse" )->getBool() ? "YES" : "NO" );
-    
+
     // counting trees by their states
     int treeUpCount = 0;
     int treeDownCount = 0;
     int treeUsedCount = 0;
-    
+
     auto treeUpTagSet = context->entityTagRegister().tagSet( "TreeUp" );
     if( treeUpTagSet )
     {
         treeUpCount = static_cast<int>( treeUpTagSet->size() );
     }
-    
+
     auto treeDownTagSet = context->entityTagRegister().tagSet( "TreeDown" );
     if( treeDownTagSet )
     {
         treeDownCount = static_cast<int>( treeDownTagSet->size() );
     }
-    
+
     auto treeUsedTagSet = context->entityTagRegister().tagSet( "TreeUsed" );
     if( treeUsedTagSet )
     {
@@ -1337,7 +1257,7 @@ static void ImGuiFunc5( gie::World& world, gie::Planner& planner, gie::Goal& goa
     if( foodSet ) foodCount = static_cast<int>( foodSet->size() );
     auto waterSet = context->entityTagRegister().tagSet( "WaterSource" );
     if( waterSet ) waterCount = static_cast<int>( waterSet->size() );
-    
+
     ImGui::Text( "Trees Up: %d, Trees Down (logs): %d, Trees Used: %d", treeUpCount, treeDownCount, treeUsedCount );
     ImGui::Text( "Food Sources: %d, Water Sources: %d", foodCount, waterCount );
     ImGui::Text( "Things to buy: " );

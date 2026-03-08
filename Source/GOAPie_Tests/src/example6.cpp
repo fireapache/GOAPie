@@ -756,29 +756,17 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
     gie::Planner& planner = params.planner;
     gie::Goal& goal = params.goal;
 
-    // Action dummies
-    DEFINE_DUMMY_ACTION_CLASS( DisableAlarm )
-    DEFINE_DUMMY_ACTION_CLASS( DisablePower )
-    DEFINE_DUMMY_ACTION_CLASS( UseKey )
-    DEFINE_DUMMY_ACTION_CLASS( Lockpick )
-    DEFINE_DUMMY_ACTION_CLASS( BreakConnector )
-    DEFINE_DUMMY_ACTION_CLASS( CutBars )
-    DEFINE_DUMMY_ACTION_CLASS( EnterThrough )
-    DEFINE_DUMMY_ACTION_CLASS( SearchForItem )
-    DEFINE_DUMMY_ACTION_CLASS( MoveInside )
-    DEFINE_DUMMY_ACTION_CLASS( OpenSafeWithKey )
-    DEFINE_DUMMY_ACTION_CLASS( OpenSafeWithCode )
-    DEFINE_DUMMY_ACTION_CLASS( CrackSafe )
-    DEFINE_DUMMY_ACTION_CLASS( BruteForceSafe )
-
-    // Simulators
-    // Disable the alarm by visiting the alarm panel
-    class DisableAlarmSimulator : public gie::ActionSimulator
+    // Shared heuristic for all heist actions — estimates remaining effort to open the safe.
+    auto sharedHeuristic = []( gie::CalculateHeuristicParams params )
     {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override { return H( "DisableAlarm" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+        auto agentEnt = params.simulation.context().entity( params.agent.guid() );
+        params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
+    };
+
+    // Disable the alarm by visiting the alarm panel
+    planner.addLambdaAction( "DisableAlarm",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "DisableAlarm::evaluate" );
             // Must be inside the house to reach the alarm panel
@@ -789,8 +777,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             auto armed = alarm->property( "Armed" );
             params.addDebugMessage( "  Armed=" + std::string( *armed->getBool() ? "true" : "false" ) );
             return armed && *armed->getBool();
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "DisableAlarm::simulate" );
             auto& bb = params.simulation.context();
@@ -806,23 +795,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
 
             alarmE->property( "Armed" )->value = false;
             SetSimulationCost( params.simulation, len, 2.f );
-            if( auto a = std::make_shared< DisableAlarmAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Cut power at the fuse box to effectively disable the alarm too
-    class DisablePowerSimulator : public gie::ActionSimulator
-    {
-    public:
-        using gie::ActionSimulator::ActionSimulator;
-        gie::StringHash hash() const override { return H( "DisablePower" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "DisablePower",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "DisablePower::evaluate" );
             // Must be inside the house to reach the fuse box
@@ -834,8 +815,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             bool armed = *a->property( "Armed" )->getBool();
             params.addDebugMessage( std::string( "  Armed=" ) + ( armed ? "true" : "false" ) );
             return armed;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "DisablePower::simulate" );
             auto& bb = params.simulation.context();
@@ -848,21 +830,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             params.addDebugMessage( "  Move length=" + std::to_string( len ) );
             alarmE->property( "Armed" )->value = false;
             SetSimulationCost( params.simulation, len, 3.f );
-            if( auto a = std::make_shared< DisablePowerAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Use a matching key in inventory to unlock a door
-    class UseKeySimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "UseKey" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "UseKey",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "UseKey::evaluate" );
             auto& ctx = params.simulation.context();
@@ -890,8 +866,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             }
             params.addDebugMessage( "  No matching keys or no locked connectors -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "UseKey::simulate" );
             auto& ctx = params.simulation.context();
@@ -929,21 +906,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             float len = MoveAgentAlongPath( params, from, bestC, wp );
             bestC->property( "Locked" )->value = false;
             SetSimulationCost( params.simulation, len, 1.f );
-            if( auto a = std::make_shared< UseKeyAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Search world for any item not yet in inventory (except non-carryable POIs)
-    class SearchForItemSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "SearchForItem" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "SearchForItem",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "SearchForItem::evaluate" );
             auto& ctx = params.simulation.context();
@@ -968,8 +939,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             }
             params.addDebugMessage( "  No reachable items -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "SearchForItem::simulate" );
             auto& ctx = params.simulation.context();
@@ -1001,21 +973,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             inv->push_back( best->guid() );
             params.addDebugMessage( "  Picked=" + std::string( gie::stringRegister().get( best->nameHash() ) ) + ", len=" + std::to_string( len ) );
             SetSimulationCost( params.simulation, len, 1.f );
-            if( auto a = std::make_shared< SearchForItemAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Pick a locked connector and open it using lockpicks
-    class LockpickSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "Lockpick" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "Lockpick",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "Lockpick::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1032,8 +998,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             for( auto g : connectors ) if( *ctx.entity( g )->property( "Locked" )->getBool() ) return true;
             params.addDebugMessage( "  No locked connector -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "Lockpick::simulate" );
             auto& ctx = params.simulation.context();
@@ -1055,21 +1022,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             float len = MoveAgentAlongPath( params, from, best, wp );
             best->property( "Locked" )->value = false;
             SetSimulationCost( params.simulation, len, 4.f );
-            if( auto a = std::make_shared< LockpickAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Cut bars from a barred connector using a bolt cutter
-    class CutBarsSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "CutBars" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "CutBars",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "CutBars::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1081,8 +1042,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             for( auto g : connectors ) { auto c = ctx.entity( g ); if( c->property( "Barred" ) && *c->property( "Barred" )->getBool() ) return true; }
             params.addDebugMessage( "  No barred connector -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "CutBars::simulate" );
             auto& ctx = params.simulation.context();
@@ -1099,21 +1061,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             float len = MoveAgentAlongPath( params, from, best, wp );
             best->property( "Barred" )->value = false;
             SetSimulationCost( params.simulation, len, 5.f );
-            if( auto a = std::make_shared< CutBarsAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Break any blocking conditions using the crowbar
-    class BreakConnectorSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "BreakConnector" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "BreakConnector",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "BreakConnector::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1137,8 +1093,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             }
             params.addDebugMessage( "  Nothing to break -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "BreakConnector::simulate" );
             auto& ctx = params.simulation.context();
@@ -1162,21 +1119,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             if( best->property( "Blocked" ) ) best->property( "Blocked" )->value = false;
             if( best->property( "Barred" ) ) best->property( "Barred" )->value = false;
             SetSimulationCost( params.simulation, len, 6.f );
-            if( auto a = std::make_shared< BreakConnectorAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Cross an entry connector to get inside
-    class EnterThroughSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "EnterThrough" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "EnterThrough",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "EnterThrough::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1193,8 +1144,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             }
             params.addDebugMessage( "  All entries blocked/alarmed -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "EnterThrough::simulate" );
             auto& ctx = params.simulation.context();
@@ -1245,21 +1197,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
                 agent->property( "CurrentRoom" )->value = targetRoom->guid();
                 if( auto loc = targetRoom->property( "Location" ) ) { *agent->property( "Location" )->getVec3() = *loc->getVec3(); }
             }
-            if( auto a = std::make_shared< EnterThroughAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Navigate inside from current room to the safe room
-    class MoveInsideSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "MoveInside" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "MoveInside",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "MoveInside::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1267,8 +1213,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             bool inside = *agent->property( "CurrentRoom" )->getGuid() != gie::NullGuid;
             params.addDebugMessage( std::string( "  Inside=" ) + ( inside ? "true" : "false" ) );
             return inside;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "MoveInside::simulate" );
             // move to safe room if not already there
@@ -1288,21 +1235,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             agent->property( "CurrentRoom" )->value = dest->guid();
             if( auto loc = dest->property( "Location" ) ) *agent->property( "Location" )->getVec3() = *loc->getVec3();
             SetSimulationCost( params.simulation, len, 1.f );
-            if( auto a = std::make_shared< MoveInsideAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Open safe using a physical key
-    class OpenSafeWithKeySimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "OpenSafeWithKey" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "OpenSafeWithKey",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "OpenSafeWithKey::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1323,8 +1264,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             }
             params.addDebugMessage( "  Missing SafeKey -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "OpenSafeWithKey::simulate" );
             auto& ctx = params.simulation.context();
@@ -1332,24 +1274,18 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             if( !safe ) return false;
             safe->property( "Open" )->value = true;
             SetSimulationCost( params.simulation, 0.f, 2.f );
-            if( auto a = std::make_shared< OpenSafeWithKeyAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Open safe using code pieces — agent must collect enough pieces (RequiredCodePieces)
     // scattered around the property before this action becomes available.
     // The electronic code lock also requires the alarm/security system to be disabled
     // first (it's wired into the same security circuit).
-    class OpenSafeWithCodeSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "OpenSafeWithCode" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "OpenSafeWithCode",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "OpenSafeWithCode::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1380,8 +1316,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             params.addDebugMessage( "  CodePieces=" + std::to_string( codePieces ) + "/" + std::to_string( required ) );
             if( codePieces < required ) { params.addDebugMessage( "  Not enough code pieces -> FALSE" ); return false; }
             return true;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "OpenSafeWithCode::simulate" );
             auto& ctx = params.simulation.context();
@@ -1389,21 +1326,15 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             if( !safe ) return false;
             safe->property( "Open" )->value = true;
             SetSimulationCost( params.simulation, 0.f, 3.f );
-            if( auto a = std::make_shared< OpenSafeWithCodeAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Crack a heavy-locked safe using a stethoscope (simplified)
-    class CrackSafeSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "CrackSafe" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "CrackSafe",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "CrackSafe::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1424,8 +1355,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             }
             params.addDebugMessage( "  Missing Stethoscope -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "CrackSafe::simulate" );
             auto& ctx = params.simulation.context();
@@ -1433,22 +1365,16 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             if( !safe ) return false;
             safe->property( "Open" )->value = true;
             SetSimulationCost( params.simulation, 0.f, 8.f );
-            if( auto a = std::make_shared< CrackSafeAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Brute force the safe open — requires a crowbar and being in the safe room.
     // Very high cost: only viable when no better method is available.
-    class BruteForceSafeSimulator : public gie::ActionSimulator
-    {
-    public: using gie::ActionSimulator::ActionSimulator; gie::StringHash hash() const override { return H( "BruteForceSafe" ); }
-        bool evaluate( gie::EvaluateSimulationParams params ) const override
+    planner.addLambdaAction( "BruteForceSafe",
+        // evaluate
+        []( gie::EvaluateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "BruteForceSafe::evaluate" );
             auto& ctx = params.simulation.context();
@@ -1470,8 +1396,9 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             }
             params.addDebugMessage( "  Missing crowbar -> FALSE" );
             return false;
-        }
-        bool simulate( gie::SimulateSimulationParams params ) const override
+        },
+        // simulate
+        []( gie::SimulateSimulationParams params ) -> bool
         {
             params.addDebugMessage( "BruteForceSafe::simulate" );
             auto& ctx = params.simulation.context();
@@ -1480,44 +1407,10 @@ static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
             // very noisy/slow IRL — extremely high cost, only viable as last resort
             safe->property( "Open" )->value = true;
             SetSimulationCost( params.simulation, 0.f, 200.f );
-            if( auto a = std::make_shared< BruteForceSafeAction >() ) { params.simulation.actions.emplace_back( a ); return true; }
-            return false;
-        }
-        void calculateHeuristic( gie::CalculateHeuristicParams params ) const override
-        {
-            auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-            params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-        }
-    };
-
-    // Register action set entries
-    DEFINE_ACTION_SET_ENTRY( DisableAlarm )
-    DEFINE_ACTION_SET_ENTRY( DisablePower )
-    DEFINE_ACTION_SET_ENTRY( UseKey )
-    DEFINE_ACTION_SET_ENTRY( Lockpick )
-    DEFINE_ACTION_SET_ENTRY( BreakConnector )
-    DEFINE_ACTION_SET_ENTRY( CutBars )
-    DEFINE_ACTION_SET_ENTRY( EnterThrough )
-    DEFINE_ACTION_SET_ENTRY( SearchForItem )
-    DEFINE_ACTION_SET_ENTRY( MoveInside )
-    DEFINE_ACTION_SET_ENTRY( OpenSafeWithKey )
-    DEFINE_ACTION_SET_ENTRY( OpenSafeWithCode )
-    DEFINE_ACTION_SET_ENTRY( CrackSafe )
-    DEFINE_ACTION_SET_ENTRY( BruteForceSafe )
-
-    planner.addActionSetEntry< DisableAlarmActionSetEntry >( H( "DisableAlarm" ) );
-    planner.addActionSetEntry< DisablePowerActionSetEntry >( H( "DisablePower" ) );
-    planner.addActionSetEntry< UseKeyActionSetEntry >( H( "UseKey" ) );
-    planner.addActionSetEntry< LockpickActionSetEntry >( H( "Lockpick" ) );
-    planner.addActionSetEntry< BreakConnectorActionSetEntry >( H( "BreakConnector" ) );
-    planner.addActionSetEntry< CutBarsActionSetEntry >( H( "CutBars" ) );
-    planner.addActionSetEntry< EnterThroughActionSetEntry >( H( "EnterThrough" ) );
-    planner.addActionSetEntry< SearchForItemActionSetEntry >( H( "SearchForItem" ) );
-    planner.addActionSetEntry< MoveInsideActionSetEntry >( H( "MoveInside" ) );
-    planner.addActionSetEntry< OpenSafeWithKeyActionSetEntry >( H( "OpenSafeWithKey" ) );
-    planner.addActionSetEntry< OpenSafeWithCodeActionSetEntry >( H( "OpenSafeWithCode" ) );
-    planner.addActionSetEntry< CrackSafeActionSetEntry >( H( "CrackSafe" ) );
-    planner.addActionSetEntry< BruteForceSafeActionSetEntry >( H( "BruteForceSafe" ) );
+            return true;
+        },
+        sharedHeuristic
+    );
 
     // Allow deeper search for multi-stage heist puzzle
     planner.depthLimitMutator() = 10;

@@ -19,8 +19,8 @@ int cutDownTrees( ExampleParameters& params )
 	auto agentEntity = world.createAgent();
 
 	// NOTE: this is a step towards the next (more complex)
-	// tutorial, a wood house is not being built here yet.	
-	
+	// tutorial, a wood house is not being built here yet.
+
 	// property telling if agent has a wood house
 	auto agentWoodHousePpt = agentEntity->createProperty( "WoodHouse", false );
 
@@ -67,28 +67,30 @@ int cutDownTrees( ExampleParameters& params )
 
 	// money earn from work
 	constexpr float workSalary = 20.0;
-	// brand new axe integrity 
-	static constexpr float newAxeIntegrityValue = 3.f;
-
-	// setting goal targets (agent's wood house must exist)
-	goal.targets.emplace_back( agentWoodHousePpt->guid(), true );
-
-	// defining a cut down tree action aiming a target tree
-	DEFINE_DUMMY_ACTION_CLASS( CutDownTree )
+	// brand new axe integrity
+	constexpr float newAxeIntegrityValue = 3.f;
 
 	// minimal amount of integrity an axe need to have to cut down a tree, so there is no need to buy another one
 	constexpr float minIntegrity = 1.f;
 
-	// defining simulator for action cut down tree
-	class CutDownTreeSimulator : public gie::ActionSimulator
-	{
-	public:
-		
-		using gie::ActionSimulator::ActionSimulator;
-		gie::StringHash hash() const override { return gie::stringRegister().add( "CutDownTree" ); }
+	// setting goal targets (agent's wood house must exist)
+	goal.targets.emplace_back( agentWoodHousePpt->guid(), true );
 
+	// adding trees to world
+	constexpr size_t treeCount = 6;
+	for( size_t i = 0; i < treeCount; i++ )
+	{
+		auto treeEntity = world.createEntity();
+		world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "Tree" ), gie::stringHasher( "TreeUp" ) } );
+	}
+
+	// setting up planner passing goal and agent to reach the goal
+	planner.simulate( goal, *agentEntity );
+
+	// defining simulator for action cut down tree
+	planner.addLambdaAction( "CutDownTree",
 		// define conditions for action
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+		[minIntegrity]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			// getting Axe Integrity property guid from world context
 			auto axeIntegrityPpt = params.agent.worldContextAgent()->property( "AxeIntegrity" );
@@ -124,10 +126,9 @@ int cutDownTrees( ExampleParameters& params )
 			}
 
 			return true;
-		}
-
+		},
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		[]( gie::SimulateSimulationParams params ) -> bool
 		{
 			// getting Axe Integrity property guid from world context
 			auto axeIntegrityPpt = params.agent.worldContextAgent()->property( "AxeIntegrity" );
@@ -148,48 +149,27 @@ int cutDownTrees( ExampleParameters& params )
 			simEntityTagRegister.untag( treeEntity, { gie::stringHasher( "TreeUp" ) } );
 			simEntityTagRegister.tag( treeEntity, { gie::stringHasher( "TreeDown" ) } );
 
-			// creating cut down tree action
-			if( auto cutDownTreeAction = std::make_shared< CutDownTreeAction >( arguments() ) )
-			{
-				// passing target tree entity guid as argument for action
-				cutDownTreeAction->arguments().add( { gie::stringHasher( "TargetTree" ), *treeUpTagSet->cbegin() } );
-				// queueing action
-				params.simulation.actions.emplace_back( cutDownTreeAction );
-				return true;
-			}
-
-			return false;
+			// creating cut down tree action with target tree argument
+			auto cutDownTreeAction = std::make_shared< gie::Action >( gie::stringHasher( "CutDownTree" ) );
+			cutDownTreeAction->arguments().add( { gie::stringHasher( "TargetTree" ), *treeUpTagSet->cbegin() } );
+			params.simulation.actions.emplace_back( cutDownTreeAction );
+			return true;
 		}
+	);
 
-	};
-
-	// defining a cut down tree action aiming a target tree
-	class WorkAction : public gie::Action
-	{
-	public:
-		using gie::Action::Action;
-		gie::StringHash hash() const override { return gie::stringRegister().add( "Work" ); }
-	};
-
-	// defining simulator for action cut down tree
-	class WorkSimulator : public gie::ActionSimulator
-	{
-	public:
-		
-		using gie::ActionSimulator::ActionSimulator;
-		gie::StringHash hash() const override { return gie::stringRegister().add( "Work" ); }
-
+	// defining simulator for action work
+	planner.addLambdaAction( "Work",
 		// define conditions for action
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+		[workSalary]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			// getting property Guid to refer in the simulation
 			auto moneyPpt = params.agent.worldContextAgent()->property( "Money" );
 			auto thingsToBuyPpt = params.agent.worldContextAgent()->property( "ThingsToBuy" );
-		
+
 			// getting property in simulation property
 			const auto simMoneyPpt = params.simulation.context().property( moneyPpt->guid() );
 			const auto simThingsToBuyPpt = params.simulation.context().property( thingsToBuyPpt->guid() );
-		
+
 			// getting cost of things to buy
 			float cost = 0.f;
 			auto thingsToBuyArray = simThingsToBuyPpt->getGuidArray();
@@ -212,49 +192,27 @@ int cutDownTrees( ExampleParameters& params )
 			}
 
 			return true;
-		}
-
+		},
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		[workSalary]( gie::SimulateSimulationParams params ) -> bool
 		{
 			// getting property Guid to refer in the simulation
 			auto moneyPpt = params.agent.worldContextAgent()->property( "Money" );
-		
+
 			// getting property in simulation property
 			auto simMoneyPpt = params.simulation.context().property( moneyPpt->guid() );
-		
+
 			// setting money property in simulation's context
 			simMoneyPpt->value = *simMoneyPpt->getFloat() + workSalary;
 
-			// creating work action
-			if( auto workAction = std::make_shared< WorkAction >( arguments() ) )
-			{
-				// queueing action
-				params.simulation.actions.emplace_back( workAction );
-				return true;
-			}
-
-			return false;
+			return true;
 		}
-
-	};
-
-	// defining an action to tell npc it need to buy something
-	DEFINE_DUMMY_ACTION_CLASS( NewThingToBuy )
-	
-	// defining a buy axe action in case npc needs it
-	DEFINE_DUMMY_ACTION_CLASS( BuyAxe )
+	);
 
 	// defining simulator for action buy axe
-	class BuyAxeSimulator : public gie::ActionSimulator
-	{
-	public:
-		
-		using gie::ActionSimulator::ActionSimulator;
-		gie::StringHash hash() const override { return gie::stringRegister().add( "BuyAxe" ); }
-
+	planner.addLambdaAction( "BuyAxe",
 		// define conditions for action
-		bool evaluate( gie::EvaluateSimulationParams params ) const override
+		[axePrice, minIntegrity]( gie::EvaluateSimulationParams params ) -> bool
 		{
 			// getting agent axe integrity property guid from world context
 			auto axeIntegrityPpt = params.agent.worldContextAgent()->property( "AxeIntegrity" );
@@ -291,10 +249,9 @@ int cutDownTrees( ExampleParameters& params )
 			}
 
 			return true;
-		}
-
+		},
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
-		bool simulate( gie::SimulateSimulationParams params ) const override
+		[axePrice, newAxeIntegrityValue]( gie::SimulateSimulationParams params ) -> bool
 		{
 			// getting agent property guid from world context
 			auto thingsToBuyPptGuid = params.agent.worldContextAgent()->property( "ThingsToBuy" )->guid();
@@ -356,13 +313,7 @@ int cutDownTrees( ExampleParameters& params )
 					thingsToBuyArray->erase( newArrayEnd, thingsToBuyArray->end() );
 				}
 
-				// creating buy axe action
-				if( auto buyAxeAction = std::make_shared< BuyAxeAction >( arguments() ) )
-				{
-					// queueing action
-					params.simulation.actions.emplace_back( buyAxeAction );
-					return true;
-				}
+				return true;
 			}
 			else
 			{
@@ -381,44 +332,16 @@ int cutDownTrees( ExampleParameters& params )
 				// finally adding axe to be bought by npc
 				thingsToBuyArray->emplace_back( axeInfoEntityGuid );
 
-				// creating arguments for action
-				gie::NamedArguments actionArguments{};
-				actionArguments.add( { gie::stringHasher( "ThingToBuy" ), axeInfoEntityGuid } );
-
 				// creating raise money needed action
-				if( auto raiseMoneyNeededAction = std::make_shared< NewThingToBuyAction >( actionArguments ) )
-				{
-					// queueing action
-					params.simulation.actions.emplace_back( raiseMoneyNeededAction );
-					return true;
-				}
+				auto raiseMoneyNeededAction = std::make_shared< gie::Action >( gie::stringHasher( "NewThingToBuy" ) );
+				raiseMoneyNeededAction->arguments().add( { gie::stringHasher( "ThingToBuy" ), axeInfoEntityGuid } );
+				params.simulation.actions.emplace_back( raiseMoneyNeededAction );
+				return true;
 			}
 
 			return true;
 		}
-
-	};
-
-	// adding trees to world
-	constexpr size_t treeCount = 6;
-	for( size_t i = 0; i < treeCount; i++ )
-	{
-		auto treeEntity = world.createEntity();
-		world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "Tree" ), gie::stringHasher( "TreeUp" ) } );
-	}
-
-	// setting up planner passing goal and agent to reach the goal
-	planner.simulate( goal, *agentEntity );
-
-	// defining available actions and their simulators for planner
-	DEFINE_ACTION_SET_ENTRY( CutDownTree )
-	DEFINE_ACTION_SET_ENTRY( Work )
-	DEFINE_ACTION_SET_ENTRY( BuyAxe )
-
-	// setting available actions
-	planner.addActionSetEntry< CutDownTreeActionSetEntry >( gie::stringHasher( "CutDownTree" ) );
-	planner.addActionSetEntry< WorkActionSetEntry >( gie::stringHasher( "Work" ) );
-	planner.addActionSetEntry< BuyAxeActionSetEntry >( gie::stringHasher( "BuyAxe" ) );
+	);
 
 	// finally planner doing its thing
 	planner.plan();

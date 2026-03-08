@@ -108,10 +108,24 @@ namespace gie
 		}
 
 		template< typename T >
-		std::shared_ptr< ActionSetEntry > addActionSetEntry( StringHash hash )
+		std::shared_ptr< ActionSetEntry > addActionSetEntry()
 		{
 			static_assert( std::is_base_of_v< ActionSetEntry, T >, "Need to be sub class of ActionSetEntry" );
 			auto& entry = _actionSet.emplace_back( std::make_shared< T >() );
+			return entry;
+		}
+
+		// Register a lambda-based action directly on the planner.
+		std::shared_ptr< ActionSetEntry > addLambdaAction(
+			const char* name,
+			EvaluateFunc evaluateFn,
+			SimulateFunc simulateFn,
+			HeuristicFunc heuristicFn = {},
+			bool forceLeaf = false )
+		{
+			StringHash h = stringHasher( name );
+			auto& entry = _actionSet.emplace_back(
+				std::make_shared< ActionSetEntry >( h, std::move( evaluateFn ), std::move( simulateFn ), std::move( heuristicFn ), forceLeaf ) );
 			return entry;
 		}
 
@@ -449,6 +463,12 @@ expandNodeLoop:
 
 			// running action simulation on new node
 			bool simulationSuccess = actionSimulator->simulate( { *newSimulationPair.second, newSimulationPair.second->agent(), *goal() } );
+
+			// Auto-push action if simulate succeeded but didn't push one (e.g. lambda actions)
+			if( simulationSuccess && newSimulationPair.second->actions.empty() )
+			{
+				newSimulationPair.second->actions.emplace_back( actionSetEntry->action( {} ) );
+			}
 
 			// removing new node in case simulation has failed
 			if( !simulationSuccess )

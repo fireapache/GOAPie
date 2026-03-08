@@ -1176,14 +1176,6 @@ static void testActionSystem()
 		CHECK_EQ( std::get< int32_t >( *action->arguments().get( "Target" ) ), 42 );
 	} endTest();
 
-	beginTest( "action default tick returns Done" ); {
-		World world;
-		auto* agent = world.createAgent( "TickAgent" );
-		auto action = std::make_shared< TestDummyAction >();
-		auto state = action->tick( *agent );
-		CHECK_EQ( state, Action::State::Done );
-	} endTest();
-
 	beginTest( "ActionSimulator default evaluate returns false" ); {
 		World world;
 		auto* agent = world.createAgent( "DefEvalAgent" );

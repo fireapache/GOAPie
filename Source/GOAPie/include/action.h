@@ -2,6 +2,7 @@
 
 #include <string_view>
 #include <memory>
+#include <functional>
 
 #include "arguments.h"
 #include "common.h"
@@ -15,37 +16,33 @@ namespace gie
 	class Simulation;
 	class DebugMessages;
 
-	// Class representing an action to be performed by an agent.
-	// It has a state machine for asyncronous execution.
+	// Lambda function type aliases for inline action definitions.
+	struct EvaluateSimulationParams;
+	struct SimulateSimulationParams;
+	struct CalculateHeuristicParams;
+	using EvaluateFunc = std::function< bool( EvaluateSimulationParams ) >;
+	using SimulateFunc = std::function< bool( SimulateSimulationParams ) >;
+	using HeuristicFunc = std::function< void( CalculateHeuristicParams ) >;
+
+	// Class representing an action produced by the planner.
 	class Action
 	{
+		StringHash _hash{ UndefinedName };
 		NamedArguments _arguments{ };
 
     public:
 		Action() = default;
-		Action( const Action& other ) : _arguments( other._arguments ) { };
-		Action( Action&& other ) : _arguments( std::move( other._arguments ) ) { };
+		Action( const Action& other ) : _hash( other._hash ), _arguments( other._arguments ) { };
+		Action( Action&& other ) : _hash( other._hash ), _arguments( std::move( other._arguments ) ) { };
 		Action( const NamedArguments& arguments ) : _arguments( arguments ) {  };
 		Action( NamedArguments&& arguments ) : _arguments( std::move( arguments ) ) {  };
+		Action( StringHash hash, const NamedArguments& arguments = {} ) : _hash( hash ), _arguments( arguments ) {};
 		~Action() = default;
 
 		virtual std::string_view name() const { return stringRegister().get( hash() ); }
-		virtual StringHash hash() const { return UndefinedName; }
+		virtual StringHash hash() const { return _hash; }
 
 		NamedArguments& arguments() { return _arguments; }
-
-		enum State : uint8_t
-		{
-			Waiting,
-			Running,
-			Paused,
-			Aborted,
-			Done
-		};
-
-		// Cycle of execution of action.
-		// @Return Current state of execution.
-		virtual State tick( Agent& agent ) { return State::Done; };
 	};
 
 	struct EvaluateSimulationParams
@@ -126,10 +123,19 @@ namespace gie
 		using SimulateSimulationParams::SimulateSimulationParams;
 	};
 
+	// Action simulator used by the planner during search.
+	// Supports two usage styles:
+	//   1. Subclass and override evaluate/simulate/calculateHeuristic (class-based)
+	//   2. Construct with lambda functions via the constructor (lambda-based)
+	// When lambdas are set, they take priority over the virtual defaults.
 	class ActionSimulator
 	{
+		StringHash _hash{ UndefinedName };
 		NamedArguments _arguments{ };
 		bool _forceLeaf{ false };
+		EvaluateFunc _evaluateFn;
+		SimulateFunc _simulateFn;
+		HeuristicFunc _heuristicFn;
 
 	public:
 		ActionSimulator() = delete;
@@ -142,10 +148,27 @@ namespace gie
 		ActionSimulator( NamedArguments&& arguments )
 			: _arguments( std::move( arguments ) ) {  };
 
+		// Lambda-based constructor.
+		ActionSimulator(
+			StringHash hash,
+			const NamedArguments& arguments,
+			EvaluateFunc evaluateFn = {},
+			SimulateFunc simulateFn = {},
+			HeuristicFunc heuristicFn = {},
+			bool forceLeaf = false )
+			: _hash( hash )
+			, _arguments( arguments )
+			, _forceLeaf( forceLeaf )
+			, _evaluateFn( std::move( evaluateFn ) )
+			, _simulateFn( std::move( simulateFn ) )
+			, _heuristicFn( std::move( heuristicFn ) )
+		{
+		}
+
 		~ActionSimulator() = default;
 
 		std::string_view name() const { return stringRegister().get( hash() ); }
-		virtual StringHash hash() const { return UndefinedName; }
+		virtual StringHash hash() const { return _hash; }
 
 		NamedArguments& arguments() { return _arguments; }
 		const NamedArguments& arguments() const { return _arguments; }
@@ -154,25 +177,80 @@ namespace gie
 		void setForceLeaf( bool value ) { _forceLeaf = value; }
 
 		// @Return True in case context meets prerequisites, False otherwise.
-		virtual bool evaluate( EvaluateSimulationParams params ) const { return false; }
+		virtual bool evaluate( EvaluateSimulationParams params ) const
+		{
+			return _evaluateFn ? _evaluateFn( std::move( params ) ) : false;
+		}
 
 		// @Return True if simulation setup was done successfuly, False otherwise.
-		virtual bool simulate( SimulateSimulationParams params ) const { return false; }
+		virtual bool simulate( SimulateSimulationParams params ) const
+		{
+			return _simulateFn ? _simulateFn( std::move( params ) ) : false;
+		}
 
 		// Calculates heuristc value for simulation.
-		virtual void calculateHeuristic( CalculateHeuristicParams params ) const {}
+		virtual void calculateHeuristic( CalculateHeuristicParams params ) const
+		{
+			if( _heuristicFn ) _heuristicFn( std::move( params ) );
+		}
 	};
 
+	// Factory that produces ActionSimulator and Action instances for the planner.
+	// Supports two usage styles:
+	//   1. Subclass and override simulator/action (class-based, used by macros)
+	//   2. Construct with lambda functions (lambda-based, used by addLambdaAction)
 	class ActionSetEntry
 	{
+		StringHash _hash{ InvalidStringHash };
+		EvaluateFunc _evaluateFn;
+		SimulateFunc _simulateFn;
+		HeuristicFunc _heuristicFn;
+		bool _forceLeaf{ false };
+
 	public:
 		ActionSetEntry() = default;
 		~ActionSetEntry() = default;
 
-		virtual std::string_view name() const { return "None"; }
-		virtual StringHash hash() const { return InvalidStringHash; }
-		virtual std::shared_ptr< ActionSimulator > simulator( const NamedArguments& arguments ) const { return nullptr; };
-		virtual std::shared_ptr< Action > action( const NamedArguments& arguments ) const { return nullptr; };
+		// Lambda-based constructor.
+		ActionSetEntry(
+			StringHash hash,
+			EvaluateFunc evaluateFn,
+			SimulateFunc simulateFn,
+			HeuristicFunc heuristicFn = {},
+			bool forceLeaf = false )
+			: _hash( hash )
+			, _evaluateFn( std::move( evaluateFn ) )
+			, _simulateFn( std::move( simulateFn ) )
+			, _heuristicFn( std::move( heuristicFn ) )
+			, _forceLeaf( forceLeaf )
+		{
+		}
+
+		virtual std::string_view name() const
+		{
+			return _hash != InvalidStringHash ? stringRegister().get( _hash ) : "None";
+		}
+
+		virtual StringHash hash() const { return _hash; }
+
+		virtual std::shared_ptr< ActionSimulator > simulator( const NamedArguments& arguments ) const
+		{
+			if( _evaluateFn || _simulateFn )
+			{
+				return std::make_shared< ActionSimulator >(
+					_hash, arguments, _evaluateFn, _simulateFn, _heuristicFn, _forceLeaf );
+			}
+			return nullptr;
+		}
+
+		virtual std::shared_ptr< Action > action( const NamedArguments& arguments ) const
+		{
+			if( _hash != InvalidStringHash )
+			{
+				return std::make_shared< Action >( _hash, arguments );
+			}
+			return nullptr;
+		}
 	};
 
 	// Macro for action class generation.
