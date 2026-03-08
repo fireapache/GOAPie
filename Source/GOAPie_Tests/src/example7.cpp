@@ -441,11 +441,14 @@ static void RegisterActions( gie::Planner& planner )
 	// During planning, Observe does NOT reveal specific entities — the agent
 	// cannot predict what it will discover. Only sets ExploredNewArea = true.
 	// Actual reveals happen during gameplay execution.
+	// Forced leaf: further planning past Observe is meaningless because the
+	// world state it reveals (new waypoints, entities) only exists after
+	// gameplay execution — the planner cannot anticipate those changes.
 	// -----------------------------------------------------------------------
 	class ObserveSimulator : public gie::ActionSimulator
 	{
 	public:
-		using gie::ActionSimulator::ActionSimulator;
+		ObserveSimulator( const gie::NamedArguments& args ) : ActionSimulator( args ) { setForceLeaf( true ); }
 		gie::StringHash hash() const override { return H( "Observe" ); }
 
 		bool evaluate( gie::EvaluateSimulationParams params ) const override
@@ -604,11 +607,14 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	// Inspect: inspect a Known, un-inspected Clue
 	// During planning, Inspect does NOT reveal the clue's target. Opaque.
+	// Forced leaf: the clue's effect on the world (revealing new locations,
+	// items) only materializes during gameplay execution, so expanding
+	// further in the planner would be based on stale context.
 	// -----------------------------------------------------------------------
 	class InspectSimulator : public gie::ActionSimulator
 	{
 	public:
-		using gie::ActionSimulator::ActionSimulator;
+		InspectSimulator( const gie::NamedArguments& args ) : ActionSimulator( args ) { setForceLeaf( true ); }
 		gie::StringHash hash() const override { return H( "Inspect" ); }
 
 		bool evaluate( gie::EvaluateSimulationParams params ) const override

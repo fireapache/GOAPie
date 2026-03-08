@@ -481,10 +481,14 @@ expandNodeLoop:
 				newSimulationPair.second->cost += parentCost;
 			}
 
-			// cannot expand this node if it has reached simulation depth limit
+			// cannot expand this node if it has reached simulation depth limit or action is a forced leaf
 			if( newSimulationPair.second->depth >= _depthLimit )
 			{
 				if( logSteps ) _logContent.append( "* Reached max depth, not further expanding current node.\n" );
+			}
+			else if( actionSimulator->forceLeaf() )
+			{
+				if( logSteps ) _logContent.append( "* Action is a forced leaf, not further expanding current node.\n" );
 			}
 			else
 			{

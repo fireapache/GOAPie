@@ -129,6 +129,7 @@ namespace gie
 	class ActionSimulator
 	{
 		NamedArguments _arguments{ };
+		bool _forceLeaf{ false };
 
 	public:
 		ActionSimulator() = delete;
@@ -148,6 +149,9 @@ namespace gie
 
 		NamedArguments& arguments() { return _arguments; }
 		const NamedArguments& arguments() const { return _arguments; }
+
+		bool forceLeaf() const { return _forceLeaf; }
+		void setForceLeaf( bool value ) { _forceLeaf = value; }
 
 		// @Return True in case context meets prerequisites, False otherwise.
 		virtual bool evaluate( EvaluateSimulationParams params ) const { return false; }
