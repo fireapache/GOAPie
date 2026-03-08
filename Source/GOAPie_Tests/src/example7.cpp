@@ -1110,7 +1110,7 @@ enum class CycleResult { Continued, GoalReached, Stuck };
 
 // Execute one planning cycle: try primary goal, then explore, then stuck.
 // Appends the cycle entry to g_GameplayLog.
-static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent )
+static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent, bool useHeuristics = true )
 {
 	auto getInventoryNames = [&]() -> std::vector<std::string>
 	{
@@ -1150,7 +1150,7 @@ static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent )
 		primaryPlanner.depthLimitMutator() = 8;
 		primaryPlanner.logStepsMutator() = false;
 		primaryPlanner.simulate( primaryGoal, *agent );
-		primaryPlanner.plan( true );
+		primaryPlanner.plan( useHeuristics );
 
 		auto& planned = primaryPlanner.planActions();
 		if( !planned.empty() )
@@ -1193,7 +1193,7 @@ static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent )
 		explorePlanner.depthLimitMutator() = 4;
 		explorePlanner.logStepsMutator() = false;
 		explorePlanner.simulate( exploreGoal, *agent );
-		explorePlanner.plan( true );
+		explorePlanner.plan( useHeuristics );
 
 		auto& planned = explorePlanner.planActions();
 		if( !planned.empty() )
@@ -1228,7 +1228,7 @@ static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent )
 }
 
 // Run all cycles until goal reached, stuck, or max cycles exceeded.
-static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner )
+static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner, bool useHeuristics = true )
 {
 	g_GameplayLog = {};
 	g_GameplayLog.started = true;
@@ -1237,7 +1237,7 @@ static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner&
 	const int maxCycles = 30;
 	for( int i = 0; i < maxCycles; i++ )
 	{
-		CycleResult result = RunGameplayCycle( world, agent );
+		CycleResult result = RunGameplayCycle( world, agent, useHeuristics );
 		if( result != CycleResult::Continued )
 			break;
 	}
@@ -1275,36 +1275,76 @@ int treasureHunt( ExampleParameters& params )
 // ---------------------------------------------------------------------------
 int treasureHuntValidateResult( std::string& failMsg )
 {
+	// Helper: extract flat action sequence and total simulation count from g_GameplayLog
+	auto captureResults = []() -> std::pair<std::vector<std::string>, size_t>
+	{
+		std::vector<std::string> actions;
+		size_t totalSims = 0;
+		for( auto& c : g_GameplayLog.cycles )
+		{
+			for( auto& a : c.actionNames )
+				actions.push_back( a );
+			totalSims += c.simulationCount;
+		}
+		return { actions, totalSims };
+	};
+
+	// --- Run with heuristics (A*) ---
 	gie::World world{};
 	gie::Planner planner{};
 	gie::Goal goal{ world };
 	ExampleParameters params{ world, planner, goal };
 
-	VALIDATE( treasureHunt( params ) == 0, "treasureHunt() setup failed" );
+	VALIDATE( treasureHunt( params ) == 0, "treasureHunt() setup failed (heuristic)" );
 
-	// Gameplay loop should have reached the primary goal
-	VALIDATE( g_GameplayLog.primaryGoalReached, "primary goal should be reached" );
+	VALIDATE( g_GameplayLog.primaryGoalReached, "primary goal should be reached (heuristic)" );
+	VALIDATE( g_GameplayLog.cycles.size() >= 2, "should have at least 2 planning cycles (heuristic)" );
 
-	// Should have multiple cycles (exploration needed before primary)
-	VALIDATE( g_GameplayLog.cycles.size() >= 2, "should have at least 2 planning cycles" );
-
-	// At least one explore cycle
 	bool hasExplore = false;
 	for( auto& c : g_GameplayLog.cycles )
 		if( c.goalType == "Explore" ) { hasExplore = true; break; }
 	VALIDATE( hasExplore, "should have at least one Explore cycle" );
 
-	// Should contain OpenChest somewhere
 	bool hasOpenChest = false;
 	for( auto& c : g_GameplayLog.cycles )
 		for( auto& a : c.actionNames )
 			if( a == "OpenChest" ) { hasOpenChest = true; break; }
 	VALIDATE( hasOpenChest, "plan should include OpenChest" );
 
-	// Chest should be open in world
 	auto chest = FindEntityByName( world.context(), "LockedChest" );
 	VALIDATE( chest != nullptr, "chest should exist" );
-	VALIDATE( *chest->property( "Open" )->getBool(), "chest should be open" );
+	VALIDATE( *chest->property( "Open" )->getBool(), "chest should be open (heuristic)" );
+
+	auto [heuristicActions, heuristicSims] = captureResults();
+
+	// --- Run without heuristics (BFS) ---
+	gie::World world2{};
+	gie::Planner planner2{};
+	gie::Goal goal2{ world2 };
+	ExampleParameters params2{ world2, planner2, goal2 };
+
+	// treasureHunt calls RunGameplayLoop with default useHeuristics=true,
+	// so we set up the world manually and call RunGameplayLoop with false.
+	gie::Agent* agent2 = treasureHunt_world( params2 );
+	RegisterActions( params2.planner );
+	params2.planner.depthLimitMutator() = 20;
+	auto chest2 = FindEntityByName( params2.world.context(), "LockedChest" );
+	if( chest2 )
+		params2.goal.targets.emplace_back( chest2->property( "Open" )->guid(), true );
+	params2.planner.simulate( params2.goal, *agent2 );
+	RunGameplayLoop( params2.world, agent2, params2.planner, false );
+
+	VALIDATE( g_GameplayLog.primaryGoalReached, "primary goal should be reached (BFS)" );
+
+	auto [bfsActions, bfsSims] = captureResults();
+
+	// Both should end with OpenChest
+	VALIDATE( !bfsActions.empty() && bfsActions.back() == "OpenChest", "BFS plan should end with OpenChest" );
+	VALIDATE( !heuristicActions.empty() && heuristicActions.back() == "OpenChest", "A* plan should end with OpenChest" );
+
+	// Log simulation counts for comparison (A* optimal termination may explore more
+	// nodes than BFS first-found, but both must reach the goal)
+	printf( "  simulations: A*=%zu BFS=%zu\n", heuristicSims, bfsSims );
 
 	return 0;
 }
