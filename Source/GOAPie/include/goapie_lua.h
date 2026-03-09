@@ -393,8 +393,54 @@ static int goapie_lua_move_agent_to_entity_func(lua_State* L)
     return 1;
 }
 
+// create_entity(name) — creates a new entity in the simulation context, returns its guid
+static int goapie_lua_create_entity_func(lua_State* L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
+    void* ud = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if(!ud) { lua_pushnil(L); return 1; }
+    Simulation* sim = static_cast< Simulation* >( ud );
 
+    if( !lua_isstring( L, 1 ) )
+    {
+        lua_pushnil( L );
+        return 1;
+    }
 
+    const char* name = lua_tostring( L, 1 );
+    Entity* ent = sim->context().createEntity( name );
+    if( !ent ) { lua_pushnil( L ); return 1; }
+
+    lua_pushinteger( L, static_cast< lua_Integer >( ent->guid() ) );
+    return 1;
+}
+
+// tag_entity(guid, tagName) — adds a tag to an entity in the simulation context
+static int goapie_lua_tag_entity_func(lua_State* L)
+{
+    lua_getfield(L, LUA_REGISTRYINDEX, "__GIE_CURRENT_SIMULATION");
+    void* ud = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    if(!ud) { lua_pushboolean(L, 0); return 1; }
+    Simulation* sim = static_cast< Simulation* >( ud );
+
+    if( !lua_isnumber( L, 1 ) || !lua_isstring( L, 2 ) )
+    {
+        lua_pushboolean( L, 0 );
+        return 1;
+    }
+
+    Guid guid = static_cast< Guid >( lua_tointeger( L, 1 ) );
+    const char* tagName = lua_tostring( L, 2 );
+
+    Entity* ent = sim->context().entity( guid );
+    if( !ent ) { lua_pushboolean( L, 0 ); return 1; }
+
+    sim->context().entityTagRegister().tag( ent, { stringHasher( tagName ) } );
+    lua_pushboolean( L, 1 );
+    return 1;
+}
 
 
 // Real Lua-backed sandbox (requires linking Lua).
@@ -512,7 +558,11 @@ public:
         lua_pushcfunction( L, goapie_lua_set_cost_func );
         lua_setfield( L, -2, "set_cost" );
 
+        lua_pushcfunction( L, goapie_lua_create_entity_func );
+        lua_setfield( L, -2, "create_entity" );
 
+        lua_pushcfunction( L, goapie_lua_tag_entity_func );
+        lua_setfield( L, -2, "tag_entity" );
 
         // Store env in registry under name so later lookups work.
         lua_pushstring( L, name.c_str() ); // key
@@ -868,8 +918,13 @@ public:
     std::shared_ptr< ActionSimulator > simulator( const NamedArguments& /*arguments*/ ) const override
     {
         // Create LuaActionSimulator using the unified chunk name.
-        return std::make_shared< LuaActionSimulator >( m_sandbox, m_name, m_luaChunk, m_arguments );
+        auto sim = std::make_shared< LuaActionSimulator >( m_sandbox, m_name, m_luaChunk, m_arguments );
+        sim->setForceLeaf( m_forceLeaf );
+        return sim;
     }
+
+    void setForceLeaf( bool value ) { m_forceLeaf = value; }
+    bool forceLeaf() const { return m_forceLeaf; }
 
     std::shared_ptr< Action > action( const NamedArguments& arguments ) const override
     {
@@ -976,6 +1031,7 @@ private:
     std::string m_luaChunk;
     std::string m_source;
 
+    bool m_forceLeaf{ false };
     mutable std::string m_lastCompileError;
 };
 

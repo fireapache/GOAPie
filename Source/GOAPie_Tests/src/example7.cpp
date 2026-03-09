@@ -225,7 +225,7 @@ static float EstimateTreasureHeuristic( const gie::Simulation& sim, const gie::E
 // ---------------------------------------------------------------------------
 // World setup
 // ---------------------------------------------------------------------------
-static gie::Agent* treasureHunt_world( ExampleParameters& params )
+gie::Agent* treasureHunt_world( ExampleParameters& params )
 {
 	gie::World& world = params.world;
 	params.imGuiDrawFunc = &ImGuiFunc7;
