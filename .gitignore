@@ -15,6 +15,7 @@ Source/Tests/NodeEditor.json
 *.lib
 
 *.sln
+*.slnx
 *.vcxproj*
 *.exe
 
