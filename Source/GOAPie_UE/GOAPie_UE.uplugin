@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "GOAPie",
+	"Description": "Goal Oriented Action Planning (GOAP) framework for Unreal Engine. Supports threaded and async planning.",
+	"Category": "AI",
+	"CreatedBy": "GOAPie",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"Modules": [
+		{
+			"Name": "GOAPie_UE",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}
