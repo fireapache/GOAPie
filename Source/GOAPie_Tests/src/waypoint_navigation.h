@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <limits>
+#include <set>
 
 #include <goapie.h>
 
@@ -62,6 +63,9 @@ namespace gie
 		{
 			return {};
 		}
+
+		// Build a set for O(1) membership checks — linked nodes outside this set are skipped.
+		std::set< Guid > wpGraphSet( waypointGuids.begin(), waypointGuids.end() );
 
 		Guid startNode = nearestWaypoint( world, waypointGuids, start );
 		Guid endNode = nearestWaypoint( world, waypointGuids, end );
@@ -142,6 +146,12 @@ namespace gie
 				auto linkedNodes = bestNodeEntity->property( "Links" )->getGuidArray();
 				for( Guid linkedNode : *linkedNodes )
 				{
+					// Skip linked nodes that are not in the provided waypoint set
+					if( !wpGraphSet.count( linkedNode ) )
+					{
+						continue;
+					}
+
 					auto visitedNodeItr = std::find( visitedNodes.begin(), visitedNodes.end(), linkedNode );
 					if( visitedNodeItr != visitedNodes.end() )
 					{
