@@ -2,26 +2,38 @@
 #include <array>
 #include <algorithm>
 #include <random>
+#include <set>
+#include <memory>
+#include <queue>
 
 #include <goapie.h>
 
 #include "example.h"
 #include "waypoint_navigation.h"
 
+#include "visualization.h"
+
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
 
 // Heist Example (Example 6)
-// This sample sets up a small house layout and simulates multiple routes to open a safe.
-// It demonstrates:
-//  - Multiple entry routes (front door, back door, kitchen window)
-//  - Tools and keys gating (crowbar, bolt cutters, lockpick, keys, stethoscope)
-//  - System interaction (alarm panel, fuse box)
-//  - GOAP action simulators with heuristic guidance and rich debug messages
+// Multi-plan discovery scenario: the thief starts outside a mansion knowing nothing.
+// The gameplay loop cycles between:
+//   1. Primary goal: open the safe
+//   2. Explore fallback: discover new areas around the mansion
+// The agent circles the mansion, discovers an energy panel, disables the alarm,
+// enters, collects code pieces, and opens the safe.
+//
+// Key concepts:
+//   - Partial world knowledge via Known tags and Reveals chains
+//   - Primary/secondary goals with automatic fallback
+//   - Multiple planning cycles with world mutation between plans
+//   - ForceLeaf Observe action (opaque during planning)
+//   - Exterior exploration ring + interior room navigation
 
 const char* heistOpenSafeDescription()
 {
-    return "Complex heist scenario: plan actions to open a safe using tools, keys, or brute force.";
+	return "Heist discovery scenario: explore a mansion's perimeter, disable security, and open the safe.";
 }
 
 // Simple helpers
@@ -32,66 +44,48 @@ using gie::Guid;
 // Common string hashes
 static inline gie::StringHash H( const char* s ) { return gie::stringHasher( s ); }
 
-// UI + world knobs for the heist example
-struct HeistToggles
+// Forward declarations
+static void ImGuiFunc6( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimulationGuid );
+static void GLDrawFunc6( gie::World& world, gie::Planner& planner );
+static gie::Entity* FindRoom( gie::World& world, const char* roomName );
+
+// ---------------------------------------------------------------------------
+// Gameplay Log — records each planning cycle for visualization
+// ---------------------------------------------------------------------------
+struct GameplayCycleEntry
 {
-    // Entry points — kitchen window is the only free entry, others require tools
-    bool frontDoorLocked{ true };
-    bool frontDoorAlarmed{ true };
-    bool backDoorLocked{ true };
-    bool backDoorBlocked{ false };
-    bool kitchenWindowLocked{ false };
-    bool kitchenWindowBarred{ false };
-
-    // Systems — alarm creates additional complexity
-    bool alarmArmed{ true };
-
-    // Items — tools scattered around the property
-    bool placeCrowbar{ true };
-    bool placeBoltCutter{ true };
-    bool placeLockpick{ true };
-    bool placeStethoscope{ false };
-    bool placeFrontKey{ false };
-    bool placeBackKey{ false };
-    bool placeSafeKey{ false };
-
-    // Safe — code-lock requires collecting code pieces from around the house
-    int safeRoomIndex{ 0 }; // 0: BedroomA, 1: BedroomB
-    int safeLockMode{ 1 };  // 0: Key, 1: Code, 2: Heavy (requires crack)
-    int requiredCodePieces{ 2 };
-
-    // heuristic weights
-    float travelCostWeight{ 1.0f };
-    float lockedPenalty{ 10.0f };
-    float barredPenalty{ 12.0f };
-    float alarmedPenalty{ 8.0f };
+	int cycle{ 0 };
+	std::string goalType;          // "Primary" or "Explore"
+	bool planFound{ false };
+	std::vector<std::string> actionNames;   // execution order (first to last)
+	std::vector<std::string> actionDetails; // detailed description per action
+	glm::vec3 agentPosBefore{ 0.f };
+	glm::vec3 agentPosAfter{ 0.f };
+	int knownCountBefore{ 0 };
+	int knownCountAfter{ 0 };
+	std::vector<std::string> inventoryAfter;
+	size_t simulationCount{ 0 };
+	std::unique_ptr<gie::Planner> plannerPtr; // preserved planner with full simulation tree
 };
 
-// Global toggles are kept static inside this TU (edited via ImGui).
-static HeistToggles g_Toggles{};
-
- // Forward declarations
-static void ImGuiFunc6( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimulationGuid );
-static void ResetHeistWorldFromToggles( gie::World& world );
-static gie::Entity* FindRoom( gie::World& world, const char* roomName );
-static void populateWorld( ExampleParameters& params, gie::Agent* agent );
-
- // Split example 6 setup into world-only and actions-only functions.
- // heistOpenSafe_world builds the World/Agent/Goal and returns the created agent pointer.
- // heistOpenSafe_actions registers native action simulators and action set entries.
- gie::Agent* heistOpenSafe_world( ExampleParameters& params );
- static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent );
-
-// Helper to get all entities tagged with "Access"
-static std::vector<gie::Guid> getAccessPoints( const gie::Blackboard& ctx )
+struct GameplayLog
 {
-    std::vector<gie::Guid> accessPoints;
-    if( auto accessSet = ctx.entityTagRegister().tagSet( "Access" ) )
-    {
-        accessPoints.assign( accessSet->begin(), accessSet->end() );
-    }
-    return accessPoints;
-}
+	std::vector<GameplayCycleEntry> cycles;
+	std::vector<glm::vec3> agentTrail; // breadcrumb trail of positions
+	bool primaryGoalReached{ false };
+	int selectedCycle{ -1 }; // for UI highlight
+	bool started{ false };   // has the gameplay loop been executed?
+};
+
+static GameplayLog g_GameplayLog;
+
+// UI toggles
+struct HeistToggles
+{
+	float travelCostWeight{ 1.0f };
+	bool showFullMap{ false };
+};
+static HeistToggles g_Toggles{};
 
 // Find an entity by name, searching the entire blackboard hierarchy.
 // Simulation contexts only store locally modified copies — iteration over entities()
@@ -99,1557 +93,2538 @@ static std::vector<gie::Guid> getAccessPoints( const gie::Blackboard& ctx )
 // parent chain so entity lookups by name work correctly during planning.
 static gie::Entity* FindEntityByName( gie::Blackboard& ctx, const char* name )
 {
-    for( const auto& kv : ctx.entities() )
-        if( gie::stringRegister().get( kv.second.nameHash() ) == name )
-            return ctx.entity( kv.first );
-    const gie::Blackboard* p = ctx.parent();
-    while( p )
-    {
-        for( const auto& kv : p->entities() )
-            if( gie::stringRegister().get( kv.second.nameHash() ) == name )
-                return ctx.entity( kv.first );
-        p = p->parent();
-    }
-    return nullptr;
+	for( const auto& kv : ctx.entities() )
+		if( gie::stringRegister().get( kv.second.nameHash() ) == name )
+			return ctx.entity( kv.first );
+	const gie::Blackboard* p = ctx.parent();
+	while( p )
+	{
+		for( const auto& kv : p->entities() )
+			if( gie::stringRegister().get( kv.second.nameHash() ) == name )
+				return ctx.entity( kv.first );
+		p = p->parent();
+	}
+	return nullptr;
 }
 
 static const gie::Entity* FindEntityByName( const gie::Blackboard& ctx, const char* name )
 {
-    for( const auto& kv : ctx.entities() )
-        if( gie::stringRegister().get( kv.second.nameHash() ) == name )
-            return ctx.entity( kv.first );
-    const gie::Blackboard* p = ctx.parent();
-    while( p )
-    {
-        for( const auto& kv : p->entities() )
-            if( gie::stringRegister().get( kv.second.nameHash() ) == name )
-                return ctx.entity( kv.first );
-        p = p->parent();
-    }
-    return nullptr;
+	for( const auto& kv : ctx.entities() )
+		if( gie::stringRegister().get( kv.second.nameHash() ) == name )
+			return ctx.entity( kv.first );
+	const gie::Blackboard* p = ctx.parent();
+	while( p )
+	{
+		for( const auto& kv : p->entities() )
+			if( gie::stringRegister().get( kv.second.nameHash() ) == name )
+				return ctx.entity( kv.first );
+		p = p->parent();
+	}
+	return nullptr;
 }
 
-// Heuristic helper: estimate remaining effort to open the safe.
-// Combines travel distance, entry penalties, and missing prerequisites
-// (code pieces, tools) so A* steers exploration toward productive actions.
-static float EstimateHeistHeuristic( const gie::Simulation& sim, const gie::Entity* agentEnt )
+// Count Known entities that are also waypoints (for display)
+static int CountKnown( const gie::Blackboard& ctx )
 {
-    if( !agentEnt ) return 0.f;
-    auto agentLoc = agentEnt->property( "Location" );
-    if( !agentLoc ) return 0.f;
-
-    // Find safe and its target room
-    const gie::Entity* safe = FindEntityByName( sim.context(), "Safe" );
-    if( !safe ) return 0.f;
-
-    // If safe is already open, no remaining work
-    if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) return 0.f;
-
-    Guid safeRoomGuid = *const_cast< gie::Entity* >( safe )->property( "InRoom" )->getGuid();
-    const gie::Entity* safeRoomEnt = sim.context().entity( safeRoomGuid );
-    if( !safeRoomEnt ) return 0.f;
-
-    auto roomLocP = safeRoomEnt->property( "Location" );
-    if( !roomLocP ) return 0.f;
-
-    // Distance to safe room
-    std::vector<Guid> wp; if( auto set = sim.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-    auto path = gie::getPath( const_cast< gie::World& >( *sim.world() ), wp, *agentLoc->getVec3(), *roomLocP->getVec3() );
-    float h = g_Toggles.travelCostWeight * path.length;
-
-    // Entry penalties when still outside
-    auto curRoomGuid = agentEnt->property( "CurrentRoom" ) ? *agentEnt->property( "CurrentRoom" )->getGuid() : gie::NullGuid;
-    if( curRoomGuid == gie::NullGuid )
-    {
-        auto connectors = getAccessPoints( sim.context() );
-        bool alarmArmed = true; if( auto a = FindEntityByName( sim.context(), "AlarmSystem" ) ) { alarmArmed = *a->property( "Armed" )->getBool(); }
-        if( !connectors.empty() )
-        {
-            float extra = 0.f;
-            for( auto g : connectors )
-            {
-                auto c = sim.context().entity( g );
-                if( *c->property( "Locked" )->getBool() ) extra += g_Toggles.lockedPenalty;
-                if( c->property( "Barred" ) && *c->property( "Barred" )->getBool() ) extra += g_Toggles.barredPenalty;
-                if( c->property( "Alarmed" ) && alarmArmed && *c->property( "Alarmed" )->getBool() ) extra += g_Toggles.alarmedPenalty;
-            }
-            h += extra * 0.25f;
-        }
-    }
-
-    // Prerequisite penalty: estimate cost of actions still needed to open the safe.
-    // This guides A* to prefer collecting items before entering when that's cheaper.
-    float lockMode = *const_cast< gie::Entity* >( safe )->property( "LockMode" )->getFloat();
-    auto inv = agentEnt->property( "Inventory" );
-    if( inv )
-    {
-        auto invArr = inv->getGuidArray();
-        if( lockMode == 1.f ) // Code-lock: penalize for each missing code piece
-        {
-            int required = static_cast< int >( *const_cast< gie::Entity* >( safe )->property( "RequiredCodePieces" )->getFloat() );
-            int have = 0;
-            for( Guid it : *invArr )
-            {
-                auto e = sim.context().entity( it );
-                if( !e ) continue;
-                auto info = e->property( "Info" ); if( !info ) continue;
-                auto infoEnt = sim.context().entity( *info->getGuid() );
-                if( infoEnt )
-                {
-                    auto nm = gie::stringRegister().get( infoEnt->nameHash() );
-                    if( nm.find( "Code" ) != std::string::npos ) have++;
-                }
-            }
-            int missing = std::max( 0, required - have );
-            h += missing * 15.f; // estimated cost per code piece collection trip
-        }
-    }
-
-    // Alarm penalty: if the alarm is still armed, the agent will need to disable it
-    // (required for code-lock safe). Estimate the extra travel + action cost.
-    auto alarm = FindEntityByName( sim.context(), "AlarmSystem" );
-    if( alarm && *alarm->property( "Armed" )->getBool() && lockMode == 1.f )
-    {
-        h += 10.f; // estimated cost to reach and disable the alarm panel
-    }
-
-    return h;
-}
-
-// Set cost on a simulation node: travel distance weighted + base action cost.
-// This is the g-cost component used by A* ordering (f = cost + heuristic).
-static void SetSimulationCost( gie::Simulation& sim, float travelLength, float baseActionCost )
-{
-    sim.cost = travelLength * g_Toggles.travelCostWeight + baseActionCost;
+	auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+	if( !knownSet ) return 0;
+	return static_cast<int>( knownSet->size() );
 }
 
 // Check if a world position is inside the house boundary (WholeHouse room).
 // The house spans x:[-30,30], y:[-20,20].
 static bool IsPositionInsideHouse( const glm::vec3& pos )
 {
-    return pos.x >= -30.f && pos.x <= 30.f && pos.y >= -20.f && pos.y <= 20.f;
+	return pos.x >= -30.f && pos.x <= 30.f && pos.y >= -20.f && pos.y <= 20.f;
 }
 
 // Check if the agent is currently inside the house.
 static bool IsAgentInside( const gie::Blackboard& ctx, Guid agentGuid )
 {
-    auto agent = ctx.entity( agentGuid );
-    if( !agent ) return false;
-    auto roomProp = agent->property( "CurrentRoom" );
-    return roomProp && *roomProp->getGuid() != gie::NullGuid;
+	auto agent = ctx.entity( agentGuid );
+	if( !agent ) return false;
+	auto roomProp = agent->property( "CurrentRoom" );
+	return roomProp && *roomProp->getGuid() != gie::NullGuid;
 }
 
 // Check if the agent is in the same room as the safe.
 static bool IsAgentInSafeRoom( const gie::Blackboard& ctx, Guid agentGuid )
 {
-    auto agent = ctx.entity( agentGuid );
-    if( !agent ) return false;
-    auto curRoom = agent->property( "CurrentRoom" );
-    if( !curRoom || *curRoom->getGuid() == gie::NullGuid ) return false;
-    Guid agentRoom = *curRoom->getGuid();
-    auto safe = FindEntityByName( ctx, "Safe" );
-    if( !safe ) return false;
-    auto inRoom = safe->property( "InRoom" );
-    if( !inRoom ) return false;
-    return agentRoom == *inRoom->getGuid();
+	auto agent = ctx.entity( agentGuid );
+	if( !agent ) return false;
+	auto curRoom = agent->property( "CurrentRoom" );
+	if( !curRoom || *curRoom->getGuid() == gie::NullGuid ) return false;
+	Guid agentRoom = *curRoom->getGuid();
+	auto safe = FindEntityByName( ctx, "Safe" );
+	if( !safe ) return false;
+	auto inRoom = safe->property( "InRoom" );
+	if( !inRoom ) return false;
+	return agentRoom == *inRoom->getGuid();
 }
 
 // Simple utility: store a movement path to target entity and move agent location.
 static float MoveAgentAlongPath( gie::SimulateSimulationParams& params, const glm::vec3& from, gie::Entity* toEntity, const std::vector< Guid >& waypointGuids )
 {
-    if( !toEntity ) return 0.f;
-    auto locPpt = toEntity->property( "Location" );
-    if( !locPpt ) return 0.f;
-    glm::vec3 to = *locPpt->getVec3();
-    auto path = gie::getPath( *params.simulation.world(), waypointGuids, from, to );
-    Guid tgt = toEntity->guid();
-    auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-    gie::storeSimulatedPath( params, path, tgt, agentEnt->property( "Location" )->getVec3() );
-    auto agentLoc = agentEnt->property( "Location" )->getVec3();
-    if( agentLoc ) *agentLoc = to;
-    params.addDebugMessage( "MoveAgentAlongPath -> target=" + std::string( gie::stringRegister().get( toEntity->nameHash() ) ) + ", length=" + std::to_string( path.length ) );
-    return path.length;
+	if( !toEntity ) return 0.f;
+	auto locPpt = toEntity->property( "Location" );
+	if( !locPpt ) return 0.f;
+	glm::vec3 to = *locPpt->getVec3();
+	auto path = gie::getPath( *params.simulation.world(), waypointGuids, from, to );
+	Guid tgt = toEntity->guid();
+	auto agentEnt = params.simulation.context().entity( params.agent.guid() );
+	gie::storeSimulatedPath( params, path, tgt, agentEnt->property( "Location" )->getVec3() );
+	auto agentLoc = agentEnt->property( "Location" )->getVec3();
+	if( agentLoc ) *agentLoc = to;
+	params.addDebugMessage( "MoveAgentAlongPath -> target=" + std::string( gie::stringRegister().get( toEntity->nameHash() ) ) + ", length=" + std::to_string( path.length ) );
+	return path.length;
 }
 
-// Build world and return created agent
+// Set cost on a simulation node: travel distance weighted + base action cost.
+static void SetSimulationCost( gie::Simulation& sim, float travelLength, float baseActionCost )
+{
+	sim.cost = travelLength * g_Toggles.travelCostWeight + baseActionCost;
+}
+
+// Find the nearest Known waypoint that has at least one traversable portal connection.
+// Returns NullGuid if no such waypoint exists.  Also returns the extra walking distance
+// the agent would need to reach that waypoint (stored in outWalkDist).
+static Guid NearestPortalConnectedWP(
+	const gie::Blackboard& ctx,
+	const std::set< Guid >* wpSet,
+	const std::set< Guid >* knownSet,
+	const std::set< Guid >* portalSet,
+	bool alarmArmed,
+	glm::vec3 agentLoc,
+	float& outWalkDist )
+{
+	// Collect all WP guids that are on at least one traversable portal's side
+	std::unordered_set< Guid > connectedWPs;
+	for( auto pg : *portalSet )
+	{
+		if( !knownSet->count( pg ) ) continue;
+		auto portal = ctx.entity( pg ); if( !portal ) continue;
+		if( *portal->property( "Locked" )->getBool() ) continue;
+		if( *portal->property( "AlarmGated" )->getBool() && alarmArmed ) continue;
+		Guid sA = *portal->property( "SideA" )->getGuid();
+		Guid sB = *portal->property( "SideB" )->getGuid();
+		// Only include sides that are Known waypoints
+		if( wpSet->count( sA ) && knownSet->count( sA ) ) connectedWPs.insert( sA );
+		if( wpSet->count( sB ) && knownSet->count( sB ) ) connectedWPs.insert( sB );
+	}
+
+	Guid bestWp = gie::NullGuid;
+	float bestD = std::numeric_limits< float >::max();
+	for( auto g : connectedWPs )
+	{
+		auto wp = ctx.entity( g ); if( !wp ) continue;
+		auto loc = wp->property( "Location" ); if( !loc ) continue;
+		float d = glm::distance( agentLoc, *loc->getVec3() );
+		if( d < bestD ) { bestD = d; bestWp = g; }
+	}
+	outWalkDist = ( bestWp != gie::NullGuid ) ? bestD : 0.f;
+	return bestWp;
+}
+
+// ---------------------------------------------------------------------------
+// Heuristic: estimate remaining effort to open the safe.
+// Combines distance to safe room, alarm penalty, panel unknown penalty,
+// outside penalty, and missing code pieces.
+// ---------------------------------------------------------------------------
+static float EstimateHeistHeuristic( const gie::Simulation& sim, const gie::Entity* agentEnt )
+{
+	if( !agentEnt ) return 0.f;
+
+	// Find safe
+	const gie::Entity* safe = FindEntityByName( sim.context(), "Safe" );
+	if( !safe ) return 0.f;
+	if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) return 0.f;
+
+	auto agentLoc = agentEnt->property( "Location" );
+	if( !agentLoc ) return 0.f;
+
+	// Distance to safe room
+	Guid safeRoomGuid = *const_cast< gie::Entity* >( safe )->property( "InRoom" )->getGuid();
+	const gie::Entity* safeRoomEnt = sim.context().entity( safeRoomGuid );
+	float h = 0.f;
+	if( safeRoomEnt )
+	{
+		auto roomLocP = safeRoomEnt->property( "Location" );
+		if( roomLocP )
+			h += glm::distance( *agentLoc->getVec3(), *roomLocP->getVec3() ) * 0.1f;
+	}
+
+	// Alarm penalty: alarm armed adds significant cost
+	auto alarm = FindEntityByName( sim.context(), "AlarmSystem" );
+	if( alarm && *alarm->property( "Armed" )->getBool() )
+		h += 20.f;
+
+	// Panel unknown penalty: if EnergyPanel not known, agent can't disable alarm
+	auto knownSet = sim.context().entityTagRegister().tagSet( "Known" );
+	auto panelEnt = FindEntityByName( sim.context(), "EnergyPanel" );
+	if( panelEnt && knownSet && !knownSet->count( panelEnt->guid() ) )
+		h += 15.f;
+
+	// Outside penalty: agent still needs to enter mansion
+	auto curRoomGuid = agentEnt->property( "CurrentRoom" ) ? *agentEnt->property( "CurrentRoom" )->getGuid() : gie::NullGuid;
+	if( curRoomGuid == gie::NullGuid )
+		h += 10.f;
+
+	// Missing code pieces penalty
+	auto inv = agentEnt->property( "Inventory" );
+	if( inv )
+	{
+		auto invArr = inv->getGuidArray();
+		int required = static_cast< int >( *const_cast< gie::Entity* >( safe )->property( "RequiredCodePieces" )->getFloat() );
+		int have = 0;
+		for( Guid it : *invArr )
+		{
+			auto e = sim.context().entity( it );
+			if( !e ) continue;
+			auto info = e->property( "Info" ); if( !info ) continue;
+			auto infoEnt = sim.context().entity( *info->getGuid() );
+			if( infoEnt )
+			{
+				auto nm = gie::stringRegister().get( infoEnt->nameHash() );
+				if( nm.find( "Code" ) != std::string::npos ) have++;
+			}
+		}
+		int missing = std::max( 0, required - have );
+		h += missing * 15.f;
+	}
+
+	// Study door locked penalty
+	auto studyDoor = FindEntityByName( sim.context(), "StudyDoor" );
+	if( studyDoor && *studyDoor->property( "Locked" )->getBool() )
+		h += 10.f;
+
+	// Safe not inspected penalty
+	auto safeInspected = const_cast< gie::Entity* >( safe )->property( "Inspected" );
+	if( safeInspected && !*safeInspected->getBool() )
+		h += 5.f;
+
+	return h;
+}
+
+// ---------------------------------------------------------------------------
+// World setup
+// ---------------------------------------------------------------------------
 gie::Agent* heistOpenSafe_world( ExampleParameters& params )
 {
-    gie::World& world = params.world;
-    // specific example visualization
-    params.imGuiDrawFunc = &ImGuiFunc6;
+	gie::World& world = params.world;
+	params.imGuiDrawFunc = &ImGuiFunc6;
+	params.glDrawFunc = &GLDrawFunc6;
+	params.isGameplayExample = true;
 
-    // Agent: the thief
-    auto agent = world.createAgent( "Thief" );
-    world.context().entityTagRegister().tag( agent, { H( "Agent" ) } );
-    agent->createProperty( "Location", glm::vec3{ -30.f, 0.f, 0.f } ); // Outside front vicinity
-    agent->createProperty( "CurrentRoom", gie::NullGuid );
-    agent->createProperty( "Inventory", gie::Property::GuidVector{} );
+	auto selectableTag = H( "Selectable" );
+	auto drawTag = H( "Draw" );
 
-    auto selectableTagHash = H( "Selectable" );
-	auto drawTagHash = H( "Draw" );
+	// Agent: the thief
+	auto agent = world.createAgent( "Thief" );
+	world.context().entityTagRegister().tag( agent, { H( "Agent" ) } );
+	agent->createProperty( "Location", glm::vec3{ -50.f, 0.f, 0.f } );  // WP_Start position
+	agent->createProperty( "CurrentRoom", gie::NullGuid );
+	agent->createProperty( "Inventory", gie::Property::GuidVector{} );
+	agent->createProperty( "ExploredNewArea", false );   // exploration goal target
+	agent->createProperty( "DiscoveryCount", 1.f );      // UI feedback
+	agent->createProperty( "NeededItems", gie::Property::GuidVector{} );
 
-    // Waypoint archetype
-    if( auto* a = world.createArchetype( "Waypoint" ) )
-    {
-		a->addTag( selectableTagHash );
-        a->addTag( "Waypoint" );
-		a->addTag( drawTagHash );
-        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-        a->addProperty( "Links", gie::Property::GuidVector{} );
-    }
-    // Room archetype
-    if( auto* a = world.createArchetype( "Room" ) )
-    {
-        a->addTag( "Room" );
-        a->addTag( "Draw" );
-        a->addProperty( "Vertices", std::vector< glm::vec3 >{} );
-        a->addProperty( "Discovered", true );
-        a->addProperty( "DisplayName", true );
-        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-    }
+	// -- Archetypes ----------------------------------------------------------
+	// Waypoint archetype (exterior navigation nodes)
+	if( auto* a = world.createArchetype( "Waypoint" ) )
+	{
+		a->addTag( selectableTag );
+		a->addTag( "Waypoint" );
+		a->addTag( drawTag );
+		a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+		a->addProperty( "Links", gie::Property::GuidVector{} );
+		a->addProperty( "Reveals", gie::Property::GuidVector{} );
+	}
+	// Room archetype
+	if( auto* a = world.createArchetype( "Room" ) )
+	{
+		a->addTag( "Room" );
+		a->addTag( "Draw" );
+		a->addProperty( "Vertices", std::vector< glm::vec3 >{} );
+		a->addProperty( "Discovered", true );
+		a->addProperty( "DisplayName", true );
+		a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+	}
+	// Item archetype (carryable items)
+	if( auto* a = world.createArchetype( "Item" ) )
+	{
+		a->addTag( selectableTag );
+		a->addTag( "Item" );
+		a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+		a->addProperty( "Info", gie::NullGuid );
+	}
+	// Info archetype (descriptor entities)
+	if( auto* a = world.createArchetype( "Info" ) )
+	{
+		a->addTag( "Info" );
+		a->addProperty( "Name", gie::NullGuid );
+	}
+	// Safe archetype
+	if( auto* a = world.createArchetype( "Safe" ) )
+	{
+		a->addTag( selectableTag );
+		a->addTag( drawTag );
+		a->addProperty( "Open", false );
+		a->addProperty( "InRoom", gie::NullGuid );
+		a->addProperty( "LockMode", 0.f );
+		a->addProperty( "RequiredCodePieces", 0.f );
+	}
+	// Alarm system
+	if( auto* a = world.createArchetype( "AlarmSystem" ) )
+	{
+		a->addProperty( "Armed", false );
+	}
+	// Portal archetype (doors/windows connecting waypoints)
+	if( auto* a = world.createArchetype( "Portal" ) )
+	{
+		a->addTag( selectableTag );
+		a->addTag( drawTag );
+		a->addTag( "Portal" );
+		a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+		a->addProperty( "SideA", gie::NullGuid );
+		a->addProperty( "SideB", gie::NullGuid );
+		a->addProperty( "Locked", false );
+		a->addProperty( "AlarmGated", false );
+		a->addProperty( "RequiredItems", gie::Property::GuidVector{} );
+		a->addProperty( "Inspected", false );
+	}
+	// Agent archetype
+	if( auto* a = world.createArchetype( "Agent" ) )
+	{
+		a->addTag( "Agent" );
+		a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
+		a->addProperty( "CurrentRoom", gie::NullGuid );
+		a->addProperty( "Inventory", gie::Property::GuidVector{} );
+		a->addProperty( "ExploredNewArea", false );
+		a->addProperty( "DiscoveryCount", 0.f );
+		a->addProperty( "NeededItems", gie::Property::GuidVector{} );
+	}
 
-    // Item archetype (carryable items)
-    if( auto* a = world.createArchetype( "Item" ) )
-    {
-		a->addTag( selectableTagHash );
-        a->addTag( "Item" );
-        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-        a->addProperty( "Info", gie::NullGuid );
-    }
-    // Info archetype (descriptor entities)
-    if( auto* a = world.createArchetype( "Info" ) )
-    {
-        a->addTag( "Info" );
-        a->addProperty( "Name", gie::NullGuid );
-    }
-    // Safe archetype
-    if( auto* a = world.createArchetype( "Safe" ) )
-    {
-		a->addTag( selectableTagHash );
-		a->addTag( drawTagHash );
-        a->addProperty( "Open", false );
-        a->addProperty( "InRoom", gie::NullGuid );
-        a->addProperty( "LockMode", 0.f );
-        a->addProperty( "RequiredCodePieces", 0.f );
-    }
-    // Alarm system and panels
-    if( auto* a = world.createArchetype( "AlarmSystem" ) )
-    {
-        a->addProperty( "Armed", false );
-    }
-    if( auto* a = world.createArchetype( "AlarmPanel" ) )
-    {
-		a->addTag( selectableTagHash );
-		a->addTag( drawTagHash );
-        a->addTag( "AlarmPanel" );
-        a->addTag( "Item" );
-        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-    }
-    if( auto* a = world.createArchetype( "FuseBoxEntity" ) )
-    {
-		a->addTag( selectableTagHash );
-		a->addTag( drawTagHash );
-        a->addTag( "FuseBox" );
-        a->addTag( "Item" );
-        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-    }
-    // RoomAccess archetype (doors/windows)
-    if( auto* a = world.createArchetype( "RoomAccess" ) )
-    {
-        a->addTag( "Waypoint" );
-		a->addTag( selectableTagHash );
-		a->addTag( drawTagHash );
-        a->addTag( "Access" );
-        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-        a->addProperty( "Links", gie::Property::GuidVector{} );
-        a->addProperty( "Locked", false );
-        a->addProperty( "Blocked", false );
-        a->addProperty( "Barred", false );
-        a->addProperty( "Alarmed", false );
-        a->addProperty( "RequiredKey", gie::NullGuid );
-    }
-    // Agent archetype (thief)
-    if( auto* a = world.createArchetype( "Agent" ) )
-    {
-        a->addTag( "Agent" );
-        a->addProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
-        a->addProperty( "CurrentRoom", gie::NullGuid );
-        a->addProperty( "Inventory", gie::Property::GuidVector{} );
-    }
+	// -- Rooms (mansion interior) --------------------------------------------
+	const gie::StringHash WholeHouseHash    = H( "WholeHouse" );
+	const gie::StringHash LaundryRoomHash   = H( "LaundryRoom" );
+	const gie::StringHash KitchenHash       = H( "Kitchen" );
+	const gie::StringHash BathroomHash      = H( "Bathroom" );
+	const gie::StringHash GarageHash        = H( "Garage" );
+	const gie::StringHash CorridorHash      = H( "Corridor" );
+	const gie::StringHash LivingRoomHash    = H( "LivingRoom" );
+	const gie::StringHash EntranceHash      = H( "Entrance" );
+	const gie::StringHash BedroomAHash      = H( "BedroomA" );
+	const gie::StringHash BedroomBHash      = H( "BedroomB" );
+	const gie::StringHash StudyHash         = H( "Study" );
 
-    // Room and POI names
-    const gie::StringHash AlarmPanelHash    = H( "AlarmPanel" );
-    const gie::StringHash BackDoorHash      = H( "BackDoor" );
-    const gie::StringHash BathroomHash      = H( "Bathroom" );
-    const gie::StringHash BedroomAHash      = H( "BedroomA" );
-    const gie::StringHash BedroomBHash      = H( "BedroomB" );
-    const gie::StringHash CorridorHash      = H( "Corridor" );
-    const gie::StringHash EntranceHash      = H( "Entrance" );
-    const gie::StringHash FrontDoorHash     = H( "FrontDoor" );
-    const gie::StringHash FuseBoxHash       = H( "FuseBox" );
-    const gie::StringHash GarageHash        = H( "Garage" );
-    const gie::StringHash KitchenHash       = H( "Kitchen" );
-    const gie::StringHash KitchenWindowHash = H( "KitchenWindow" );
-    const gie::StringHash LaundryRoomHash   = H( "LaundryRoom" );
-    const gie::StringHash LivingRoomHash    = H( "LivingRoom" );
-    const gie::StringHash OutsideBackHash   = H( "OutsideBack" );
-    const gie::StringHash OutsideFrontHash  = H( "OutsideFront" );
-    const gie::StringHash WholeHouseHash    = H( "WholeHouse" );
+	struct RoomInfo
+	{
+		gie::StringHash name;
+		glm::vec3 vertices[ 4 ] = {};
+	};
 
-    struct RoomInfo
-    {
-        gie::StringHash name;
-        glm::vec3 vertices[ 4 ] = {};
-    };
+	const RoomInfo rooms[] = {
+	{ WholeHouseHash,  { {  -30.f,  -20.f,   0.f }, {   30.f,  -20.f,   0.f }, {   30.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
+	{ LaundryRoomHash, { {  -30.f,  -20.f,   0.f }, {  -20.f,  -20.f,   0.f }, {  -20.f,  -10.f,   0.f }, {  -30.f,  -10.f,   0.f } } },
+	{ KitchenHash,     { {  -20.f,  -20.f,   0.f }, {   -5.f,  -20.f,   0.f }, {   -5.f,  -10.f,   0.f }, {  -20.f,  -10.f,   0.f } } },
+	{ BathroomHash,    { {   -5.f,  -20.f,   0.f }, {    5.f,  -20.f,   0.f }, {    5.f,  -10.f,   0.f }, {   -5.f,  -10.f,   0.f } } },
+	{ GarageHash,      { {    5.f,  -20.f,   0.f }, {   20.f,  -20.f,   0.f }, {   20.f,  -10.f,   0.f }, {    5.f,  -10.f,   0.f } } },
+	{ StudyHash,       { {   20.f,  -20.f,   0.f }, {   30.f,  -20.f,   0.f }, {   30.f,  -10.f,   0.f }, {   20.f,  -10.f,   0.f } } },
+	{ CorridorHash,    { {  -30.f,  -10.f,   0.f }, {   30.f,  -10.f,   0.f }, {   30.f,   -5.f,   0.f }, {  -30.f,   -5.f,   0.f } } },
+	{ LivingRoomHash,  { {  -30.f,   -5.f,   0.f }, {  -10.f,   -5.f,   0.f }, {  -10.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
+	{ EntranceHash,    { {  -10.f,   -5.f,   0.f }, {    0.f,   -5.f,   0.f }, {    0.f,   20.f,   0.f }, {  -10.f,   20.f,   0.f } } },
+	{ BedroomAHash,    { {    0.f,   -5.f,   0.f }, {   15.f,   -5.f,   0.f }, {   15.f,   20.f,   0.f }, {    0.f,   20.f,   0.f } } },
+	{ BedroomBHash,    { {   15.f,   -5.f,   0.f }, {   30.f,   -5.f,   0.f }, {   30.f,   20.f,   0.f }, {   15.f,   20.f,   0.f } } },
+	};
 
-    const RoomInfo rooms[] = {
-    { WholeHouseHash,  { {  -30.f,  -20.f,   0.f }, {   30.f,  -20.f,   0.f }, {   30.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
-    { LaundryRoomHash, { {  -30.f,  -20.f,   0.f }, {  -20.f,  -20.f,   0.f }, {  -20.f,  -10.f,   0.f }, {  -30.f,  -10.f,   0.f } } },
-    { KitchenHash,     { {  -20.f,  -20.f,   0.f }, {   -5.f,  -20.f,   0.f }, {   -5.f,  -10.f,   0.f }, {  -20.f,  -10.f,   0.f } } },
-    { BathroomHash,    { {   -5.f,  -20.f,   0.f }, {    5.f,  -20.f,   0.f }, {    5.f,  -10.f,   0.f }, {   -5.f,  -10.f,   0.f } } },
-    { GarageHash,      { {    5.f,  -20.f,   0.f }, {   30.f,  -20.f,   0.f }, {   30.f,  -10.f,   0.f }, {    5.f,  -10.f,   0.f } } },
-    { CorridorHash,    { {  -30.f,  -10.f,   0.f }, {   30.f,  -10.f,   0.f }, {   30.f,   -5.f,   0.f }, {  -30.f,   -5.f,   0.f } } },
-    { LivingRoomHash,  { {  -30.f,   -5.f,   0.f }, {  -10.f,   -5.f,   0.f }, {  -10.f,   20.f,   0.f }, {  -30.f,   20.f,   0.f } } },
-    { EntranceHash,    { {  -10.f,   -5.f,   0.f }, {    0.f,   -5.f,   0.f }, {    0.f,   20.f,   0.f }, {  -10.f,   20.f,   0.f } } },
-    { BedroomAHash,    { {    0.f,   -5.f,   0.f }, {   15.f,   -5.f,   0.f }, {   15.f,   20.f,   0.f }, {    0.f,   20.f,   0.f } } },
-    { BedroomBHash,    { {   15.f,   -5.f,   0.f }, {   30.f,   -5.f,   0.f }, {   30.f,   20.f,   0.f }, {   15.f,   20.f,   0.f } } },
-    };
+	std::vector< gie::Entity* > roomEntities;
+	roomEntities.reserve( std::size( rooms ) );
 
-    std::vector< gie::Entity* > roomEntities;
-    roomEntities.reserve( std::size( rooms ) );
+	for( const auto& room : rooms )
+	{
+		auto roomEntity = world.createEntity( gie::stringRegister().get( room.name ) );
+		roomEntity->createProperty( "Vertices", std::vector< glm::vec3 >( std::begin( room.vertices ), std::end( room.vertices ) ) );
+		roomEntity->createProperty( "Discovered", true );
+		roomEntity->createProperty( "DisplayName", true );
+		roomEntity->createProperty( "Location", ( room.vertices[ 0 ] + room.vertices[ 1 ] + room.vertices[ 2 ] + room.vertices[ 3 ] ) * 0.25f );
+		world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) } );
+		roomEntities.push_back( roomEntity );
+	}
 
-    for( const auto& room : rooms )
-    {
-        auto roomEntity = world.createEntity( gie::stringRegister().get( room.name ) );
-        roomEntity->createProperty( "Vertices", std::vector< glm::vec3 >( std::begin( room.vertices ), std::end( room.vertices ) ) );
-        roomEntity->createProperty( "Discovered", true );
-        roomEntity->createProperty( "DisplayName", true );
-        roomEntity->createProperty( "Location", ( room.vertices[ 0 ] + room.vertices[ 1 ] + room.vertices[ 2 ] + room.vertices[ 3 ] ) * 0.25f );
-        world.context().entityTagRegister().tag( roomEntity, { H( "Room" ), H( "Draw" ) } );
-        roomEntities.push_back( roomEntity );
-    }
+	*( roomEntities[ 0 ]->property( "Discovered" )->getBool() ) = true;
+	*( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false;
 
-    *( roomEntities[ 0 ]->property( "Discovered" )->getBool() ) = true; // WholeHouse known from start
-    *( roomEntities[ 0 ]->property( "DisplayName" )->getBool() ) = false; // don't display WholeHouse name in visualization
+	// House systems
+	auto alarmSystem = world.createEntity( "AlarmSystem" );
+	alarmSystem->createProperty( "Armed", true );
 
-    // House systems
-    auto alarmSystem = world.createEntity( "AlarmSystem" );
-    alarmSystem->createProperty( "Armed", true );
-
-    // Info entities
-    auto makeInfo = [&]( const char* infoName ) -> gie::Entity*
-    {
-        auto e = world.createEntity( infoName );
+	// Info entities
+	auto makeInfo = [&]( const char* infoName ) -> gie::Entity*
+	{
+		auto e = world.createEntity( infoName );
 		e->createProperty( "Name", infoName );
-        world.context().entityTagRegister().tag( e, { H( "Info" ) } );
-        return e;
-    };
+		world.context().entityTagRegister().tag( e, { H( "Info" ) } );
+		return e;
+	};
 
-    auto infoCrowbar = makeInfo( "CrowbarInfo" );
-    auto infoBolt    = makeInfo( "BoltCutterInfo" );
-    auto infoLockset = makeInfo( "LockpickInfo" );
-    auto infoStetho  = makeInfo( "StethoscopeInfo" );
-    auto infoFrontK  = makeInfo( "FrontKeyInfo" );
-    auto infoBackK   = makeInfo( "BackKeyInfo" );
-    auto infoSafeK   = makeInfo( "SafeKeyInfo" );
+	auto infoCrowbar  = makeInfo( "CrowbarInfo" );
+	auto infoCodeA    = makeInfo( "CodePieceAInfo" );
+	auto infoCodeB    = makeInfo( "CodePieceBInfo" );
+	auto infoCodeC    = makeInfo( "CodePieceCInfo" );
+	auto infoLockpick = makeInfo( "LockpickToolInfo" );
 
-    // Set required keys for specific access entities if they exist
-    for( const auto& kv : world.context().entities() )
-    {
-        auto name = gie::stringRegister().get( kv.second.nameHash() );
-        if( name == "FrontDoor" )
-        {
-            auto ent = world.entity( kv.first );
-            if( !ent->property( "RequiredKey" ) ) ent->createProperty( "RequiredKey", gie::NullGuid );
-            ent->property( "RequiredKey" )->value = infoFrontK->guid();
-        }
-        else if( name == "BackDoor" )
-        {
-            auto ent = world.entity( kv.first );
-            if( !ent->property( "RequiredKey" ) ) ent->createProperty( "RequiredKey", gie::NullGuid );
-            ent->property( "RequiredKey" )->value = infoBackK->guid();
-        }
-    }
+	// Safe entity
+	auto safe = world.createEntity( "Safe" );
+	safe->createProperty( "Open", false );
+	auto safeRoom = FindRoom( world, "BedroomA" );
+	safe->createProperty( "InRoom", safeRoom ? safeRoom->guid() : gie::NullGuid );
+	safe->createProperty( "LockMode", 1.f );
+	safe->createProperty( "RequiredCodePieces", 2.f );
+	safe->createProperty( "RequiredItems", gie::Property::GuidVector{ infoCodeA->guid(), infoCodeB->guid() } );
+	safe->createProperty( "Inspected", false );
+	safe->createProperty( "Location", safeRoom ? *safeRoom->property( "Location" )->getVec3() : glm::vec3{ 7.5f, 7.5f, 0.f } );
+	world.context().entityTagRegister().tag( safe, { selectableTag, drawTag } );
 
-    // Safe entity
-    auto safe = world.createEntity( "Safe" );
-    safe->createProperty( "Open", false );
-    auto safeRoom = FindRoom( world, "BedroomA" );
-    safe->createProperty( "InRoom", safeRoom ? safeRoom->guid() : gie::NullGuid );
-    safe->createProperty( "LockMode", 1.f );
-    safe->createProperty( "RequiredCodePieces", 2.f );
+	// Goal: open the safe
+	params.goal.targets.emplace_back( safe->property( "Open" )->guid(), true );
 
-    // Alarm Panel and FuseBox
-    auto alarmPanel = world.createEntity( "AlarmPanel" );
-    auto alarmRoom = FindRoom( world, "Corridor" );
-    alarmPanel->createProperty( "Location", alarmRoom ? *alarmRoom->property( "Location" )->getVec3() : glm::vec3{ 0.f, 0.f, 0.f } );
-    world.context().entityTagRegister().tag( alarmPanel, { H( "AlarmPanel" ), H( "Item" ) } );
-    auto fuseBox = world.createEntity( "FuseBoxEntity" );
-    auto fuseRoom = FindRoom( world, "Garage" );
-    fuseBox->createProperty( "Location", fuseRoom ? *fuseRoom->property( "Location" )->getVec3() : glm::vec3{ 0.f, 0.f, 0.f } );
-    world.context().entityTagRegister().tag( fuseBox, { H( "FuseBox" ), H( "Item" ) } );
+	// -- Exterior Waypoints (ring around mansion) ----------------------------
+	//
+	//                WP_NorthWest ----------- WP_North --------------- WP_NorthEast
+	//                  (-35,20)                 (0,30)                   (35,20)
+	//                     |                                                |
+	//                     |                                                |
+	//    WP_West ---------+                  [MANSION]                     +-------- WP_East
+	//    (-40,0)          |                                                |         (40,0)
+	//       |             |                                                |       [EnergyPanel]
+	//       |          WP_SouthWest ------- WP_South ------- WP_SouthEast-+
+	//       |           (-35,-25)            (0,-30)           (35,-25)
+	//       |
+	//    WP_Start
+	//    (-50,0)
+	//
+	struct WPDef { const char* name; glm::vec3 pos; };
+	const WPDef extWpDefs[] = {
+		{ "WP_Start",     { -50.f,   0.f, 0.f } },   // 0  - agent starts here
+		{ "WP_North",     {   0.f,  30.f, 0.f } },   // 1
+		{ "WP_NorthEast", {  35.f,  20.f, 0.f } },   // 2
+		{ "WP_East",      {  40.f,   0.f, 0.f } },   // 3
+		{ "WP_SouthEast", {  35.f, -25.f, 0.f } },   // 4
+		{ "WP_South",     {   0.f, -30.f, 0.f } },   // 5
+		{ "WP_SouthWest", { -35.f, -25.f, 0.f } },   // 6
+		{ "WP_West",      { -40.f,   0.f, 0.f } },   // 7
+		{ "WP_NorthWest", { -35.f,  20.f, 0.f } },   // 8
+	};
+	constexpr size_t extWpCount = std::size( extWpDefs );
 
-    // Helper to create items placed in rooms
-    auto placeItem = [&]( const char* itemName, gie::Entity* info, const char* roomName ) -> gie::Entity*
-    {
-        auto room = FindRoom( world, roomName );
-        auto e = world.createEntity( itemName );
-        world.context().entityTagRegister().tag( e, { H( "Item" ) } );
-        e->createProperty( "Location", room ? *room->property( "Location" )->getVec3() : glm::vec3{ 0.f, 0.f, 0.f } );
-        e->createProperty( "Info", info ? info->guid() : gie::NullGuid );
-        return e;
-    };
+	std::vector<gie::Entity*> extWps;
+	std::vector<gie::Property::GuidVector*> extWpLinks;
+	std::vector<gie::Property::GuidVector*> extWpReveals;
+	extWps.reserve( extWpCount );
+	extWpLinks.reserve( extWpCount );
+	extWpReveals.reserve( extWpCount );
 
-    placeItem( "Crowbar", infoCrowbar, "Garage" );
-    placeItem( "BoltCutter", infoBolt, "Garage" );
-    placeItem( "LockpickSet", infoLockset, "Garage" );
-    placeItem( "Stethoscope", infoStetho, "BedroomB" );
-    placeItem( "FrontDoorKey", infoFrontK, "LivingRoom" );
-    placeItem( "BackDoorKey", infoBackK, "Kitchen" );
-    placeItem( "SafeKey", infoSafeK, "BedroomA" );
+	for( size_t i = 0; i < extWpCount; i++ )
+	{
+		auto e = world.createEntity( extWpDefs[i].name );
+		world.context().entityTagRegister().tag( e, { H( "Waypoint" ), drawTag, selectableTag } );
+		e->createProperty( "Location", extWpDefs[i].pos );
+		auto lp = e->createProperty( "Links", gie::Property::GuidVector{} );
+		auto rp = e->createProperty( "Reveals", gie::Property::GuidVector{} );
+		extWps.push_back( e );
+		extWpLinks.push_back( lp->getGuidArray() );
+		extWpReveals.push_back( rp->getGuidArray() );
+	}
 
-    ResetHeistWorldFromToggles( world );
+	// Exterior bidirectional links (ring connectivity)
+	auto linkExt = [&]( size_t a, size_t b )
+	{
+		extWpLinks[a]->push_back( extWps[b]->guid() );
+		extWpLinks[b]->push_back( extWps[a]->guid() );
+	};
 
-    // Goal: open the safe
-    auto safeOpenPpt = safe->property( "Open" );
+	linkExt( 0, 7 );  // Start <-> West
+	linkExt( 7, 8 );  // West <-> NorthWest
+	linkExt( 8, 1 );  // NorthWest <-> North
+	linkExt( 1, 2 );  // North <-> NorthEast
+	linkExt( 2, 3 );  // NorthEast <-> East
+	linkExt( 3, 4 );  // East <-> SouthEast
+	linkExt( 4, 5 );  // SouthEast <-> South (shortcut)
+	linkExt( 5, 6 );  // South <-> SouthWest
+	linkExt( 6, 7 );  // SouthWest <-> West
 
-    // Note: World setup must expose the Goal targets for planner actions.
-    // We don't have direct access to params.goal here (the planner will receive it later),
-    // but example6 originally appended a target to params.goal. To keep behavior consistent,
-    // set the target here by using params.goal (stored at caller side) if available.
-    params.goal.targets.emplace_back( safeOpenPpt->guid(), true );
+	// Mark WP_Start as Known (agent starts here)
+	world.context().entityTagRegister().tag( extWps[0], { H( "Known" ) } );
 
-    // Populate the world with waypoints, access points, and additional puzzle elements
-    populateWorld( params, agent );
+	// -- Interior Waypoints --------------------------------------------------
+	const WPDef intWpDefs[] = {
+		{ "WP_Entrance",    { -5.f,    7.5f, 0.f } },    // 0
+		{ "WP_LivingRoom",  { -20.f,   7.5f, 0.f } },    // 1
+		{ "WP_Kitchen",     { -12.5f, -15.f, 0.f } },     // 2
+		{ "WP_LaundryRoom", { -25.f,  -15.f, 0.f } },     // 3
+		{ "WP_Bathroom",    { 0.f,    -15.f, 0.f } },     // 4
+		{ "WP_Garage",      { 12.5f,  -15.f, 0.f } },     // 5
+		{ "WP_CorridorW",   { -20.f,   -7.5f, 0.f } },    // 6  (west corridor — LivingRoom, Kitchen)
+		{ "WP_BedroomA",    { 7.5f,    7.5f, 0.f } },     // 7
+		{ "WP_BedroomB",    { 22.5f,   7.5f, 0.f } },     // 8
+		{ "WP_Study",       { 25.f,   -15.f, 0.f } },     // 9
+		{ "WP_CorridorCW",  { -5.f,   -7.5f, 0.f } },     // 10 (center-west — Entrance, Kitchen, Bathroom)
+		{ "WP_CorridorCE",  { 10.f,   -7.5f, 0.f } },     // 11 (center-east — BedroomA, Garage)
+		{ "WP_CorridorE",   { 22.5f,  -7.5f, 0.f } },     // 12 (east corridor — BedroomB, Study)
+	};
+	constexpr size_t intWpCount = std::size( intWpDefs );
 
-    return agent;
+	std::vector<gie::Entity*> intWps;
+	std::vector<gie::Property::GuidVector*> intWpLinks;
+	std::vector<gie::Property::GuidVector*> intWpReveals;
+	intWps.reserve( intWpCount );
+	intWpLinks.reserve( intWpCount );
+	intWpReveals.reserve( intWpCount );
+
+	for( size_t i = 0; i < intWpCount; i++ )
+	{
+		auto e = world.createEntity( intWpDefs[i].name );
+		world.context().entityTagRegister().tag( e, { H( "Waypoint" ), drawTag, selectableTag } );
+		e->createProperty( "Location", intWpDefs[i].pos );
+		auto lp = e->createProperty( "Links", gie::Property::GuidVector{} );
+		auto rp = e->createProperty( "Reveals", gie::Property::GuidVector{} );
+		intWps.push_back( e );
+		intWpLinks.push_back( lp->getGuidArray() );
+		intWpReveals.push_back( rp->getGuidArray() );
+	}
+
+	auto linkInt = [&]( size_t a, size_t b )
+	{
+		intWpLinks[a]->push_back( intWps[b]->guid() );
+		intWpLinks[b]->push_back( intWps[a]->guid() );
+	};
+
+	// Interior room connections — corridor split into 4 segments to avoid wall crossings
+	linkInt( 0, 10 );  // Entrance     <-> CorridorCW
+	linkInt( 1, 6 );   // LivingRoom   <-> CorridorW
+	linkInt( 2, 6 );   // Kitchen      <-> CorridorW
+	linkInt( 2, 10 );  // Kitchen      <-> CorridorCW
+	linkInt( 3, 2 );   // LaundryRoom  <-> Kitchen
+	linkInt( 4, 10 );  // Bathroom     <-> CorridorCW
+	linkInt( 5, 11 );  // Garage       <-> CorridorCE
+	linkInt( 7, 11 );  // BedroomA     <-> CorridorCE
+	linkInt( 8, 12 );  // BedroomB     <-> CorridorE
+	linkInt( 7, 8 );   // BedroomA     <-> BedroomB
+	linkInt( 9, 12 );  // Study        <-> CorridorE
+	// Corridor internal chain
+	linkInt( 6, 10 );  // CorridorW    <-> CorridorCW
+	linkInt( 10, 11 ); // CorridorCW   <-> CorridorCE
+	linkInt( 11, 12 ); // CorridorCE   <-> CorridorE
+
+	// -- Portal Entities (Doors/Windows) — connect waypoints -------------------
+	auto makePortal = [&]( const char* name, gie::Entity* sideA, gie::Entity* sideB,
+		bool locked = false, bool alarmGated = false ) -> gie::Entity*
+	{
+		auto p = world.createEntity( name );
+		world.context().entityTagRegister().tag( p, { H( "Portal" ), selectableTag, drawTag } );
+		auto locA = *sideA->property( "Location" )->getVec3();
+		auto locB = *sideB->property( "Location" )->getVec3();
+		p->createProperty( "Location", ( locA + locB ) * 0.5f );
+		p->createProperty( "SideA", sideA->guid() );
+		p->createProperty( "SideB", sideB->guid() );
+		p->createProperty( "Locked", locked );
+		p->createProperty( "AlarmGated", alarmGated );
+		p->createProperty( "RequiredItems", gie::Property::GuidVector{} );
+		p->createProperty( "Inspected", false );
+		return p;
+	};
+
+	// Exterior portals (alarm-gated) — positioned on mansion outer walls
+	auto frontDoor     = makePortal( "FrontDoor",     extWps[1], intWps[0], false, true );   // WP_North     <-> WP_Entrance
+	auto backDoor      = makePortal( "BackDoor",      extWps[5], intWps[2], false, true );   // WP_South     <-> WP_Kitchen
+	auto kitchenWindow = makePortal( "KitchenWindow", extWps[5], intWps[2], false, true );   // WP_South     <-> WP_Kitchen
+	auto garageDoor    = makePortal( "GarageDoor",    extWps[4], intWps[5], false, true );   // WP_SouthEast <-> WP_Garage
+
+	// Interior portals — connected to nearest corridor segment
+	auto doorEntrCorridor   = makePortal( "Door_EntrCorridor",   intWps[0],  intWps[10] );        // Entrance    <-> CorridorCW
+	auto doorLivingCorridor = makePortal( "Door_LivingCorridor", intWps[1],  intWps[6] );         // LivingRoom  <-> CorridorW
+	auto doorKitchCorridor  = makePortal( "Door_KitchCorridor",  intWps[2],  intWps[10] );        // Kitchen     <-> CorridorCW
+	auto doorLaundryKitch   = makePortal( "Door_LaundryKitch",   intWps[3],  intWps[2] );         // LaundryRoom <-> Kitchen
+	auto doorBathCorridor   = makePortal( "Door_BathCorridor",   intWps[4],  intWps[10] );        // Bathroom    <-> CorridorCW
+	auto doorGarageCorridor = makePortal( "Door_GarageCorridor", intWps[5],  intWps[11] );        // Garage      <-> CorridorCE
+	auto doorBedACorridor   = makePortal( "Door_BedACorridor",   intWps[7],  intWps[11] );        // BedroomA    <-> CorridorCE
+	auto doorBedBCorridor   = makePortal( "Door_BedBCorridor",   intWps[8],  intWps[12] );        // BedroomB    <-> CorridorE
+	auto doorBedABedB       = makePortal( "Door_BedABedB",       intWps[7],  intWps[8] );         // BedroomA    <-> BedroomB
+	auto studyDoor          = makePortal( "StudyDoor",           intWps[12], intWps[9], true );   // CorridorE   <-> Study [Locked]
+
+	// StudyDoor requires lockpick tool
+	*studyDoor->property( "RequiredItems" )->getGuidArray() = { infoLockpick->guid() };
+
+	// Corridor passage portals (open archways within the corridor room)
+	auto passageW_CW  = makePortal( "Passage_W_CW",  intWps[6],  intWps[10] );   // CorridorW  <-> CorridorCW
+	auto passageCW_CE = makePortal( "Passage_CW_CE", intWps[10], intWps[11] );   // CorridorCW <-> CorridorCE
+	auto passageCE_E  = makePortal( "Passage_CE_E",  intWps[11], intWps[12] );   // CorridorCE <-> CorridorE
+
+	// Override portal positions to sit on actual room walls
+	auto setPos = [&]( gie::Entity* e, glm::vec3 p ) { *e->property( "Location" )->getVec3() = p; };
+	// Exterior portals — on mansion outer walls
+	setPos( frontDoor,     { -5.f,   20.f, 0.f } );   // Entrance north wall
+	setPos( backDoor,      { -15.f, -20.f, 0.f } );   // Kitchen south wall (west side)
+	setPos( kitchenWindow, { -8.f,  -20.f, 0.f } );   // Kitchen south wall (east side)
+	setPos( garageDoor,    { 12.5f, -20.f, 0.f } );   // Garage south wall
+	// Interior portals — on shared walls between rooms
+	setPos( doorEntrCorridor,   { -5.f,   -5.f, 0.f } );    // Entrance/Corridor wall at y=-5
+	setPos( doorLivingCorridor, { -20.f,  -5.f, 0.f } );    // LivingRoom/Corridor wall at y=-5
+	setPos( doorKitchCorridor,  { -12.5f, -10.f, 0.f } );   // Kitchen/Corridor wall at y=-10
+	setPos( doorLaundryKitch,   { -20.f,  -15.f, 0.f } );   // LaundryRoom/Kitchen wall at x=-20
+	setPos( doorBathCorridor,   { 0.f,    -10.f, 0.f } );   // Bathroom/Corridor wall at y=-10
+	setPos( doorGarageCorridor, { 12.5f,  -10.f, 0.f } );   // Garage/Corridor wall at y=-10
+	setPos( doorBedACorridor,   { 7.5f,   -5.f, 0.f } );    // BedroomA/Corridor wall at y=-5
+	setPos( doorBedBCorridor,   { 22.5f,  -5.f, 0.f } );    // BedroomB/Corridor wall at y=-5
+	setPos( doorBedABedB,       { 15.f,    7.5f, 0.f } );   // BedroomA/BedroomB wall at x=15
+	setPos( studyDoor,          { 25.f,  -10.f, 0.f } );    // Study/Corridor wall at y=-10
+
+	// -- EnergyPanel (near WP_East) ------------------------------------------
+	auto energyPanel = world.createEntity( "EnergyPanel" );
+	world.context().entityTagRegister().tag( energyPanel, { selectableTag, drawTag } );
+	energyPanel->createProperty( "Location", glm::vec3{ 40.f, 5.f, 0.f } );
+	energyPanel->createProperty( "Open", false );  // panel door closed initially
+
+	// -- Items ---------------------------------------------------------------
+	auto placeItemAt = [&]( const char* itemName, gie::Entity* info, glm::vec3 pos ) -> gie::Entity*
+	{
+		auto e = world.createEntity( itemName );
+		world.context().entityTagRegister().tag( e, { H( "Item" ), selectableTag } );
+		e->createProperty( "Location", pos );
+		e->createProperty( "Info", info->guid() );
+		return e;
+	};
+
+	// Code pieces
+	auto codePieceA = placeItemAt( "CodePieceA", infoCodeA, { -5.f, 28.f, 0.f } );    // near North/FrontDoor (exterior)
+	auto codePieceB = placeItemAt( "CodePieceB", infoCodeB, { 25.f, -15.f, 0.f } );   // in Study room
+	// Code piece C inside (in LivingRoom)
+	auto livingRoom = FindRoom( world, "LivingRoom" );
+	auto codePieceC = placeItemAt( "CodePieceC", infoCodeC, livingRoom ? *livingRoom->property( "Location" )->getVec3() : glm::vec3{ -20.f, 7.5f, 0.f } );
+	// Crowbar inside (in LaundryRoom)
+	auto laundryRoom = FindRoom( world, "LaundryRoom" );
+	auto crowbar = placeItemAt( "Crowbar", infoCrowbar, laundryRoom ? *laundryRoom->property( "Location" )->getVec3() : glm::vec3{ -25.f, -15.f, 0.f } );
+	// BobbyPin in Bathroom (for lockpicking StudyDoor)
+	auto bobbyPin = placeItemAt( "BobbyPin", infoLockpick, { 0.f, -15.f, 0.f } );  // Bathroom center
+
+	// -- Reveal chain --------------------------------------------------------
+	// What each exterior waypoint reveals when Observed:
+	// Start(Known) -> West
+	extWpReveals[0]->push_back( extWps[7]->guid() );   // Start reveals West
+
+	// West -> NorthWest
+	extWpReveals[7]->push_back( extWps[8]->guid() );   // West reveals NorthWest
+
+	// NorthWest -> North, South
+	extWpReveals[8]->push_back( extWps[1]->guid() );   // NorthWest reveals North
+	extWpReveals[8]->push_back( extWps[5]->guid() );   // NorthWest reveals South
+
+	// North -> NorthEast, FrontDoor, CodePieceA, WP_Entrance (visible through door)
+	extWpReveals[1]->push_back( extWps[2]->guid() );   // North reveals NorthEast
+	extWpReveals[1]->push_back( frontDoor->guid() );    // North reveals FrontDoor
+	extWpReveals[1]->push_back( codePieceA->guid() );   // North reveals CodePieceA
+	extWpReveals[1]->push_back( intWps[0]->guid() );    // North reveals WP_Entrance
+
+	// NorthEast -> East
+	extWpReveals[2]->push_back( extWps[3]->guid() );   // NorthEast reveals East
+
+	// East -> SouthEast, EnergyPanel
+	extWpReveals[3]->push_back( extWps[4]->guid() );    // East reveals SouthEast
+	extWpReveals[3]->push_back( energyPanel->guid() );   // East reveals EnergyPanel
+
+	// SouthEast -> GarageDoor, WP_Garage (visible through south-facing garage door)
+	extWpReveals[4]->push_back( garageDoor->guid() );    // SouthEast reveals GarageDoor
+	extWpReveals[4]->push_back( intWps[5]->guid() );     // SouthEast reveals WP_Garage
+
+	// South -> SouthWest, BackDoor, KitchenWindow, WP_Kitchen (visible through window)
+	extWpReveals[5]->push_back( extWps[6]->guid() );   // South reveals SouthWest
+	extWpReveals[5]->push_back( backDoor->guid() );     // South reveals BackDoor
+	extWpReveals[5]->push_back( kitchenWindow->guid() );// South reveals KitchenWindow
+	extWpReveals[5]->push_back( intWps[2]->guid() );    // South reveals WP_Kitchen
+
+	// -- Interior Reveal Chain -----------------------------------------------
+	// WP_Kitchen -> Door_KitchCorridor, WP_CorridorCW, Door_LaundryKitch
+	intWpReveals[2]->push_back( doorKitchCorridor->guid() );
+	intWpReveals[2]->push_back( intWps[10]->guid() );     // WP_CorridorCW
+	intWpReveals[2]->push_back( doorLaundryKitch->guid() );
+
+	// Corridor reveal set — the corridor is one open room, so standing anywhere
+	// reveals all doors, rooms visible through doors, and corridor passages.
+	// Duplicated across all 4 corridor waypoints so any entry point works.
+	std::vector<gie::Guid> corridorRevealSet;
+	// Doors on corridor walls
+	corridorRevealSet.push_back( doorEntrCorridor->guid() );
+	corridorRevealSet.push_back( doorLivingCorridor->guid() );
+	corridorRevealSet.push_back( doorKitchCorridor->guid() );
+	corridorRevealSet.push_back( doorBathCorridor->guid() );
+	corridorRevealSet.push_back( doorGarageCorridor->guid() );
+	corridorRevealSet.push_back( doorBedACorridor->guid() );
+	corridorRevealSet.push_back( doorBedBCorridor->guid() );
+	corridorRevealSet.push_back( studyDoor->guid() );
+	corridorRevealSet.push_back( doorBedABedB->guid() );
+	// Room waypoints visible through open doors
+	corridorRevealSet.push_back( intWps[0]->guid() );      // WP_Entrance
+	corridorRevealSet.push_back( intWps[1]->guid() );      // WP_LivingRoom
+	corridorRevealSet.push_back( intWps[4]->guid() );      // WP_Bathroom
+	corridorRevealSet.push_back( intWps[7]->guid() );      // WP_BedroomA
+	corridorRevealSet.push_back( intWps[8]->guid() );      // WP_BedroomB
+	// Corridor passages
+	corridorRevealSet.push_back( passageW_CW->guid() );
+	corridorRevealSet.push_back( passageCW_CE->guid() );
+	corridorRevealSet.push_back( passageCE_E->guid() );
+	// All 4 corridor waypoints
+	corridorRevealSet.push_back( intWps[6]->guid() );      // WP_CorridorW
+	corridorRevealSet.push_back( intWps[10]->guid() );     // WP_CorridorCW
+	corridorRevealSet.push_back( intWps[11]->guid() );     // WP_CorridorCE
+	corridorRevealSet.push_back( intWps[12]->guid() );     // WP_CorridorE
+
+	for( size_t ci : { size_t( 6 ), size_t( 10 ), size_t( 11 ), size_t( 12 ) } )
+		for( auto g : corridorRevealSet )
+			if( g != intWps[ci]->guid() )
+				intWpReveals[ci]->push_back( g );
+
+	// WP_Bathroom -> BobbyPin
+	intWpReveals[4]->push_back( bobbyPin->guid() );
+
+	// WP_Study -> CodePieceB
+	intWpReveals[9]->push_back( codePieceB->guid() );
+
+	// WP_Garage -> Door_GarageCorridor, WP_CorridorCE (for garage entry path)
+	intWpReveals[5]->push_back( doorGarageCorridor->guid() );
+	intWpReveals[5]->push_back( intWps[11]->guid() );     // WP_CorridorCE
+
+	// WP_BedroomA -> Safe
+	intWpReveals[7]->push_back( safe->guid() );
+
+	return agent;
 }
 
 // ---------------------------------------------------------------------------
-// populateWorld - Creates the navigation mesh, entry points, and multi-stage
-// puzzle objects that make the heist scenario compelling.
-//
-// The mansion layout (from heistOpenSafe_world):
-//
-//   +------------+---------------+----------+-------------------------+
-//   | LaundryRoom|    Kitchen    | Bathroom |         Garage          |
-//   | (-25,-15)  |  (-12.5,-15) | (0,-15)  |       (17.5,-15)       |
-//   +------------+---------------+----------+-------------------------+
-//   |                        Corridor (0, -7.5)                      |
-//   +-----------+-----------+---------------+------------------------+
-//   |           |           |               |                        |
-//   | LivingRoom| Entrance  |   BedroomA    |       BedroomB         |
-//   | (-20,7.5) | (-5,7.5)  |   (7.5,7.5)  |     (22.5,7.5)        |
-//   |           |           |               |                        |
-//   +-----------+-----------+---------------+------------------------+
-//
-// Entry points:
-//   FrontDoor  = between Outside and Entrance (alarmed by default)
-//   BackDoor   = between Outside and Kitchen
-//   KitchenWindow = between Outside and Kitchen (can be barred)
-//   GarageDoor = between Outside and Garage (locked, needs crowbar)
-//
-// Puzzle layers:
-//   1. Entry: get past doors/windows (alarm, locks, bars)
-//   2. Navigation: move through rooms using waypoints
-//   3. Tool acquisition: find tools scattered in various rooms
-//   4. Security: disable alarm system (panel in Corridor or fuse box in Garage)
-//   5. Safe access: the safe room may have a locked interior door
-//   6. Safe opening: key / code pieces / stethoscope crack / brute force
+// Action Registration
 // ---------------------------------------------------------------------------
-void populateWorld( ExampleParameters& params, gie::Agent* agent )
+static void RegisterActions( gie::Planner& planner )
 {
-    gie::World& world = params.world;
+	auto sharedHeuristic = []( gie::CalculateHeuristicParams params )
+	{
+		auto agentEnt = params.simulation.context().entity( params.agent.guid() );
+		params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
+	};
 
-    auto selectableTag = H( "Selectable" );
-    auto drawTag       = H( "Draw" );
-    auto waypointTag   = H( "Waypoint" );
-    auto accessTag     = H( "Access" );
-    auto itemTag       = H( "Item" );
+	// -----------------------------------------------------------------------
+	// Observe — stand at a Known waypoint and reveal what it shows (forceLeaf)
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "Observe",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agentEnt = ctx.entity( params.agent.guid() );
+			if( !agentEnt ) return false;
+			glm::vec3 agentLoc = *agentEnt->property( "Location" )->getVec3();
 
-    // -- Waypoints ----------------------------------------------------------
-    // Navigation nodes placed at room centers and doorways to enable pathfinding.
-    // Each waypoint has a Location and Links (bidirectional connections).
-    struct WPDef { const char* name; glm::vec3 pos; };
-    const WPDef wpDefs[] = {
-        // Outside approach points
-        { "WP_OutsideFront",   { -5.f,  25.f, 0.f } },   // 0  - in front of house
-        { "WP_OutsideBack",    { -12.5f, -25.f, 0.f } },  // 1  - behind house
-        { "WP_OutsideGarage",  { 30.f, -15.f, 0.f } },    // 2  - garage side
-        // Room centers (match room layout)
-        { "WP_Entrance",       { -5.f,   7.5f, 0.f } },   // 3
-        { "WP_LivingRoom",     { -20.f,  7.5f, 0.f } },   // 4
-        { "WP_Kitchen",        { -12.5f, -15.f, 0.f } },   // 5
-        { "WP_LaundryRoom",    { -25.f, -15.f, 0.f } },    // 6
-        { "WP_Bathroom",       { 0.f,  -15.f, 0.f } },     // 7
-        { "WP_Garage",         { 17.5f, -15.f, 0.f } },    // 8
-        { "WP_Corridor",       { 0.f,   -7.5f, 0.f } },    // 9
-        { "WP_BedroomA",       { 7.5f,   7.5f, 0.f } },    // 10
-        { "WP_BedroomB",       { 22.5f,  7.5f, 0.f } },    // 11
-    };
-    constexpr size_t wpCount = std::size( wpDefs );
+			auto wpSet = params.simulation.tagSet( "Waypoint" );
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			if( !wpSet || !knownSet ) return false;
 
-    std::vector<gie::Entity*> wps;
-    std::vector<gie::Property::GuidVector*> wpLinks;
-    wps.reserve( wpCount );
-    wpLinks.reserve( wpCount );
+			for( auto g : *wpSet )
+			{
+				if( !knownSet->count( g ) ) continue;
+				auto wp = ctx.entity( g );
+				if( !wp ) continue;
+				auto loc = wp->property( "Location" );
+				if( !loc ) continue;
+				if( glm::distance( agentLoc, *loc->getVec3() ) < 1.f )
+				{
+					auto reveals = wp->property( "Reveals" );
+					if( !reveals ) continue;
+					auto revArr = reveals->getGuidArray();
+					if( !revArr ) continue;
+					for( Guid rg : *revArr )
+					{
+						if( !knownSet->count( rg ) )
+							return true;  // Found unrevealed entity
+					}
+				}
+			}
+			return false;
+		},
+		// simulate — OPAQUE: does NOT reveal entities during planning
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agentEnt = ctx.entity( params.agent.guid() );
+			auto explored = agentEnt->property( "ExploredNewArea" );
+			if( explored ) explored->value = true;
+			SetSimulationCost( params.simulation, 0.f, 2.f );
+			return true;
+		},
+		sharedHeuristic,
+		true  // forceLeaf — prevents planner from expanding beyond this
+	);
 
-    for( size_t i = 0; i < wpCount; i++ )
-    {
-        auto e = world.createEntity( wpDefs[i].name );
-        world.context().entityTagRegister().tag( e, { waypointTag, drawTag, selectableTag } );
-        e->createProperty( "Location", wpDefs[i].pos );
-        auto lp = e->createProperty( "Links", gie::Property::GuidVector{} );
-        wps.push_back( e );
-        wpLinks.push_back( lp->getGuidArray() );
-    }
+	// -----------------------------------------------------------------------
+	// MoveTo — travel to a Known exterior waypoint
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "MoveTo",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agentEnt = ctx.entity( params.agent.guid() );
+			if( !agentEnt ) return false;
+			// Only move when outside
+			auto curRoom = agentEnt->property( "CurrentRoom" );
+			if( curRoom && *curRoom->getGuid() != gie::NullGuid ) return false;
 
-    // Bidirectional link helper
-    auto link = [&]( size_t a, size_t b )
-    {
-        wpLinks[a]->push_back( wps[b]->guid() );
-        wpLinks[b]->push_back( wps[a]->guid() );
-    };
+			glm::vec3 agentLoc = *agentEnt->property( "Location" )->getVec3();
+			auto wpSet = params.simulation.tagSet( "Waypoint" );
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			if( !wpSet || !knownSet ) return false;
 
-    // Outside connections
-    link( 0, 3 );   // OutsideFront <-> Entrance (through FrontDoor)
-    link( 1, 5 );   // OutsideBack  <-> Kitchen   (through BackDoor / KitchenWindow)
-    link( 2, 8 );   // OutsideGarage <-> Garage   (through GarageDoor)
+			for( auto g : *wpSet )
+			{
+				if( !knownSet->count( g ) ) continue;
+				auto wp = ctx.entity( g );
+				if( !wp ) continue;
+				auto loc = wp->property( "Location" );
+				if( !loc ) continue;
+				// Don't move to where we already are
+				if( glm::distance( agentLoc, *loc->getVec3() ) < 1.f ) continue;
+				// Only exterior waypoints (not inside house)
+				if( IsPositionInsideHouse( *loc->getVec3() ) ) continue;
+				return true;
+			}
+			return false;
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agentEnt = ctx.entity( params.agent.guid() );
+			if( !agentEnt ) return false;
+			glm::vec3 agentLoc = *agentEnt->property( "Location" )->getVec3();
 
-    // Interior room connections (all go through Corridor as hub)
-    link( 3, 9 );   // Entrance    <-> Corridor
-    link( 4, 9 );   // LivingRoom  <-> Corridor
-    link( 5, 9 );   // Kitchen     <-> Corridor
-    link( 6, 5 );   // LaundryRoom <-> Kitchen
-    link( 7, 9 );   // Bathroom    <-> Corridor
-    link( 8, 9 );   // Garage      <-> Corridor
-    link( 9, 10 );  // Corridor    <-> BedroomA
-    link( 9, 11 );  // Corridor    <-> BedroomB
-    link( 10, 11 ); // BedroomA    <-> BedroomB
+			auto wpSet = params.simulation.tagSet( "Waypoint" );
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			if( !wpSet || !knownSet ) return false;
 
-    // -- Access Points (Doors / Windows) ------------------------------------
-    // These are the entry connectors the planner must deal with to get inside.
-    // Each has Locked/Blocked/Barred/Alarmed flags that gate entry.
-    auto makeAccess = [&]( const char* name, glm::vec3 pos ) -> gie::Entity*
-    {
-        auto e = world.createEntity( name );
-        world.context().entityTagRegister().tag( e, { accessTag, waypointTag, drawTag, selectableTag } );
-        e->createProperty( "Location", pos );
-        e->createProperty( "Links", gie::Property::GuidVector{} );
-        e->createProperty( "Locked", false );
-        e->createProperty( "Blocked", false );
-        e->createProperty( "Barred", false );
-        e->createProperty( "Alarmed", false );
-        e->createProperty( "RequiredKey", gie::NullGuid );
-        return e;
-    };
+			// Pick best target: prefer waypoints with unrevealed entries (score = dist - 50)
+			gie::Entity* bestTarget = nullptr;
+			float bestScore = std::numeric_limits<float>::max();
+			std::vector<Guid> wp;
+			if( auto set = params.simulation.tagSet( "Waypoint" ) )
+				wp.assign( set->begin(), set->end() );
 
-    // FrontDoor: between OutsideFront and Entrance, alarmed by default
-    auto frontDoor = makeAccess( "FrontDoor", { -5.f, 20.f, 0.f } );
-    frontDoor->property( "Alarmed" )->value = true;
+			for( auto g : *wpSet )
+			{
+				if( !knownSet->count( g ) ) continue;
+				auto ent = ctx.entity( g );
+				if( !ent ) continue;
+				auto loc = ent->property( "Location" );
+				if( !loc ) continue;
+				if( IsPositionInsideHouse( *loc->getVec3() ) ) continue;
+				float dist = glm::distance( agentLoc, *loc->getVec3() );
+				if( dist < 1.f ) continue;
+				float score = dist;
+				auto reveals = ent->property( "Reveals" );
+				if( reveals )
+				{
+					auto revArr = reveals->getGuidArray();
+					if( revArr )
+					{
+						for( Guid rg : *revArr )
+							if( !knownSet->count( rg ) ) { score -= 50.f; break; }
+					}
+				}
+				if( score < bestScore ) { bestScore = score; bestTarget = ent; }
+			}
+			if( !bestTarget ) return false;
 
-    // BackDoor: between OutsideBack and Kitchen
-    auto backDoor = makeAccess( "BackDoor", { -12.5f, -20.f, 0.f } );
+			float len = MoveAgentAlongPath( params, agentLoc, bestTarget, wp );
+			SetSimulationCost( params.simulation, len, 1.f );
+			return true;
+		},
+		sharedHeuristic
+	);
 
-    // KitchenWindow: alternative entry near kitchen
-    auto kitchenWindow = makeAccess( "KitchenWindow", { -20.f, -20.f, 0.f } );
+	// -----------------------------------------------------------------------
+	// UseTool — open the EnergyPanel cover (precondition for Interact)
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "UseTool",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			auto panel = FindEntityByName( ctx, "EnergyPanel" );
+			if( !panel || !knownSet || !knownSet->count( panel->guid() ) ) return false;
+			auto openProp = panel->property( "Open" );
+			if( !openProp ) return false;
+			return !*openProp->getBool();  // Panel cover must be closed
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agentEnt = ctx.entity( params.agent.guid() );
+			auto panel = FindEntityByName( ctx, "EnergyPanel" );
+			if( !agentEnt || !panel ) return false;
 
-    // GarageDoor: side entry into garage, locked and blocked by default
-    auto garageDoor = makeAccess( "GarageDoor", { 30.f, -15.f, 0.f } );
-    garageDoor->property( "Locked" )->value  = true;
-    garageDoor->property( "Blocked" )->value = true;
+			std::vector<Guid> wp;
+			if( auto set = params.simulation.tagSet( "Waypoint" ) )
+				wp.assign( set->begin(), set->end() );
+			glm::vec3 from = *agentEnt->property( "Location" )->getVec3();
+			float len = MoveAgentAlongPath( params, from, panel, wp );
 
-    // Connect access points into the waypoint graph
-    auto linkAccess = [&]( gie::Entity* access, size_t wpA, size_t wpB )
-    {
-        auto al = access->property( "Links" )->getGuidArray();
-        al->push_back( wps[wpA]->guid() );
-        al->push_back( wps[wpB]->guid() );
-        wpLinks[wpA]->push_back( access->guid() );
-        wpLinks[wpB]->push_back( access->guid() );
-    };
+			panel->property( "Open" )->value = true;
+			SetSimulationCost( params.simulation, len, 2.f );
+			return true;
+		},
+		sharedHeuristic
+	);
 
-    linkAccess( frontDoor,     0, 3 );  // OutsideFront <-> Entrance
-    linkAccess( backDoor,      1, 5 );  // OutsideBack  <-> Kitchen
-    linkAccess( kitchenWindow, 1, 5 );  // OutsideBack  <-> Kitchen (alt)
-    linkAccess( garageDoor,    2, 8 );  // OutsideGarage <-> Garage
+	// -----------------------------------------------------------------------
+	// Interact — flip the switch on the opened EnergyPanel to disable alarm
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "Interact",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto panel = FindEntityByName( ctx, "EnergyPanel" );
+			if( !panel ) return false;
+			auto openProp = panel->property( "Open" );
+			if( !openProp || !*openProp->getBool() ) return false;  // Panel cover must be open
+			auto alarm = FindEntityByName( ctx, "AlarmSystem" );
+			if( !alarm ) return false;
+			return *alarm->property( "Armed" )->getBool();  // Alarm must still be armed
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agentEnt = ctx.entity( params.agent.guid() );
+			auto panel = FindEntityByName( ctx, "EnergyPanel" );
+			auto alarm = FindEntityByName( ctx, "AlarmSystem" );
+			if( !agentEnt || !panel || !alarm ) return false;
 
-    // Set required keys on doors (link to Info entities created in heistOpenSafe_world)
-    auto findEntity = [&]( const char* n ) -> gie::Entity*
-    {
-        for( auto& kv : world.context().entities() )
-            if( gie::stringRegister().get( kv.second.nameHash() ) == n )
-                return world.entity( kv.first );
-        return nullptr;
-    };
-    if( auto fki = findEntity( "FrontKeyInfo" ) )
-        frontDoor->property( "RequiredKey" )->value = fki->guid();
-    if( auto bki = findEntity( "BackKeyInfo" ) )
-        backDoor->property( "RequiredKey" )->value = bki->guid();
+			std::vector<Guid> wp;
+			if( auto set = params.simulation.tagSet( "Waypoint" ) )
+				wp.assign( set->begin(), set->end() );
+			glm::vec3 from = *agentEnt->property( "Location" )->getVec3();
+			float len = MoveAgentAlongPath( params, from, panel, wp );
 
-    // -- Additional puzzle items --------------------------------------------
-    // Code pieces: scattered across rooms, needed for code-lock safe mode.
-    // The thief must explore multiple rooms to collect enough pieces.
-    auto infoCodeA = world.createEntity( "CodePieceAInfo" );
-    infoCodeA->createProperty( "Name", "CodePieceAInfo" );
-    world.context().entityTagRegister().tag( infoCodeA, { H( "Info" ) } );
+			alarm->property( "Armed" )->value = false;
+			SetSimulationCost( params.simulation, len, 3.f );
+			return true;
+		},
+		sharedHeuristic
+	);
 
-    auto infoCodeB = world.createEntity( "CodePieceBInfo" );
-    infoCodeB->createProperty( "Name", "CodePieceBInfo" );
-    world.context().entityTagRegister().tag( infoCodeB, { H( "Info" ) } );
+	// -----------------------------------------------------------------------
+	// GoThrough — traverse portals to reach a Known waypoint (replaces EnterThrough + MoveInside)
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "GoThrough",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agent = ctx.entity( params.agent.guid() );
+			if( !agent ) return false;
+			glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
 
-    auto infoCodeC = world.createEntity( "CodePieceCInfo" );
-    infoCodeC->createProperty( "Name", "CodePieceCInfo" );
-    world.context().entityTagRegister().tag( infoCodeC, { H( "Info" ) } );
+			auto wpSet = params.simulation.tagSet( "Waypoint" );
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			auto portalSet = params.simulation.tagSet( "Portal" );
+			if( !wpSet || !knownSet || !portalSet ) return false;
 
-    // Place code pieces — some outside (reachable before entering), some inside
-    auto placeCodePieceAt = [&]( const char* itemName, gie::Entity* info, glm::vec3 pos )
-    {
-        auto e = world.createEntity( itemName );
-        world.context().entityTagRegister().tag( e, { itemTag } );
-        e->createProperty( "Location", pos );
-        e->createProperty( "Info", info->guid() );
-    };
+			auto alarm = FindEntityByName( ctx, "AlarmSystem" );
+			bool alarmArmed = alarm && *alarm->property( "Armed" )->getBool();
 
-    // Code piece A: taped under the mailbox near front approach
-    placeCodePieceAt( "CodePieceA", infoCodeA, { -10.f, 23.f, 0.f } );
-    // Code piece B: hidden under a garden gnome near the front path
-    placeCodePieceAt( "CodePieceB", infoCodeB, { -20.f, 23.f, 0.f } );
-    // Code piece C: inside the house (living room) — requires entry first
-    auto livingRoom = FindRoom( world, "LivingRoom" );
-    placeCodePieceAt( "CodePieceC", infoCodeC, livingRoom ? *livingRoom->property("Location")->getVec3() : glm::vec3{-20.f, 7.5f, 0.f} );
+			// Find nearest Known waypoint that has a traversable portal
+			float walkDist = 0.f;
+			Guid agentWp = NearestPortalConnectedWP( ctx, wpSet, knownSet, portalSet, alarmArmed, agentLoc, walkDist );
+			if( agentWp == gie::NullGuid ) return false;
 
-    // -- Relocate existing items to more strategic positions ----------------
-    // Move tools to different rooms so the agent must plan routes carefully:
-    //   Crowbar     -> LaundryRoom (far corner, useful for breaking doors)
-    //   BoltCutter  -> Bathroom    (needed to cut window bars)
-    //   LockpickSet -> LivingRoom  (for picking locks on doors)
-    //   Stethoscope -> Garage      (for cracking heavy safe, behind locked garage door)
-    auto relocate = [&]( const char* itemName, const char* roomName )
-    {
-        auto item = findEntity( itemName );
-        auto room = FindRoom( world, roomName );
-        if( item && room )
-            item->property( "Location" )->value = *room->property( "Location" )->getVec3();
-    };
+			// Check that at least one portal leads to a Known destination
+			for( auto pg : *portalSet )
+			{
+				if( !knownSet->count( pg ) ) continue;
+				auto portal = ctx.entity( pg ); if( !portal ) continue;
+				if( *portal->property( "Locked" )->getBool() ) continue;
+				if( *portal->property( "AlarmGated" )->getBool() && alarmArmed ) continue;
+				Guid sA = *portal->property( "SideA" )->getGuid();
+				Guid sB = *portal->property( "SideB" )->getGuid();
+				Guid dest = gie::NullGuid;
+				if( sA == agentWp ) dest = sB;
+				else if( sB == agentWp ) dest = sA;
+				else continue;
+				if( knownSet->count( dest ) ) return true;
+			}
+			return false;
+		},
+		// simulate — Dijkstra through traversable portals
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agent = ctx.entity( params.agent.guid() );
+			if( !agent ) return false;
+			glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
 
-    relocate( "Crowbar",     "LaundryRoom" );
-    relocate( "BoltCutter",  "Bathroom" );
-    relocate( "LockpickSet", "LivingRoom" );
-    relocate( "Stethoscope", "Garage" );
+			auto wpSet = params.simulation.tagSet( "Waypoint" );
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			auto portalSet = params.simulation.tagSet( "Portal" );
+			if( !wpSet || !knownSet || !portalSet ) return false;
 
-    // Move SafeKey to BedroomB (opposite side of house from safe in BedroomA)
-    relocate( "SafeKey", "BedroomB" );
+			auto alarm = FindEntityByName( ctx, "AlarmSystem" );
+			bool alarmArmed = alarm && *alarm->property( "Armed" )->getBool();
 
-    // Door keys stay inside the house (LivingRoom / Kitchen) — the agent must
-    // already be inside to use them, making them useful only for alternate routes.
-    // Code pieces outside are the primary collectibles before entry.
+			// Snap to nearest Known waypoint that has a traversable portal
+			float walkDist = 0.f;
+			Guid agentWp = NearestPortalConnectedWP( ctx, wpSet, knownSet, portalSet, alarmArmed, agentLoc, walkDist );
+			if( agentWp == gie::NullGuid ) return false;
 
-    // Re-apply toggles to set correct lock/alarm state after we created access points
-    ResetHeistWorldFromToggles( world );
+			// Remember current room to detect exterior→interior transition
+			auto curRoomProp = agent->property( "CurrentRoom" );
+			Guid roomBefore = curRoomProp ? *curRoomProp->getGuid() : gie::NullGuid;
+
+			// Dijkstra through traversable portals (ensures shortest paths)
+			struct DijkNode { Guid wp; float dist; };
+			auto dijkCmp = []( const DijkNode& a, const DijkNode& b ) { return a.dist > b.dist; };
+			std::priority_queue<DijkNode, std::vector<DijkNode>, decltype( dijkCmp )> frontier( dijkCmp );
+			frontier.push( { agentWp, 0.f } );
+			std::set<Guid> finalized;
+			std::vector<std::pair<Guid, float>> reachable;
+
+			while( !frontier.empty() )
+			{
+				DijkNode current = frontier.top();
+				frontier.pop();
+				if( finalized.count( current.wp ) ) continue;
+				finalized.insert( current.wp );
+				if( current.wp != agentWp )
+					reachable.push_back( { current.wp, current.dist } );
+				for( auto pg : *portalSet )
+				{
+					if( !knownSet->count( pg ) ) continue;
+					auto portal = ctx.entity( pg ); if( !portal ) continue;
+					bool locked = *portal->property( "Locked" )->getBool();
+					if( locked ) continue;
+					if( *portal->property( "AlarmGated" )->getBool() && alarmArmed ) continue;
+					Guid sA = *portal->property( "SideA" )->getGuid();
+					Guid sB = *portal->property( "SideB" )->getGuid();
+					Guid dest = gie::NullGuid;
+					if( sA == current.wp ) dest = sB;
+					else if( sB == current.wp ) dest = sA;
+					else continue;
+					if( !knownSet->count( dest ) || finalized.count( dest ) ) continue;
+					auto curEnt = ctx.entity( current.wp );
+					auto dstEnt = ctx.entity( dest );
+					float seg = 0.f;
+					if( curEnt && dstEnt )
+					{
+						auto cL = curEnt->property( "Location" );
+						auto dL = dstEnt->property( "Location" );
+						if( cL && dL ) seg = glm::distance( *cL->getVec3(), *dL->getVec3() );
+					}
+					frontier.push( { dest, current.dist + seg } );
+				}
+			}
+			if( reachable.empty() ) return false;
+
+			// Score each destination: prefer unrevealed Reveals, then safe room
+			Guid bestDest = gie::NullGuid;
+			float bestScore = std::numeric_limits<float>::max();
+			const gie::Entity* safe = FindEntityByName( ctx, "Safe" );
+			Guid safeRoomGuid = gie::NullGuid;
+			if( safe )
+			{
+				auto inRoom = const_cast< gie::Entity* >( safe )->property( "InRoom" );
+				if( inRoom ) safeRoomGuid = *inRoom->getGuid();
+			}
+			for( auto& [dest, dist] : reachable )
+			{
+				float score = dist;
+				auto destEnt = ctx.entity( dest );
+				if( destEnt )
+				{
+					auto reveals = destEnt->property( "Reveals" );
+					if( reveals )
+					{
+						auto revArr = reveals->getGuidArray();
+						if( revArr )
+							for( Guid rg : *revArr )
+								if( !knownSet->count( rg ) ) { score -= 50.f; break; }
+					}
+				}
+				if( destEnt && safeRoomGuid != gie::NullGuid )
+				{
+					auto dL = destEnt->property( "Location" );
+					auto srEnt = ctx.entity( safeRoomGuid );
+					if( dL && srEnt )
+					{
+						auto rL = srEnt->property( "Location" );
+						if( rL && glm::distance( *dL->getVec3(), *rL->getVec3() ) < 5.f )
+							score -= 20.f;
+					}
+				}
+				if( score < bestScore ) { bestScore = score; bestDest = dest; }
+			}
+			if( bestDest == gie::NullGuid ) return false;
+
+			float totalDist = 0.f;
+			for( auto& [d, dist] : reachable )
+				if( d == bestDest ) { totalDist = dist; break; }
+
+			auto destEnt = ctx.entity( bestDest );
+			if( !destEnt ) return false;
+			auto destLoc = destEnt->property( "Location" );
+
+			if( destLoc )
+				*agent->property( "Location" )->getVec3() = *destLoc->getVec3();
+
+			// Update CurrentRoom
+			if( destLoc && IsPositionInsideHouse( *destLoc->getVec3() ) )
+			{
+				auto roomSet = params.simulation.tagSet( "Room" );
+				if( roomSet )
+				{
+					gie::Entity* targetRoom = nullptr;
+					float bestRD = std::numeric_limits<float>::max();
+					for( auto rg : *roomSet )
+					{
+						auto room = ctx.entity( rg ); if( !room ) continue;
+						if( gie::stringRegister().get( room->nameHash() ) == "WholeHouse" ) continue;
+						auto rL = room->property( "Location" ); if( !rL ) continue;
+						float rd = glm::distance( *destLoc->getVec3(), *rL->getVec3() );
+						if( rd < bestRD ) { bestRD = rd; targetRoom = room; }
+					}
+					if( targetRoom )
+						agent->property( "CurrentRoom" )->value = targetRoom->guid();
+				}
+			}
+
+			// Include walk distance to the portal-connected waypoint in total cost
+			SetSimulationCost( params.simulation, totalDist + walkDist, 1.f );
+
+			// Entering the mansion from outside counts as exploration
+			Guid roomAfter = curRoomProp ? *curRoomProp->getGuid() : gie::NullGuid;
+			if( roomBefore == gie::NullGuid && roomAfter != gie::NullGuid )
+			{
+				auto explored = agent->property( "ExploredNewArea" );
+				if( explored ) explored->value = true;
+			}
+
+			return true;
+		},
+		sharedHeuristic
+	);
+
+	// -----------------------------------------------------------------------
+	// SearchForItem — pick up nearest Known needed item (filtered by NeededItems)
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "SearchForItem",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agent = ctx.entity( params.agent.guid() );
+			auto inv = agent->property( "Inventory" )->getGuidArray();
+			auto neededItems = agent->property( "NeededItems" );
+			auto neededArr = neededItems ? neededItems->getGuidArray() : nullptr;
+			if( !neededArr || neededArr->empty() ) return false;
+			bool agentInside = IsAgentInside( ctx, params.agent.guid() );
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			auto items = ctx.entityTagRegister().tagSet( "Item" );
+			if( !items || items->empty() ) return false;
+
+			for( auto g : *items )
+			{
+				if( knownSet && !knownSet->count( g ) ) continue;
+				auto e = ctx.entity( g ); if( !e ) continue;
+				if( std::find( inv->begin(), inv->end(), g ) != inv->end() ) continue;
+				auto loc = e->property( "Location" ); if( !loc ) continue;
+				if( !agentInside && IsPositionInsideHouse( *loc->getVec3() ) ) continue;
+				auto info = e->property( "Info" );
+				if( !info ) continue;
+				if( std::find( neededArr->begin(), neededArr->end(), *info->getGuid() ) == neededArr->end() ) continue;
+				return true;
+			}
+			return false;
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agent = ctx.entity( params.agent.guid() );
+			auto inv = agent->property( "Inventory" )->getGuidArray();
+			auto neededItems = agent->property( "NeededItems" );
+			auto neededArr = neededItems ? neededItems->getGuidArray() : nullptr;
+			if( !neededArr || neededArr->empty() ) return false;
+			bool agentInside = IsAgentInside( ctx, params.agent.guid() );
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			auto items = ctx.entityTagRegister().tagSet( "Item" );
+			if( !items ) return false;
+
+			std::vector<Guid> wp;
+			if( auto set = params.simulation.tagSet( "Waypoint" ) )
+				wp.assign( set->begin(), set->end() );
+			glm::vec3 from = *agent->property( "Location" )->getVec3();
+
+			gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
+			for( auto g : *items )
+			{
+				if( knownSet && !knownSet->count( g ) ) continue;
+				auto e = ctx.entity( g ); if( !e ) continue;
+				if( std::find( inv->begin(), inv->end(), g ) != inv->end() ) continue;
+				auto loc = e->property( "Location" ); if( !loc ) continue;
+				if( !agentInside && IsPositionInsideHouse( *loc->getVec3() ) ) continue;
+				auto info = e->property( "Info" );
+				if( !info ) continue;
+				if( std::find( neededArr->begin(), neededArr->end(), *info->getGuid() ) == neededArr->end() ) continue;
+				auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() );
+				float dist = path.length;
+				// Fallback to Euclidean distance when no waypoint path exists
+				// (e.g., interior agent → exterior item or vice versa)
+				if( path.path.empty() )
+					dist = glm::distance( from, *loc->getVec3() );
+				if( dist < bestL ) { bestL = dist; best = e; }
+			}
+			if( !best ) return false;
+
+			float len = MoveAgentAlongPath( params, from, best, wp );
+			inv->push_back( best->guid() );
+			SetSimulationCost( params.simulation, len, 1.f );
+			return true;
+		},
+		sharedHeuristic
+	);
+
+	// -----------------------------------------------------------------------
+	// Inspect — examine Known entity to discover RequiredItems (forceLeaf)
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "Inspect",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agent = ctx.entity( params.agent.guid() );
+			if( !agent ) return false;
+			auto curRoom = agent->property( "CurrentRoom" );
+			if( !curRoom || *curRoom->getGuid() == gie::NullGuid ) return false;
+
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			if( !knownSet ) return false;
+			for( auto g : *knownSet )
+			{
+				auto e = ctx.entity( g ); if( !e ) continue;
+				auto reqItems = e->property( "RequiredItems" );
+				if( !reqItems ) continue;
+				auto reqArr = reqItems->getGuidArray();
+				if( !reqArr || reqArr->empty() ) continue;
+				auto inspected = e->property( "Inspected" );
+				if( !inspected ) continue;
+				if( !*inspected->getBool() ) return true;
+			}
+			return false;
+		},
+		// simulate — OPAQUE: only sets ExploredNewArea
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agent = ctx.entity( params.agent.guid() );
+			if( !agent ) return false;
+			glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			if( !knownSet ) return false;
+
+			gie::Entity* bestTarget = nullptr;
+			float bestDist = std::numeric_limits<float>::max();
+			for( auto g : *knownSet )
+			{
+				auto e = ctx.entity( g ); if( !e ) continue;
+				auto reqItems = e->property( "RequiredItems" );
+				if( !reqItems ) continue;
+				auto reqArr = reqItems->getGuidArray();
+				if( !reqArr || reqArr->empty() ) continue;
+				auto inspected = e->property( "Inspected" );
+				if( !inspected || *inspected->getBool() ) continue;
+				auto loc = e->property( "Location" ); if( !loc ) continue;
+				float d = glm::distance( agentLoc, *loc->getVec3() );
+				if( d < bestDist ) { bestDist = d; bestTarget = e; }
+			}
+			if( !bestTarget ) return false;
+
+			std::vector<Guid> wp;
+			if( auto set = params.simulation.tagSet( "Waypoint" ) )
+				wp.assign( set->begin(), set->end() );
+			float len = MoveAgentAlongPath( params, agentLoc, bestTarget, wp );
+
+			agent->property( "ExploredNewArea" )->value = true;
+			SetSimulationCost( params.simulation, len, 2.f );
+			return true;
+		},
+		sharedHeuristic,
+		true  // forceLeaf
+	);
+
+	// -----------------------------------------------------------------------
+	// UseItem — unlock an inspected locked entity using inventory items
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "UseItem",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agent = ctx.entity( params.agent.guid() );
+			if( !agent ) return false;
+			auto inv = agent->property( "Inventory" )->getGuidArray();
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			if( !knownSet ) return false;
+
+			for( auto g : *knownSet )
+			{
+				auto e = ctx.entity( g ); if( !e ) continue;
+				auto inspected = e->property( "Inspected" );
+				if( !inspected || !*inspected->getBool() ) continue;
+				auto locked = e->property( "Locked" );
+				if( !locked || !*locked->getBool() ) continue;
+				auto reqItems = e->property( "RequiredItems" );
+				if( !reqItems ) continue;
+				auto reqArr = reqItems->getGuidArray();
+				if( !reqArr || reqArr->empty() ) continue;
+
+				bool hasAll = true;
+				for( Guid reqInfo : *reqArr )
+				{
+					bool found = false;
+					for( Guid itemG : *inv )
+					{
+						auto item = ctx.entity( itemG ); if( !item ) continue;
+						auto info = item->property( "Info" );
+						if( info && *info->getGuid() == reqInfo ) { found = true; break; }
+					}
+					if( !found ) { hasAll = false; break; }
+				}
+				if( hasAll )
+					return true;
+			}
+			return false;
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			auto agent = ctx.entity( params.agent.guid() );
+			if( !agent ) return false;
+			auto inv = agent->property( "Inventory" )->getGuidArray();
+			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
+			if( !knownSet ) return false;
+			glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+
+			gie::Entity* bestTarget = nullptr;
+			float bestDist = std::numeric_limits<float>::max();
+			for( auto g : *knownSet )
+			{
+				auto e = ctx.entity( g ); if( !e ) continue;
+				auto inspected = e->property( "Inspected" );
+				if( !inspected || !*inspected->getBool() ) continue;
+				auto locked = e->property( "Locked" );
+				if( !locked || !*locked->getBool() ) continue;
+				auto reqItems = e->property( "RequiredItems" );
+				if( !reqItems ) continue;
+				auto reqArr = reqItems->getGuidArray();
+				if( !reqArr || reqArr->empty() ) continue;
+
+				bool hasAll = true;
+				for( Guid reqInfo : *reqArr )
+				{
+					bool found = false;
+					for( Guid itemG : *inv )
+					{
+						auto item = ctx.entity( itemG ); if( !item ) continue;
+						auto info = item->property( "Info" );
+						if( info && *info->getGuid() == reqInfo ) { found = true; break; }
+					}
+					if( !found ) { hasAll = false; break; }
+				}
+				if( !hasAll ) continue;
+				auto loc = e->property( "Location" ); if( !loc ) continue;
+				float d = glm::distance( agentLoc, *loc->getVec3() );
+				if( d < bestDist ) { bestDist = d; bestTarget = e; }
+			}
+			if( !bestTarget ) return false;
+
+			std::vector<Guid> wp;
+			if( auto set = params.simulation.tagSet( "Waypoint" ) )
+				wp.assign( set->begin(), set->end() );
+			float len = MoveAgentAlongPath( params, agentLoc, bestTarget, wp );
+
+			bestTarget->property( "Locked" )->value = false;
+			SetSimulationCost( params.simulation, len, 2.f );
+			return true;
+		},
+		sharedHeuristic
+	);
+
+	// -----------------------------------------------------------------------
+	// OpenSafeWithCode — requires Inspected + RequiredItems satisfied + alarm off + safe room
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "OpenSafeWithCode",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			if( !IsAgentInSafeRoom( ctx, params.agent.guid() ) ) return false;
+			const gie::Entity* safe = FindEntityByName( ctx, "Safe" );
+			if( !safe ) return false;
+			if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) return false;
+			if( *const_cast< gie::Entity* >( safe )->property( "LockMode" )->getFloat() != 1.f ) return false;
+			auto alarm = FindEntityByName( ctx, "AlarmSystem" );
+			if( alarm && *alarm->property( "Armed" )->getBool() ) return false;
+
+			// Safe must be inspected
+			auto inspected = const_cast< gie::Entity* >( safe )->property( "Inspected" );
+			if( !inspected || !*inspected->getBool() ) return false;
+
+			// Check all RequiredItems satisfied by inventory
+			auto reqItems = const_cast< gie::Entity* >( safe )->property( "RequiredItems" );
+			if( !reqItems ) return false;
+			auto reqArr = reqItems->getGuidArray();
+			if( !reqArr ) return false;
+
+			auto agent = ctx.entity( params.agent.guid() );
+			auto inv = agent->property( "Inventory" )->getGuidArray();
+			for( Guid reqInfo : *reqArr )
+			{
+				bool found = false;
+				for( Guid itemG : *inv )
+				{
+					auto item = ctx.entity( itemG ); if( !item ) continue;
+					auto info = item->property( "Info" );
+					if( info && *info->getGuid() == reqInfo ) { found = true; break; }
+				}
+				if( !found ) return false;
+			}
+			return true;
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			gie::Entity* safe = FindEntityByName( ctx, "Safe" );
+			if( !safe ) return false;
+			safe->property( "Open" )->value = true;
+			SetSimulationCost( params.simulation, 0.f, 3.f );
+			return true;
+		},
+		sharedHeuristic
+	);
+
+	// -----------------------------------------------------------------------
+	// BruteForceSafe — crowbar + safe room, extremely high cost
+	// -----------------------------------------------------------------------
+	planner.addLambdaAction( "BruteForceSafe",
+		// evaluate
+		[]( gie::EvaluateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			if( !IsAgentInSafeRoom( ctx, params.agent.guid() ) ) return false;
+			const gie::Entity* safe = FindEntityByName( ctx, "Safe" );
+			if( !safe ) return false;
+			if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) return false;
+			auto agent = ctx.entity( params.agent.guid() );
+			auto inv = agent->property( "Inventory" )->getGuidArray();
+			for( Guid it : *inv )
+			{
+				auto e = ctx.entity( it );
+				if( !e ) continue;
+				auto info = e->property( "Info" ); if( !info ) continue;
+				auto infoEnt = ctx.entity( *info->getGuid() );
+				if( infoEnt && gie::stringRegister().get( infoEnt->nameHash() ) == std::string_view( "CrowbarInfo" ) )
+					return true;
+			}
+			return false;
+		},
+		// simulate
+		[]( gie::SimulateSimulationParams params ) -> bool
+		{
+			auto& ctx = params.simulation.context();
+			gie::Entity* safe = FindEntityByName( ctx, "Safe" );
+			if( !safe ) return false;
+			safe->property( "Open" )->value = true;
+			SetSimulationCost( params.simulation, 0.f, 200.f );
+			return true;
+		},
+		sharedHeuristic
+	);
 }
 
-// Register actions and run planner simulate
-static int heistOpenSafe_actions( ExampleParameters& params, gie::Agent* agent )
+// ---------------------------------------------------------------------------
+// Action Execution — applies planned actions to the real world
+// ---------------------------------------------------------------------------
+static std::string ExecuteObserve( gie::World& world, gie::Agent* agent )
 {
-    gie::World& world = params.world;
-    gie::Planner& planner = params.planner;
-    gie::Goal& goal = params.goal;
+	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	auto wpSet = world.context().entityTagRegister().tagSet( "Waypoint" );
+	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
+	std::string wpName = "?";
+	std::vector<std::string> revealed;
 
-    // Shared heuristic for all heist actions — estimates remaining effort to open the safe.
-    auto sharedHeuristic = []( gie::CalculateHeuristicParams params )
-    {
-        auto agentEnt = params.simulation.context().entity( params.agent.guid() );
-        params.simulation.heuristic.value = EstimateHeistHeuristic( params.simulation, agentEnt );
-    };
+	if( wpSet && knownSet )
+	{
+		for( auto g : *wpSet )
+		{
+			if( !knownSet->count( g ) ) continue;
+			auto wp = world.entity( g );
+			if( !wp ) continue;
+			auto loc = wp->property( "Location" );
+			if( !loc ) continue;
+			if( glm::distance( agentLoc, *loc->getVec3() ) < 1.f )
+			{
+				wpName = gie::stringRegister().get( wp->nameHash() );
+				auto reveals = wp->property( "Reveals" );
+				if( reveals )
+				{
+					auto revArr = reveals->getGuidArray();
+					if( revArr )
+					{
+						for( Guid rg : *revArr )
+						{
+							auto ent = world.entity( rg );
+							if( ent )
+							{
+								if( !knownSet->count( rg ) )
+									revealed.push_back( std::string( gie::stringRegister().get( ent->nameHash() ) ) );
+								world.context().entityTagRegister().tag( ent, { H( "Known" ) } );
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	agent->property( "ExploredNewArea" )->value = true;
+	agent->property( "DiscoveryCount" )->value = static_cast<float>( CountKnown( world.context() ) );
 
-    // Disable the alarm by visiting the alarm panel
-    planner.addLambdaAction( "DisableAlarm",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "DisableAlarm::evaluate" );
-            // Must be inside the house to reach the alarm panel
-            if( !IsAgentInside( params.simulation.context(), params.agent.guid() ) )
-            { params.addDebugMessage( "  Agent not inside -> FALSE" ); return false; }
-            auto alarm = FindEntityByName( params.simulation.context(), "AlarmSystem" );
-            if( !alarm ) { params.addDebugMessage( "  AlarmSystem not found -> FALSE" ); return false; }
-            auto armed = alarm->property( "Armed" );
-            params.addDebugMessage( "  Armed=" + std::string( *armed->getBool() ? "true" : "false" ) );
-            return armed && *armed->getBool();
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "DisableAlarm::simulate" );
-            auto& bb = params.simulation.context();
-            gie::Entity* panel = FindEntityByName( bb, "AlarmPanel" );
-            gie::Entity* alarmE = FindEntityByName( bb, "AlarmSystem" );
-            if( !panel || !alarmE ) { params.addDebugMessage( "  Missing panel or system -> FALSE" ); return false; }
-
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            auto agentEnt = bb.entity( params.agent.guid() );
-            glm::vec3 from = *agentEnt->property( "Location" )->getVec3();
-            float len = MoveAgentAlongPath( params, from, panel, wp );
-            params.addDebugMessage( "  Move length=" + std::to_string( len ) );
-
-            alarmE->property( "Armed" )->value = false;
-            SetSimulationCost( params.simulation, len, 2.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Cut power at the fuse box to effectively disable the alarm too
-    planner.addLambdaAction( "DisablePower",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "DisablePower::evaluate" );
-            // Must be inside the house to reach the fuse box
-            if( !IsAgentInside( params.simulation.context(), params.agent.guid() ) )
-            { params.addDebugMessage( "  Agent not inside -> FALSE" ); return false; }
-            // if alarm is armed, disabling power is useful too
-            auto a = FindEntityByName( params.simulation.context(), "AlarmSystem" );
-            if( !a ) { params.addDebugMessage( "  AlarmSystem not found -> FALSE" ); return false; }
-            bool armed = *a->property( "Armed" )->getBool();
-            params.addDebugMessage( std::string( "  Armed=" ) + ( armed ? "true" : "false" ) );
-            return armed;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "DisablePower::simulate" );
-            auto& bb = params.simulation.context();
-            gie::Entity* fuse = FindEntityByName( bb, "FuseBoxEntity" );
-            gie::Entity* alarmE = FindEntityByName( bb, "AlarmSystem" );
-            if( !fuse || !alarmE ) { params.addDebugMessage( "  Missing fuse or system -> FALSE" ); return false; }
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            auto agentEnt = bb.entity( params.agent.guid() ); glm::vec3 from = *agentEnt->property( "Location" )->getVec3();
-            float len = MoveAgentAlongPath( params, from, fuse, wp );
-            params.addDebugMessage( "  Move length=" + std::to_string( len ) );
-            alarmE->property( "Armed" )->value = false;
-            SetSimulationCost( params.simulation, len, 3.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Use a matching key in inventory to unlock a door
-    planner.addLambdaAction( "UseKey",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "UseKey::evaluate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            auto connectors = getAccessPoints( ctx );
-            if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            for( auto g : connectors )
-            {
-                auto c = ctx.entity( g );
-                if( *c->property( "Locked" )->getBool() )
-                {
-                    auto reqProp = c->property( "RequiredKey" );
-                    Guid req = reqProp ? *reqProp->getGuid() : gie::NullGuid;
-                    if( req == gie::NullGuid ) continue;
-                    for( Guid it : *inv )
-                    {
-                        if( auto e = ctx.entity( it ) )
-                        {
-                            auto info = e->property( "Info" );
-                            if( info && *info->getGuid() == req ) { params.addDebugMessage( "  Found matching key -> TRUE" ); return true; }
-                        }
-                    }
-                }
-            }
-            params.addDebugMessage( "  No matching keys or no locked connectors -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "UseKey::simulate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            auto connectors = getAccessPoints( ctx );
-            if( connectors.empty() ) return false;
-            gie::Entity* bestC = nullptr; float bestL = std::numeric_limits<float>::max();
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            glm::vec3 from = *agent->property( "Location" )->getVec3();
-            for( auto g : connectors )
-            {
-                auto c = ctx.entity( g );
-                if( !*c->property( "Locked" )->getBool() ) continue;
-                auto reqProp = c->property( "RequiredKey" );
-                Guid req = reqProp ? *reqProp->getGuid() : gie::NullGuid;
-                if( req == gie::NullGuid ) continue;
-                bool have = false;
-                for( Guid it : *inv )
-                {
-                    if( auto e = ctx.entity( it ) )
-                    {
-                        auto info = e->property( "Info" );
-                        if( info && *info->getGuid() == req ) { have = true; break; }
-                    }
-                }
-                if( !have ) continue;
-                if( auto loc = c->property( "Location" ) )
-                {
-                    auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() );
-                    if( path.length < bestL ) { bestL = path.length; bestC = c; }
-                }
-            }
-            if( !bestC ) { params.addDebugMessage( "  No applicable connector -> FALSE" ); return false; }
-            float len = MoveAgentAlongPath( params, from, bestC, wp );
-            bestC->property( "Locked" )->value = false;
-            SetSimulationCost( params.simulation, len, 1.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Search world for any item not yet in inventory (except non-carryable POIs)
-    planner.addLambdaAction( "SearchForItem",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "SearchForItem::evaluate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            bool agentInside = IsAgentInside( ctx, params.agent.guid() );
-            auto items = ctx.entityTagRegister().tagSet( "Item" );
-            if( !items || items->empty() ) { params.addDebugMessage( "  No items -> FALSE" ); return false; }
-            for( auto g : *items )
-            {
-                auto e = ctx.entity( g );
-                auto nm = gie::stringRegister().get( e->nameHash() );
-                if( nm == "AlarmPanel" || nm == "FuseBoxEntity" ) continue;
-                if( e->hasTag( H( "Disabled" ) ) ) continue;
-                bool inInv = std::find( inv->begin(), inv->end(), g ) != inv->end();
-                if( inInv ) continue;
-                // Only pick reachable items: outside items when outside, any item when inside
-                auto loc = e->property( "Location" );
-                if( loc && !agentInside && IsPositionInsideHouse( *loc->getVec3() ) ) continue;
-                params.addDebugMessage( "  Reachable item found -> TRUE" );
-                return true;
-            }
-            params.addDebugMessage( "  No reachable items -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "SearchForItem::simulate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            bool agentInside = IsAgentInside( ctx, params.agent.guid() );
-            auto items = ctx.entityTagRegister().tagSet( "Item" );
-            if( !items ) return false;
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            glm::vec3 from = *agent->property( "Location" )->getVec3();
-            gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : *items )
-            {
-                auto e = ctx.entity( g ); auto nm = gie::stringRegister().get( e->nameHash() );
-                if( nm == "AlarmPanel" || nm == "FuseBoxEntity" ) continue;
-                if( e->hasTag( H( "Disabled" ) ) ) continue;
-                if( std::find( inv->begin(), inv->end(), g ) != inv->end() ) continue;
-                // Only pick reachable items based on inside/outside boundary
-                auto loc = e->property( "Location" );
-                if( loc && !agentInside && IsPositionInsideHouse( *loc->getVec3() ) ) continue;
-                if( loc )
-                {
-                    auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() );
-                    if( path.length < bestL ) { bestL = path.length; best = e; }
-                }
-            }
-            if( !best ) { params.addDebugMessage( "  No candidate item -> FALSE" ); return false; }
-            float len = MoveAgentAlongPath( params, from, best, wp );
-            inv->push_back( best->guid() );
-            params.addDebugMessage( "  Picked=" + std::string( gie::stringRegister().get( best->nameHash() ) ) + ", len=" + std::to_string( len ) );
-            SetSimulationCost( params.simulation, len, 1.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Pick a locked connector and open it using lockpicks
-    planner.addLambdaAction( "Lockpick",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "Lockpick::evaluate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            bool hasLP = false;
-            for( auto g : *inv )
-            {
-                auto e = ctx.entity( g ); auto info = e->property( "Info" ); if( !info ) continue;
-                auto ent = ctx.entity( *info->getGuid() ); if( ent && gie::stringRegister().get( ent->nameHash() ) == std::string_view( "LockpickInfo" ) ) { hasLP = true; break; }
-            }
-            if( !hasLP ) { params.addDebugMessage( "  No lockpick -> FALSE" ); return false; }
-            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            for( auto g : connectors ) if( *ctx.entity( g )->property( "Locked" )->getBool() ) return true;
-            params.addDebugMessage( "  No locked connector -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "Lockpick::simulate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) return false;
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            glm::vec3 from = *agent->property( "Location" )->getVec3();
-            gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : connectors )
-            {
-                auto c = ctx.entity( g ); if( !*c->property( "Locked" )->getBool() ) continue;
-                if( auto loc = c->property( "Location" ) )
-                {
-                    auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() );
-                    if( path.length < bestL ) { bestL = path.length; best = c; }
-                }
-            }
-            if( !best ) { params.addDebugMessage( "  No target -> FALSE" ); return false; }
-            float len = MoveAgentAlongPath( params, from, best, wp );
-            best->property( "Locked" )->value = false;
-            SetSimulationCost( params.simulation, len, 4.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Cut bars from a barred connector using a bolt cutter
-    planner.addLambdaAction( "CutBars",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "CutBars::evaluate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            bool hasBC = false; for( auto g : *inv ) { auto e = ctx.entity( g ); auto info = e->property( "Info" ); if( info ) { auto ent = ctx.entity( *info->getGuid() ); if( ent && gie::stringRegister().get( ent->nameHash() ) == std::string_view( "BoltCutterInfo" ) ) { hasBC = true; break; } } }
-            if( !hasBC ) { params.addDebugMessage( "  No bolt cutter -> FALSE" ); return false; }
-            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            for( auto g : connectors ) { auto c = ctx.entity( g ); if( c->property( "Barred" ) && *c->property( "Barred" )->getBool() ) return true; }
-            params.addDebugMessage( "  No barred connector -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "CutBars::simulate" );
-            auto& ctx = params.simulation.context();
-            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) return false;
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            auto agent = ctx.entity( params.agent.guid() ); glm::vec3 from = *agent->property( "Location" )->getVec3();
-            gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : connectors )
-            {
-                auto c = ctx.entity( g ); if( !c->property( "Barred" ) || !*c->property( "Barred" )->getBool() ) continue;
-                if( auto loc = c->property( "Location" ) ) { auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() ); if( path.length < bestL ) { bestL = path.length; best = c; } }
-            }
-            if( !best ) { params.addDebugMessage( "  No target -> FALSE" ); return false; }
-            float len = MoveAgentAlongPath( params, from, best, wp );
-            best->property( "Barred" )->value = false;
-            SetSimulationCost( params.simulation, len, 5.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Break any blocking conditions using the crowbar
-    planner.addLambdaAction( "BreakConnector",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "BreakConnector::evaluate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            bool hasCrowbar = false;
-            for( auto g : *inv )
-            {
-                auto e = ctx.entity( g );
-                auto info = e->property( "Info" );
-                if( !info ) continue;
-                auto infoEnt = ctx.entity( *info->getGuid() );
-                if( infoEnt && gie::stringRegister().get( infoEnt->nameHash() ) == std::string_view( "CrowbarInfo" ) ) { hasCrowbar = true; break; }
-            }
-            if( !hasCrowbar ) { params.addDebugMessage( "  No crowbar -> FALSE" ); return false; }
-            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            for( auto g : connectors )
-            {
-                auto c = ctx.entity( g );
-                if( *c->property( "Locked" )->getBool() || (c->property( "Blocked" ) && *c->property( "Blocked" )->getBool()) || (c->property( "Barred" ) && *c->property( "Barred" )->getBool()) ) { params.addDebugMessage( "  Blocked connector found -> TRUE" ); return true; }
-            }
-            params.addDebugMessage( "  Nothing to break -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "BreakConnector::simulate" );
-            auto& ctx = params.simulation.context();
-            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) return false;
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            auto agent = params.simulation.context().entity( params.agent.guid() ); glm::vec3 from = *agent->property( "Location" )->getVec3();
-            gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : connectors )
-            {
-                auto c = ctx.entity( g );
-                if( !( *c->property( "Locked" )->getBool() || (c->property( "Blocked" ) && *c->property( "Blocked" )->getBool()) || (c->property( "Barred" ) && *c->property( "Barred" )->getBool()) ) ) continue;
-                if( auto loc = c->property( "Location" ) )
-                {
-                    auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() );
-                    if( path.length < bestL ) { bestL = path.length; best = c; }
-                }
-            }
-            if( !best ) { params.addDebugMessage( "  No target -> FALSE" ); return false; }
-            float len = MoveAgentAlongPath( params, from, best, wp );
-            best->property( "Locked" )->value = false;
-            if( best->property( "Blocked" ) ) best->property( "Blocked" )->value = false;
-            if( best->property( "Barred" ) ) best->property( "Barred" )->value = false;
-            SetSimulationCost( params.simulation, len, 6.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Cross an entry connector to get inside
-    planner.addLambdaAction( "EnterThrough",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "EnterThrough::evaluate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            if( *agent->property( "CurrentRoom" )->getGuid() != gie::NullGuid ) { params.addDebugMessage( "  Already inside -> FALSE" ); return false; }
-            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) { params.addDebugMessage( "  No connectors -> FALSE" ); return false; }
-            bool alarmArmed = true; if( auto a = FindEntityByName( ctx, "AlarmSystem" ) ) { alarmArmed = *a->property( "Armed" )->getBool(); }
-            for( auto g : connectors )
-            {
-                auto c = ctx.entity( g );
-                bool blocked = *c->property( "Locked" )->getBool() || (c->property( "Blocked" ) && *c->property( "Blocked" )->getBool()) || (c->property( "Barred" ) && *c->property( "Barred" )->getBool());
-                bool alarmed = c->property( "Alarmed" ) && *c->property( "Alarmed" )->getBool();
-                if( !blocked && !( alarmArmed && alarmed ) ) { params.addDebugMessage( "  Free connector -> TRUE" ); return true; }
-            }
-            params.addDebugMessage( "  All entries blocked/alarmed -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "EnterThrough::simulate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto connectors = getAccessPoints( ctx ); if( connectors.empty() ) return false;
-            bool alarmArmed = true; if( auto a = FindEntityByName( ctx, "AlarmSystem" ) ) { alarmArmed = *a->property( "Armed" )->getBool(); }
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            glm::vec3 from = *agent->property( "Location" )->getVec3();
-            gie::Entity* best = nullptr; float bestL = std::numeric_limits<float>::max();
-            for( auto g : connectors )
-            {
-                auto c = ctx.entity( g );
-                bool blocked = *c->property( "Locked" )->getBool() || (c->property( "Blocked" ) && *c->property( "Blocked" )->getBool()) || (c->property( "Barred" ) && *c->property( "Barred" )->getBool());
-                bool alarmed = c->property( "Alarmed" ) && *c->property( "Alarmed" )->getBool();
-                if( blocked || ( alarmArmed && alarmed ) ) continue;
-                if( auto loc = c->property( "Location" ) )
-                {
-                    auto path = gie::getPath( *params.simulation.world(), wp, from, *loc->getVec3() );
-                    if( path.length < bestL ) { bestL = path.length; best = c; }
-                }
-            }
-            if( !best ) { params.addDebugMessage( "  No viable entry -> FALSE" ); return false; }
-            float len = MoveAgentAlongPath( params, from, best, wp );
-            SetSimulationCost( params.simulation, len, 1.f );
-            // Determine which room the access point leads into by checking which room
-            // contains the access point's location (using the room Vertices bounding box).
-            auto accessLoc = *best->property( "Location" )->getVec3();
-            gie::Entity* targetRoom = nullptr;
-            float bestRoomDist = std::numeric_limits<float>::max();
-            auto roomSet = params.simulation.tagSet( "Room" );
-            if( roomSet )
-            {
-                for( auto rg : *roomSet )
-                {
-                    auto room = ctx.entity( rg );
-                    if( !room ) continue;
-                    auto nm = gie::stringRegister().get( room->nameHash() );
-                    // Skip the whole-house bounding room
-                    if( nm == "WholeHouse" ) continue;
-                    auto roomLoc = room->property( "Location" );
-                    if( !roomLoc ) continue;
-                    float dist = glm::length( accessLoc - *roomLoc->getVec3() );
-                    if( dist < bestRoomDist ) { bestRoomDist = dist; targetRoom = room; }
-                }
-            }
-            if( targetRoom )
-            {
-                agent->property( "CurrentRoom" )->value = targetRoom->guid();
-                if( auto loc = targetRoom->property( "Location" ) ) { *agent->property( "Location" )->getVec3() = *loc->getVec3(); }
-            }
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Navigate inside from current room to the safe room
-    planner.addLambdaAction( "MoveInside",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "MoveInside::evaluate" );
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            bool inside = *agent->property( "CurrentRoom" )->getGuid() != gie::NullGuid;
-            params.addDebugMessage( std::string( "  Inside=" ) + ( inside ? "true" : "false" ) );
-            return inside;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "MoveInside::simulate" );
-            // move to safe room if not already there
-            auto& ctx = params.simulation.context();
-            auto agent = ctx.entity( params.agent.guid() );
-            auto cur = *agent->property( "CurrentRoom" )->getGuid();
-            gie::Entity* dest = nullptr; const gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( safe )
-            {
-                auto inRoom = *const_cast< gie::Entity* >( safe )->property( "InRoom" )->getGuid();
-                if( inRoom != cur ) dest = ctx.entity( inRoom );
-            }
-            if( !dest ) { params.addDebugMessage( "  Already at safe room or missing -> FALSE" ); return false; }
-            std::vector<Guid> wp; if( auto set = params.simulation.tagSet( "Waypoint" ) ) wp.assign( set->begin(), set->end() );
-            glm::vec3 from = *agent->property( "Location" )->getVec3();
-            float len = MoveAgentAlongPath( params, from, dest, wp );
-            agent->property( "CurrentRoom" )->value = dest->guid();
-            if( auto loc = dest->property( "Location" ) ) *agent->property( "Location" )->getVec3() = *loc->getVec3();
-            SetSimulationCost( params.simulation, len, 1.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Open safe using a physical key
-    planner.addLambdaAction( "OpenSafeWithKey",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "OpenSafeWithKey::evaluate" );
-            auto& ctx = params.simulation.context();
-            // Must be in the safe room
-            if( !IsAgentInSafeRoom( ctx, params.agent.guid() ) ) { params.addDebugMessage( "  Not in safe room -> FALSE" ); return false; }
-            const gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( !safe ) { params.addDebugMessage( "  Safe not found -> FALSE" ); return false; }
-            if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) { params.addDebugMessage( "  Already open -> FALSE" ); return false; }
-            if( *const_cast< gie::Entity* >( safe )->property( "LockMode" )->getFloat() != 0.f ) { params.addDebugMessage( "  Not key-lock -> FALSE" ); return false; }
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            for( Guid it : *inv )
-            {
-                auto e = ctx.entity( it );
-                auto info = e->property( "Info" ); if( !info ) continue;
-                auto infoEnt = ctx.entity( *info->getGuid() );
-                if( infoEnt && gie::stringRegister().get( infoEnt->nameHash() ) == std::string_view( "SafeKeyInfo" ) ) return true;
-            }
-            params.addDebugMessage( "  Missing SafeKey -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "OpenSafeWithKey::simulate" );
-            auto& ctx = params.simulation.context();
-            gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( !safe ) return false;
-            safe->property( "Open" )->value = true;
-            SetSimulationCost( params.simulation, 0.f, 2.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Open safe using code pieces — agent must collect enough pieces (RequiredCodePieces)
-    // scattered around the property before this action becomes available.
-    // The electronic code lock also requires the alarm/security system to be disabled
-    // first (it's wired into the same security circuit).
-    planner.addLambdaAction( "OpenSafeWithCode",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "OpenSafeWithCode::evaluate" );
-            auto& ctx = params.simulation.context();
-            // Must be in the safe room
-            if( !IsAgentInSafeRoom( ctx, params.agent.guid() ) ) { params.addDebugMessage( "  Not in safe room -> FALSE" ); return false; }
-            const gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( !safe ) { params.addDebugMessage( "  Safe not found -> FALSE" ); return false; }
-            if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) { params.addDebugMessage( "  Already open -> FALSE" ); return false; }
-            if( *const_cast< gie::Entity* >( safe )->property( "LockMode" )->getFloat() != 1.f ) { params.addDebugMessage( "  Not code-lock -> FALSE" ); return false; }
-            // Code lock is wired into the security system — alarm must be disabled first
-            auto alarm = FindEntityByName( ctx, "AlarmSystem" );
-            if( alarm && *alarm->property( "Armed" )->getBool() ) { params.addDebugMessage( "  Alarm still armed -> FALSE" ); return false; }
-            int required = static_cast< int >( *const_cast< gie::Entity* >( safe )->property( "RequiredCodePieces" )->getFloat() );
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            int codePieces = 0;
-            for( Guid it : *inv )
-            {
-                auto e = ctx.entity( it );
-                auto info = e->property( "Info" ); if( !info ) continue;
-                auto infoEnt = ctx.entity( *info->getGuid() );
-                if( infoEnt )
-                {
-                    auto nm = gie::stringRegister().get( infoEnt->nameHash() );
-                    if( nm.find( "Code" ) != std::string::npos ) codePieces++;
-                }
-            }
-            params.addDebugMessage( "  CodePieces=" + std::to_string( codePieces ) + "/" + std::to_string( required ) );
-            if( codePieces < required ) { params.addDebugMessage( "  Not enough code pieces -> FALSE" ); return false; }
-            return true;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "OpenSafeWithCode::simulate" );
-            auto& ctx = params.simulation.context();
-            gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( !safe ) return false;
-            safe->property( "Open" )->value = true;
-            SetSimulationCost( params.simulation, 0.f, 3.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Crack a heavy-locked safe using a stethoscope (simplified)
-    planner.addLambdaAction( "CrackSafe",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "CrackSafe::evaluate" );
-            auto& ctx = params.simulation.context();
-            // Must be in the safe room
-            if( !IsAgentInSafeRoom( ctx, params.agent.guid() ) ) { params.addDebugMessage( "  Not in safe room -> FALSE" ); return false; }
-            const gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( !safe ) { params.addDebugMessage( "  Safe not found -> FALSE" ); return false; }
-            if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) { params.addDebugMessage( "  Already open -> FALSE" ); return false; }
-            if( *const_cast< gie::Entity* >( safe )->property( "LockMode" )->getFloat() != 2.f ) { params.addDebugMessage( "  Not heavy-lock -> FALSE" ); return false; }
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            for( Guid it : *inv )
-            {
-                auto e = ctx.entity( it );
-                auto info = e->property( "Info" ); if( !info ) continue;
-                auto infoEnt = ctx.entity( *info->getGuid() );
-                if( infoEnt && gie::stringRegister().get( infoEnt->nameHash() ) == std::string_view( "StethoscopeInfo" ) ) return true;
-            }
-            params.addDebugMessage( "  Missing Stethoscope -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "CrackSafe::simulate" );
-            auto& ctx = params.simulation.context();
-            gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( !safe ) return false;
-            safe->property( "Open" )->value = true;
-            SetSimulationCost( params.simulation, 0.f, 8.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Brute force the safe open — requires a crowbar and being in the safe room.
-    // Very high cost: only viable when no better method is available.
-    planner.addLambdaAction( "BruteForceSafe",
-        // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "BruteForceSafe::evaluate" );
-            auto& ctx = params.simulation.context();
-            // Must be in the safe room
-            if( !IsAgentInSafeRoom( ctx, params.agent.guid() ) ) { params.addDebugMessage( "  Not in safe room -> FALSE" ); return false; }
-            const gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( !safe ) { params.addDebugMessage( "  Safe not found -> FALSE" ); return false; }
-            if( *const_cast< gie::Entity* >( safe )->property( "Open" )->getBool() ) { params.addDebugMessage( "  Already open -> FALSE" ); return false; }
-            // Requires crowbar in inventory
-            auto agent = ctx.entity( params.agent.guid() );
-            auto inv = agent->property( "Inventory" )->getGuidArray();
-            for( Guid it : *inv )
-            {
-                auto e = ctx.entity( it );
-                auto info = e->property( "Info" ); if( !info ) continue;
-                auto infoEnt = ctx.entity( *info->getGuid() );
-                if( infoEnt && gie::stringRegister().get( infoEnt->nameHash() ) == std::string_view( "CrowbarInfo" ) )
-                { params.addDebugMessage( "  Have crowbar -> TRUE" ); return true; }
-            }
-            params.addDebugMessage( "  Missing crowbar -> FALSE" );
-            return false;
-        },
-        // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
-        {
-            params.addDebugMessage( "BruteForceSafe::simulate" );
-            auto& ctx = params.simulation.context();
-            gie::Entity* safe = FindEntityByName( ctx, "Safe" );
-            if( !safe ) return false;
-            // very noisy/slow IRL — extremely high cost, only viable as last resort
-            safe->property( "Open" )->value = true;
-            SetSimulationCost( params.simulation, 0.f, 200.f );
-            return true;
-        },
-        sharedHeuristic
-    );
-
-    // Allow deeper search for multi-stage heist puzzle
-    planner.depthLimitMutator() = 10;
-
-    // Set initial simulation root
-    planner.simulate( goal, *agent );
-
-    return 0;
+	std::string detail = "at " + wpName;
+	if( !revealed.empty() )
+	{
+		detail += " -> discovered ";
+		for( size_t i = 0; i < revealed.size(); i++ )
+		{
+			if( i > 0 ) detail += ", ";
+			detail += revealed[i];
+		}
+	}
+	return detail;
 }
 
-// Thin wrapper preserving original entry point but using split functions
+static std::string ExecuteMoveTo( gie::World& world, gie::Agent* agent )
+{
+	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
+	auto wpSet = world.context().entityTagRegister().tagSet( "Waypoint" );
+	if( !knownSet || !wpSet ) return "";
+
+	gie::Entity* bestTarget = nullptr;
+	float bestScore = std::numeric_limits<float>::max();
+	for( auto g : *wpSet )
+	{
+		if( !knownSet->count( g ) ) continue;
+		auto wp = world.entity( g );
+		if( !wp ) continue;
+		auto loc = wp->property( "Location" );
+		if( !loc ) continue;
+		if( IsPositionInsideHouse( *loc->getVec3() ) ) continue;
+		float dist = glm::distance( agentLoc, *loc->getVec3() );
+		if( dist < 1.f ) continue;
+		float score = dist;
+		auto reveals = wp->property( "Reveals" );
+		if( reveals )
+		{
+			auto revArr = reveals->getGuidArray();
+			if( revArr )
+				for( Guid rg : *revArr )
+					if( !knownSet->count( rg ) ) { score -= 50.f; break; }
+		}
+		if( score < bestScore ) { bestScore = score; bestTarget = wp; }
+	}
+	if( bestTarget )
+	{
+		*agent->property( "Location" )->getVec3() = *bestTarget->property( "Location" )->getVec3();
+		return "-> " + std::string( gie::stringRegister().get( bestTarget->nameHash() ) );
+	}
+	return "";
+}
+
+static std::string ExecuteUseTool( gie::World& world, gie::Agent* agent )
+{
+	auto panel = FindEntityByName( world.context(), "EnergyPanel" );
+	if( !panel ) return "";
+	*agent->property( "Location" )->getVec3() = *panel->property( "Location" )->getVec3();
+	panel->property( "Open" )->value = true;
+	return "opened EnergyPanel cover";
+}
+
+static std::string ExecuteInteract( gie::World& world, gie::Agent* agent )
+{
+	auto panel = FindEntityByName( world.context(), "EnergyPanel" );
+	auto alarm = FindEntityByName( world.context(), "AlarmSystem" );
+	if( !panel || !alarm ) return "";
+	*agent->property( "Location" )->getVec3() = *panel->property( "Location" )->getVec3();
+	alarm->property( "Armed" )->value = false;
+	return "disabled alarm via EnergyPanel";
+}
+
+static std::string ExecuteGoThrough( gie::World& world, gie::Agent* agent )
+{
+	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
+	auto portalSet = world.context().entityTagRegister().tagSet( "Portal" );
+	auto wpSet = world.context().entityTagRegister().tagSet( "Waypoint" );
+	if( !knownSet || !portalSet || !wpSet ) return "";
+
+	auto alarm = FindEntityByName( world.context(), "AlarmSystem" );
+	bool alarmArmed = alarm && *alarm->property( "Armed" )->getBool();
+
+	// Find nearest portal-connected waypoint
+	float walkDist = 0.f;
+	Guid agentWp = NearestPortalConnectedWP( world.context(), wpSet, knownSet, portalSet, alarmArmed, agentLoc, walkDist );
+	if( agentWp == gie::NullGuid ) return "";
+
+	// Dijkstra through traversable portals (ensures shortest paths)
+	struct DijkNode { Guid wp; float dist; };
+	auto dijkCmp = []( const DijkNode& a, const DijkNode& b ) { return a.dist > b.dist; };
+	std::priority_queue<DijkNode, std::vector<DijkNode>, decltype( dijkCmp )> frontier( dijkCmp );
+	frontier.push( { agentWp, 0.f } );
+	std::set<Guid> finalized;
+	std::vector<std::pair<Guid, float>> reachable;
+
+	while( !frontier.empty() )
+	{
+		DijkNode current = frontier.top();
+		frontier.pop();
+		if( finalized.count( current.wp ) ) continue;
+		finalized.insert( current.wp );
+		if( current.wp != agentWp )
+			reachable.push_back( { current.wp, current.dist } );
+		for( auto pg : *portalSet )
+		{
+			if( !knownSet->count( pg ) ) continue;
+			auto portal = world.entity( pg ); if( !portal ) continue;
+			if( *portal->property( "Locked" )->getBool() ) continue;
+			if( *portal->property( "AlarmGated" )->getBool() && alarmArmed ) continue;
+			Guid sA = *portal->property( "SideA" )->getGuid();
+			Guid sB = *portal->property( "SideB" )->getGuid();
+			Guid dest = gie::NullGuid;
+			if( sA == current.wp ) dest = sB;
+			else if( sB == current.wp ) dest = sA;
+			else continue;
+			if( !knownSet->count( dest ) || finalized.count( dest ) ) continue;
+			auto curEnt = world.entity( current.wp );
+			auto dstEnt = world.entity( dest );
+			float seg = 0.f;
+			if( curEnt && dstEnt )
+			{
+				auto cL = curEnt->property( "Location" );
+				auto dL = dstEnt->property( "Location" );
+				if( cL && dL ) seg = glm::distance( *cL->getVec3(), *dL->getVec3() );
+			}
+			frontier.push( { dest, current.dist + seg } );
+		}
+	}
+	if( reachable.empty() ) return "";
+
+	// Score destinations
+	Guid bestDest = gie::NullGuid;
+	float bestScore = std::numeric_limits<float>::max();
+	const gie::Entity* safe = FindEntityByName( world.context(), "Safe" );
+	Guid safeRoomGuid = gie::NullGuid;
+	if( safe ) { auto ir = safe->property( "InRoom" ); if( ir ) safeRoomGuid = *ir->getGuid(); }
+	for( auto& [dest, dist] : reachable )
+	{
+		float score = dist;
+		auto destEnt = world.entity( dest );
+		if( destEnt )
+		{
+			auto reveals = destEnt->property( "Reveals" );
+			if( reveals )
+			{
+				auto revArr = reveals->getGuidArray();
+				if( revArr )
+					for( Guid rg : *revArr )
+						if( !knownSet->count( rg ) ) { score -= 50.f; break; }
+			}
+		}
+		if( destEnt && safeRoomGuid != gie::NullGuid )
+		{
+			auto dL = destEnt->property( "Location" );
+			auto srEnt = world.entity( safeRoomGuid );
+			if( dL && srEnt )
+			{
+				auto rL = srEnt->property( "Location" );
+				if( rL && glm::distance( *dL->getVec3(), *rL->getVec3() ) < 5.f )
+					score -= 20.f;
+			}
+		}
+		if( score < bestScore ) { bestScore = score; bestDest = dest; }
+	}
+	if( bestDest == gie::NullGuid ) return "";
+
+	auto destEnt = world.entity( bestDest );
+	if( !destEnt ) return "";
+	std::string destName( gie::stringRegister().get( destEnt->nameHash() ) );
+	auto destLoc = destEnt->property( "Location" );
+	if( destLoc )
+		*agent->property( "Location" )->getVec3() = *destLoc->getVec3();
+
+	// Update CurrentRoom
+	if( destLoc && IsPositionInsideHouse( *destLoc->getVec3() ) )
+	{
+		auto roomSet = world.context().entityTagRegister().tagSet( "Room" );
+		if( roomSet )
+		{
+			gie::Entity* targetRoom = nullptr;
+			float bestRD = std::numeric_limits<float>::max();
+			for( auto rg : *roomSet )
+			{
+				auto room = world.entity( rg ); if( !room ) continue;
+				if( gie::stringRegister().get( room->nameHash() ) == "WholeHouse" ) continue;
+				auto rL = room->property( "Location" ); if( !rL ) continue;
+				float rd = glm::distance( *destLoc->getVec3(), *rL->getVec3() );
+				if( rd < bestRD ) { bestRD = rd; targetRoom = room; }
+			}
+			if( targetRoom )
+				agent->property( "CurrentRoom" )->value = targetRoom->guid();
+		}
+	}
+	// Tag destination as Known
+	world.context().entityTagRegister().tag( destEnt, { H( "Known" ) } );
+	return "-> " + destName;
+}
+
+static std::string ExecuteSearchForItem( gie::World& world, gie::Agent* agent )
+{
+	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	auto inv = agent->property( "Inventory" )->getGuidArray();
+	auto neededItems = agent->property( "NeededItems" );
+	auto neededArr = neededItems ? neededItems->getGuidArray() : nullptr;
+	if( !neededArr || neededArr->empty() ) return "";
+	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
+	auto itemSet = world.context().entityTagRegister().tagSet( "Item" );
+	if( !itemSet ) return "";
+	bool agentInside = IsAgentInside( world.context(), agent->guid() );
+
+	gie::Entity* best = nullptr;
+	float bestDist = std::numeric_limits<float>::max();
+	for( auto g : *itemSet )
+	{
+		if( knownSet && !knownSet->count( g ) ) continue;
+		if( std::find( inv->begin(), inv->end(), g ) != inv->end() ) continue;
+		auto e = world.entity( g ); if( !e ) continue;
+		auto loc = e->property( "Location" ); if( !loc ) continue;
+		if( !agentInside && IsPositionInsideHouse( *loc->getVec3() ) ) continue;
+		auto info = e->property( "Info" );
+		if( !info ) continue;
+		if( std::find( neededArr->begin(), neededArr->end(), *info->getGuid() ) == neededArr->end() ) continue;
+		float dist = glm::distance( agentLoc, *loc->getVec3() );
+		if( dist < bestDist ) { bestDist = dist; best = e; }
+	}
+	if( !best ) return "";
+	*agent->property( "Location" )->getVec3() = *best->property( "Location" )->getVec3();
+	inv->push_back( best->guid() );
+	return std::string( gie::stringRegister().get( best->nameHash() ) );
+}
+
+static std::string ExecuteInspect( gie::World& world, gie::Agent* agent )
+{
+	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
+	if( !knownSet ) return "";
+	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+
+	// Find nearest inspectable entity
+	gie::Entity* bestTarget = nullptr;
+	float bestDist = std::numeric_limits<float>::max();
+	for( auto g : *knownSet )
+	{
+		auto e = world.entity( g ); if( !e ) continue;
+		auto reqItems = e->property( "RequiredItems" );
+		if( !reqItems ) continue;
+		auto reqArr = reqItems->getGuidArray();
+		if( !reqArr || reqArr->empty() ) continue;
+		auto inspected = e->property( "Inspected" );
+		if( !inspected || *inspected->getBool() ) continue;
+		auto loc = e->property( "Location" ); if( !loc ) continue;
+		float d = glm::distance( agentLoc, *loc->getVec3() );
+		if( d < bestDist ) { bestDist = d; bestTarget = e; }
+	}
+	if( !bestTarget ) return "";
+
+	std::string name( gie::stringRegister().get( bestTarget->nameHash() ) );
+
+	// Move agent to entity
+	auto loc = bestTarget->property( "Location" );
+	if( loc ) *agent->property( "Location" )->getVec3() = *loc->getVec3();
+
+	// Set Inspected = true
+	bestTarget->property( "Inspected" )->value = true;
+
+	// Append RequiredItems to agent.NeededItems (deduplicating)
+	auto reqArr = bestTarget->property( "RequiredItems" )->getGuidArray();
+	auto neededArr = agent->property( "NeededItems" )->getGuidArray();
+	for( Guid reqInfo : *reqArr )
+	{
+		if( std::find( neededArr->begin(), neededArr->end(), reqInfo ) == neededArr->end() )
+			neededArr->push_back( reqInfo );
+	}
+
+	// If entity is a Portal, tag any unknown-side waypoints as Known
+	auto portalSet = world.context().entityTagRegister().tagSet( "Portal" );
+	if( portalSet && portalSet->count( bestTarget->guid() ) )
+	{
+		Guid sA = *bestTarget->property( "SideA" )->getGuid();
+		Guid sB = *bestTarget->property( "SideB" )->getGuid();
+		auto knownSetW = world.context().entityTagRegister().tagSet( "Known" );
+		Guid sides[] = { sA, sB };
+		for( Guid side : sides )
+		{
+			if( knownSetW && knownSetW->count( side ) ) continue;
+			auto sideEnt = world.entity( side );
+			if( sideEnt )
+				world.context().entityTagRegister().tag( sideEnt, { H( "Known" ) } );
+		}
+	}
+
+	agent->property( "ExploredNewArea" )->value = true;
+	agent->property( "DiscoveryCount" )->value = static_cast<float>( CountKnown( world.context() ) );
+	return "inspected " + name;
+}
+
+static std::string ExecuteUseItem( gie::World& world, gie::Agent* agent )
+{
+	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
+	if( !knownSet ) return "";
+	auto inv = agent->property( "Inventory" )->getGuidArray();
+	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+
+	gie::Entity* bestTarget = nullptr;
+	float bestDist = std::numeric_limits<float>::max();
+	for( auto g : *knownSet )
+	{
+		auto e = world.entity( g ); if( !e ) continue;
+		auto inspected = e->property( "Inspected" );
+		if( !inspected || !*inspected->getBool() ) continue;
+		auto locked = e->property( "Locked" );
+		if( !locked || !*locked->getBool() ) continue;
+		auto reqItems = e->property( "RequiredItems" );
+		if( !reqItems ) continue;
+		auto reqArr = reqItems->getGuidArray();
+		if( !reqArr || reqArr->empty() ) continue;
+
+		bool hasAll = true;
+		for( Guid reqInfo : *reqArr )
+		{
+			bool found = false;
+			for( Guid itemG : *inv )
+			{
+				auto item = world.entity( itemG ); if( !item ) continue;
+				auto info = item->property( "Info" );
+				if( info && *info->getGuid() == reqInfo ) { found = true; break; }
+			}
+			if( !found ) { hasAll = false; break; }
+		}
+		if( !hasAll ) continue;
+		auto loc = e->property( "Location" ); if( !loc ) continue;
+		float d = glm::distance( agentLoc, *loc->getVec3() );
+		if( d < bestDist ) { bestDist = d; bestTarget = e; }
+	}
+	if( !bestTarget ) return "";
+
+	std::string name( gie::stringRegister().get( bestTarget->nameHash() ) );
+	auto loc = bestTarget->property( "Location" );
+	if( loc ) *agent->property( "Location" )->getVec3() = *loc->getVec3();
+	bestTarget->property( "Locked" )->value = false;
+	return "unlocked " + name;
+}
+
+static std::string ExecuteOpenSafeWithCode( gie::World& world, gie::Agent* agent )
+{
+	auto safe = FindEntityByName( world.context(), "Safe" );
+	if( !safe ) return "";
+	safe->property( "Open" )->value = true;
+	return "safe opened with code pieces";
+}
+
+static std::string ExecuteBruteForceSafe( gie::World& world, gie::Agent* agent )
+{
+	auto safe = FindEntityByName( world.context(), "Safe" );
+	if( !safe ) return "";
+	safe->property( "Open" )->value = true;
+	return "safe forced open with crowbar";
+}
+
+static std::string ExecuteAction( gie::World& world, gie::Agent* agent, const std::string& actionName )
+{
+	if( actionName == "Observe" )           return ExecuteObserve( world, agent );
+	else if( actionName == "MoveTo" )       return ExecuteMoveTo( world, agent );
+	else if( actionName == "UseTool" )      return ExecuteUseTool( world, agent );
+	else if( actionName == "Interact" )     return ExecuteInteract( world, agent );
+	else if( actionName == "GoThrough" )    return ExecuteGoThrough( world, agent );
+	else if( actionName == "SearchForItem" )return ExecuteSearchForItem( world, agent );
+	else if( actionName == "Inspect" )      return ExecuteInspect( world, agent );
+	else if( actionName == "UseItem" )      return ExecuteUseItem( world, agent );
+	else if( actionName == "OpenSafeWithCode" ) return ExecuteOpenSafeWithCode( world, agent );
+	else if( actionName == "BruteForceSafe" )   return ExecuteBruteForceSafe( world, agent );
+	return "";
+}
+
+// ---------------------------------------------------------------------------
+// Gameplay loop — single cycle and full loop
+// ---------------------------------------------------------------------------
+enum class CycleResult { Continued, GoalReached, Stuck };
+
+static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent, bool useHeuristics = true )
+{
+	auto getInventoryNames = [&]() -> std::vector<std::string>
+	{
+		std::vector<std::string> names;
+		auto inv = agent->property( "Inventory" )->getGuidArray();
+		if( inv )
+			for( auto g : *inv )
+				if( auto e = world.entity( g ) )
+					names.push_back( std::string( gie::stringRegister().get( e->nameHash() ) ) );
+		return names;
+	};
+
+	auto safe = FindEntityByName( world.context(), "Safe" );
+	if( safe && *safe->property( "Open" )->getBool() )
+	{
+		g_GameplayLog.primaryGoalReached = true;
+		return CycleResult::GoalReached;
+	}
+
+	Guid safeOpenPropGuid = safe ? safe->property( "Open" )->guid() : gie::NullGuid;
+	Guid exploredPropGuid = agent->property( "ExploredNewArea" )->guid();
+
+	int cycleNum = static_cast<int>( g_GameplayLog.cycles.size() ) + 1;
+	GameplayCycleEntry entry;
+	entry.cycle = cycleNum;
+	entry.agentPosBefore = *agent->property( "Location" )->getVec3();
+	entry.knownCountBefore = CountKnown( world.context() );
+
+	// --- Try primary goal: open safe ---
+	{
+		gie::Goal primaryGoal{ world };
+		if( safeOpenPropGuid != gie::NullGuid )
+			primaryGoal.targets.emplace_back( safeOpenPropGuid, true );
+
+		gie::Planner primaryPlanner{};
+		RegisterActions( primaryPlanner );
+		primaryPlanner.depthLimitMutator() = 12;
+		primaryPlanner.logStepsMutator() = false;
+		primaryPlanner.simulate( primaryGoal, *agent );
+		primaryPlanner.plan( useHeuristics );
+
+		auto& planned = primaryPlanner.planActions();
+		if( !planned.empty() )
+		{
+			entry.goalType = "Primary";
+			entry.planFound = true;
+			entry.simulationCount = primaryPlanner.simulations().size();
+			for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
+				entry.actionNames.push_back( std::string( planned[i]->name() ) );
+
+			for( auto& name : entry.actionNames )
+				entry.actionDetails.push_back( ExecuteAction( world, agent, name ) );
+
+			entry.agentPosAfter = *agent->property( "Location" )->getVec3();
+			entry.knownCountAfter = CountKnown( world.context() );
+			entry.inventoryAfter = getInventoryNames();
+			entry.plannerPtr = std::make_unique<gie::Planner>( std::move( primaryPlanner ) );
+			g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
+			g_GameplayLog.cycles.push_back( std::move( entry ) );
+
+			safe = FindEntityByName( world.context(), "Safe" );
+			if( safe && *safe->property( "Open" )->getBool() )
+			{
+				g_GameplayLog.primaryGoalReached = true;
+				return CycleResult::GoalReached;
+			}
+			return CycleResult::Continued;
+		}
+	}
+
+	// --- Primary unreachable, try exploration goal ---
+	agent->property( "ExploredNewArea" )->value = false;
+
+	{
+		gie::Goal exploreGoal{ world };
+		exploreGoal.targets.emplace_back( exploredPropGuid, true );
+
+		gie::Planner explorePlanner{};
+		RegisterActions( explorePlanner );
+		explorePlanner.depthLimitMutator() = 4;
+		explorePlanner.logStepsMutator() = false;
+		explorePlanner.simulate( exploreGoal, *agent );
+		explorePlanner.plan( useHeuristics );
+
+		auto& planned = explorePlanner.planActions();
+		if( !planned.empty() )
+		{
+			entry.goalType = "Explore";
+			entry.planFound = true;
+			entry.simulationCount = explorePlanner.simulations().size();
+			for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
+				entry.actionNames.push_back( std::string( planned[i]->name() ) );
+
+			for( auto& name : entry.actionNames )
+				entry.actionDetails.push_back( ExecuteAction( world, agent, name ) );
+
+			entry.agentPosAfter = *agent->property( "Location" )->getVec3();
+			entry.knownCountAfter = CountKnown( world.context() );
+			entry.inventoryAfter = getInventoryNames();
+			entry.plannerPtr = std::make_unique<gie::Planner>( std::move( explorePlanner ) );
+			g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
+			g_GameplayLog.cycles.push_back( std::move( entry ) );
+			return CycleResult::Continued;
+		}
+	}
+
+	// --- Stuck: neither goal produced a plan ---
+	entry.goalType = "Stuck";
+	entry.planFound = false;
+	entry.agentPosAfter = entry.agentPosBefore;
+	entry.knownCountAfter = entry.knownCountBefore;
+	entry.inventoryAfter = getInventoryNames();
+	g_GameplayLog.cycles.push_back( std::move( entry ) );
+	return CycleResult::Stuck;
+}
+
+static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner, bool useHeuristics = true )
+{
+	g_GameplayLog = {};
+	g_GameplayLog.started = true;
+	g_GameplayLog.agentTrail.push_back( *agent->property( "Location" )->getVec3() );
+
+	const int maxCycles = 30;
+	for( int i = 0; i < maxCycles; i++ )
+	{
+		CycleResult result = RunGameplayCycle( world, agent, useHeuristics );
+		if( result != CycleResult::Continued )
+			break;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
 int heistOpenSafe( ExampleParameters& params )
 {
-    gie::Agent* agent = heistOpenSafe_world( params );
-    return heistOpenSafe_actions( params, agent );
+	gie::Agent* agent = heistOpenSafe_world( params );
+
+	// Register actions on the main planner (for visualization Plan! button)
+	RegisterActions( params.planner );
+	params.planner.depthLimitMutator() = 20;
+
+	params.planner.simulate( params.goal, *agent );
+
+	// Run the gameplay loop (deferred in visualization mode — triggered by GUI button)
+	if( !params.visualize )
+	{
+		RunGameplayLoop( params.world, agent, params.planner );
+	}
+
+	return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Validation
+// ---------------------------------------------------------------------------
 int heistOpenSafeValidateResult( std::string& failMsg )
 {
-    gie::World world{};
-    gie::Planner planner{};
-    gie::Goal goal{ world };
-    ExampleParameters params{ world, planner, goal };
+	// Helper: extract flat action sequence and total simulation count from g_GameplayLog
+	auto captureResults = []() -> std::pair<std::vector<std::string>, size_t>
+	{
+		std::vector<std::string> actions;
+		size_t totalSims = 0;
+		for( auto& c : g_GameplayLog.cycles )
+		{
+			for( auto& a : c.actionNames )
+				actions.push_back( a );
+			totalSims += c.simulationCount;
+		}
+		return { actions, totalSims };
+	};
 
-    VALIDATE( heistOpenSafe( params ) == 0, "heistOpenSafe() setup failed" );
+	// --- Run with heuristics (A*) ---
+	gie::World world{};
+	gie::Planner planner{};
+	gie::Goal goal{ world };
+	ExampleParameters params{ world, planner, goal };
 
-    // Run the planner with heuristic mode
-    planner.plan( true );
+	VALIDATE( heistOpenSafe( params ) == 0, "heistOpenSafe() setup failed (heuristic)" );
 
-    // Plan should have 6 actions (leaf-to-root backtrack order):
-    // OpenSafeWithCode, MoveInside, DisableAlarm, EnterThrough, SearchForItem, SearchForItem
-    auto& planned = planner.planActions();
-    VALIDATE_EQ( planned.size(), size_t( 6 ), "planned action count" );
+	// Debug: print all cycles
+	printf( "  Gameplay cycles: %zu, goalReached: %s\n", g_GameplayLog.cycles.size(), g_GameplayLog.primaryGoalReached ? "yes" : "no" );
+	for( size_t ci = 0; ci < g_GameplayLog.cycles.size(); ci++ )
+	{
+		auto& c = g_GameplayLog.cycles[ci];
+		printf( "  Cycle %d [%s] sims=%zu actions=%zu pos=(%.1f,%.1f)->(%.1f,%.1f) known=%d->%d\n",
+			c.cycle, c.goalType.c_str(), c.simulationCount, c.actionNames.size(),
+			c.agentPosBefore.x, c.agentPosBefore.y, c.agentPosAfter.x, c.agentPosAfter.y,
+			c.knownCountBefore, c.knownCountAfter );
+		for( size_t ai = 0; ai < c.actionNames.size(); ai++ )
+			printf( "    %zu. %s — %s\n", ai + 1, c.actionNames[ai].c_str(),
+				ai < c.actionDetails.size() ? c.actionDetails[ai].c_str() : "" );
+	}
 
-    const char* expectedActions[] = { "OpenSafeWithCode", "MoveInside", "DisableAlarm", "EnterThrough", "SearchForItem", "SearchForItem" };
-    for( size_t i = 0; i < planned.size(); ++i )
-    {
-        VALIDATE_STR_EQ( planned[ i ]->name(), expectedActions[ i ],
-            std::string( "planned action[" ) + std::to_string( i ) + "]" );
-    }
+	VALIDATE( g_GameplayLog.primaryGoalReached, "primary goal should be reached (heuristic)" );
+	VALIDATE( g_GameplayLog.cycles.size() >= 3, "should have at least 3 planning cycles (heuristic)" );
 
-    return 0;
+	bool hasExplore = false;
+	for( auto& c : g_GameplayLog.cycles )
+		if( c.goalType == "Explore" ) { hasExplore = true; break; }
+	VALIDATE( hasExplore, "should have at least one Explore cycle" );
+
+	bool hasOpenSafe = false;
+	for( auto& c : g_GameplayLog.cycles )
+		for( auto& a : c.actionNames )
+			if( a == "OpenSafeWithCode" || a == "BruteForceSafe" ) { hasOpenSafe = true; break; }
+	VALIDATE( hasOpenSafe, "plan should include OpenSafeWithCode or BruteForceSafe" );
+
+	auto safe = FindEntityByName( world.context(), "Safe" );
+	VALIDATE( safe != nullptr, "safe should exist" );
+	VALIDATE( *safe->property( "Open" )->getBool(), "safe should be open (heuristic)" );
+
+	auto [heuristicActions, heuristicSims] = captureResults();
+
+	// --- Run without heuristics (BFS) ---
+	gie::World world2{};
+	gie::Planner planner2{};
+	gie::Goal goal2{ world2 };
+	ExampleParameters params2{ world2, planner2, goal2 };
+
+	gie::Agent* agent2 = heistOpenSafe_world( params2 );
+	RegisterActions( params2.planner );
+	params2.planner.depthLimitMutator() = 20;
+	params2.planner.simulate( params2.goal, *agent2 );
+	RunGameplayLoop( params2.world, agent2, params2.planner, false );
+
+	// Debug: print BFS cycles
+	printf( "  BFS cycles: %zu, goalReached: %s\n", g_GameplayLog.cycles.size(), g_GameplayLog.primaryGoalReached ? "yes" : "no" );
+	for( size_t ci = 0; ci < g_GameplayLog.cycles.size(); ci++ )
+	{
+		auto& c = g_GameplayLog.cycles[ci];
+		printf( "  BFS Cycle %d [%s] sims=%zu actions=%zu pos=(%.1f,%.1f)->(%.1f,%.1f) known=%d->%d\n",
+			c.cycle, c.goalType.c_str(), c.simulationCount, c.actionNames.size(),
+			c.agentPosBefore.x, c.agentPosBefore.y, c.agentPosAfter.x, c.agentPosAfter.y,
+			c.knownCountBefore, c.knownCountAfter );
+		for( size_t ai = 0; ai < c.actionNames.size(); ai++ )
+			printf( "    %zu. %s — %s\n", ai + 1, c.actionNames[ai].c_str(),
+				ai < c.actionDetails.size() ? c.actionDetails[ai].c_str() : "" );
+	}
+
+	VALIDATE( g_GameplayLog.primaryGoalReached, "primary goal should be reached (BFS)" );
+
+	auto [bfsActions, bfsSims] = captureResults();
+
+	// Both should end with a safe-opening action
+	VALIDATE( !bfsActions.empty() && ( bfsActions.back() == "OpenSafeWithCode" || bfsActions.back() == "BruteForceSafe" ),
+		"BFS plan should end with safe-opening action" );
+	VALIDATE( !heuristicActions.empty() && ( heuristicActions.back() == "OpenSafeWithCode" || heuristicActions.back() == "BruteForceSafe" ),
+		"A* plan should end with safe-opening action" );
+
+	printf( "  simulations: A*=%zu BFS=%zu\n", heuristicSims, bfsSims );
+
+	return 0;
 }
 
-// Apply UI toggles
-static void ResetHeistWorldFromToggles( gie::World& world )
+// ---------------------------------------------------------------------------
+// GL Draw — gameplay character trail and known entity markers
+// ---------------------------------------------------------------------------
+static void GLDrawFunc6( gie::World& world, gie::Planner& planner )
 {
-    auto get = [&]( const char* n ) -> gie::Entity*
-    {
-        for( const auto& kv : world.context().entities() )
-        {
-            if( gie::stringRegister().get( kv.second.nameHash() ) == n ) return world.entity( kv.first );
-        }
-        return nullptr;
-    };
+	glm::vec3 offset = -g_DrawingLimits.center;
+	glm::vec3 scale = g_DrawingLimits.scale;
 
-    auto cFront = get( "FrontDoor" );
-    auto cBack  = get( "BackDoor" );
-    auto cKWin  = get( "KitchenWindow" );
+	// Draw agent trail (breadcrumb path)
+	if( g_GameplayLog.agentTrail.size() > 1 )
+	{
+		glLineWidth( 2.0f );
+		glColor3f( 0.2f, 0.8f, 0.2f );
+		glBegin( GL_LINE_STRIP );
+		for( auto& pos : g_GameplayLog.agentTrail )
+		{
+			glm::vec3 p = ( pos + offset ) * scale;
+			glVertex3f( p.x, p.y, p.z );
+		}
+		glEnd();
 
-    if( cFront )
-    {
-        cFront->property( "Locked" )->value  = g_Toggles.frontDoorLocked;
-        cFront->property( "Alarmed" )->value = g_Toggles.frontDoorAlarmed;
-        cFront->property( "Blocked" )->value = false;
-        cFront->property( "Barred" )->value  = false;
-    }
-    if( cBack )
-    {
-        cBack->property( "Locked" )->value  = g_Toggles.backDoorLocked;
-        cBack->property( "Blocked" )->value = g_Toggles.backDoorBlocked;
-        cBack->property( "Alarmed" )->value = false;
-        cBack->property( "Barred" )->value  = false;
-    }
-    if( cKWin )
-    {
-        cKWin->property( "Locked" )->value  = g_Toggles.kitchenWindowLocked;
-        cKWin->property( "Barred" )->value  = g_Toggles.kitchenWindowBarred;
-        cKWin->property( "Blocked" )->value = false;
-        cKWin->property( "Alarmed" )->value = false;
-    }
+		glPointSize( 8.0f );
+		glColor3f( 0.3f, 1.0f, 0.3f );
+		glBegin( GL_POINTS );
+		for( auto& pos : g_GameplayLog.agentTrail )
+		{
+			glm::vec3 p = ( pos + offset ) * scale;
+			glVertex3f( p.x, p.y, p.z );
+		}
+		glEnd();
+		glLineWidth( 1.0f );
+	}
 
-    // alarm system
-    for( const auto& kv : world.context().entities() )
-    {
-        if( gie::stringRegister().get( kv.second.nameHash() ) == std::string_view( "AlarmSystem" ) )
-        {
-            world.entity( kv.first )->property( "Armed" )->value = g_Toggles.alarmArmed;
-        }
-    }
+	// Draw Known markers on entities
+	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
+	if( knownSet )
+	{
+		glPointSize( 6.0f );
+		for( auto g : *knownSet )
+		{
+			auto e = world.entity( g );
+			if( !e ) continue;
+			auto loc = e->property( "Location" );
+			if( !loc ) continue;
+			glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
 
-    // Safe placement and mode
-    for( const auto& kv : world.context().entities() )
-    {
-        if( gie::stringRegister().get( kv.second.nameHash() ) == std::string_view( "Safe" ) )
-        {
-            auto e = world.entity( kv.first );
-            e->property( "Open" )->value = false;
-            e->property( "LockMode" )->value = static_cast<float>( g_Toggles.safeLockMode );
-            const char* roomName = g_Toggles.safeRoomIndex == 0 ? "BedroomA" : "BedroomB";
-            for( const auto& kv2 : world.context().entities() )
-            {
-                if( gie::stringRegister().get( kv2.second.nameHash() ) == roomName )
-                {
-                    e->property( "InRoom" )->value = kv2.first;
-                    break;
-                }
-            }
-            e->property( "RequiredCodePieces" )->value = static_cast<float>( g_Toggles.requiredCodePieces );
-            break;
-        }
-    }
+			auto wpSet = world.context().entityTagRegister().tagSet( "Waypoint" );
+			bool isWp = wpSet && wpSet->count( g );
 
-    // Items placement toggles
-    auto place = [&]( const char* infoName, const char* itemName, const char* roomName, bool on )
-    {
-        gie::Entity* info = nullptr; for( const auto& kv : world.context().entities() ) if( gie::stringRegister().get( kv.second.nameHash() ) == infoName ) { info = world.entity( kv.first ); break; }
-        gie::Entity* room = FindRoom( world, roomName ); if( !room ) return;
-        glm::vec3 roomPos = *room->property( "Location" )->getVec3();
-        bool updatedOne = false;
-        for( const auto& kv : world.context().entities() )
-        {
-            if( gie::stringRegister().get( kv.second.nameHash() ) == itemName )
-            {
-                auto e = world.entity( kv.first );
-                if( on )
-                {
-                    world.context().entityTagRegister().untag( e, { H( "Disabled" ) } );
-                    if( auto loc = e->property( "Location" ) ) loc->value = roomPos;
-                }
-                else
-                {
-                    world.context().entityTagRegister().tag( e, { H( "Disabled" ) } );
-                }
-                updatedOne = true;
-            }
-        }
-        if( on && !updatedOne )
-        {
-            auto e = world.createEntity( itemName );
-            world.context().entityTagRegister().tag( e, { H( "Item" ) } );
-            e->createProperty( "Location", roomPos );
-            e->createProperty( "Info", info ? info->guid() : gie::NullGuid );
-        }
-    };
+			auto itemSet = world.context().entityTagRegister().tagSet( "Item" );
+			bool isItem = itemSet && itemSet->count( g );
 
-    place( "CrowbarInfo",     "Crowbar",     "Garage",     g_Toggles.placeCrowbar );
-    place( "BoltCutterInfo",  "BoltCutter",  "Garage",     g_Toggles.placeBoltCutter );
-    place( "LockpickInfo",    "LockpickSet", "Garage",     g_Toggles.placeLockpick );
-    place( "StethoscopeInfo", "Stethoscope", "BedroomB",   g_Toggles.placeStethoscope );
-    place( "FrontKeyInfo",    "FrontDoorKey","LivingRoom", g_Toggles.placeFrontKey );
-    place( "BackKeyInfo",     "BackDoorKey", "Kitchen",    g_Toggles.placeBackKey );
-    place( "SafeKeyInfo",     "SafeKey",     "BedroomA",   g_Toggles.placeSafeKey );
+			auto portalSet = world.context().entityTagRegister().tagSet( "Portal" );
+			bool isAccess = portalSet && portalSet->count( g );
+
+			if( isItem )        glColor3f( 0.2f, 0.8f, 1.0f );
+			else if( isAccess ) glColor3f( 1.0f, 1.0f, 0.2f );
+			else if( isWp )     glColor3f( 0.6f, 0.6f, 0.6f );
+			else                glColor3f( 1.0f, 0.5f, 0.0f );
+
+			if( !isWp )
+			{
+				glBegin( GL_POINTS );
+				glVertex3f( p.x, p.y, p.z );
+				glEnd();
+			}
+		}
+	}
+
+	// Draw safe marker
+	auto safe = FindEntityByName( world.context(), "Safe" );
+	if( safe )
+	{
+		auto safeRoom = safe->property( "InRoom" );
+		if( safeRoom )
+		{
+			auto roomEnt = world.entity( *safeRoom->getGuid() );
+			if( roomEnt )
+			{
+				auto loc = roomEnt->property( "Location" );
+				if( loc )
+				{
+					glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+					bool open = *safe->property( "Open" )->getBool();
+					if( open ) glColor3f( 0.0f, 1.0f, 0.0f );
+					else       glColor3f( 1.0f, 0.2f, 0.2f );
+					float s = 0.025f;
+					glBegin( GL_QUADS );
+					glVertex3f( p.x - s, p.y - s, p.z );
+					glVertex3f( p.x + s, p.y - s, p.z );
+					glVertex3f( p.x + s, p.y + s, p.z );
+					glVertex3f( p.x - s, p.y + s, p.z );
+					glEnd();
+				}
+			}
+		}
+	}
+
+	// Draw EnergyPanel marker
+	auto panel = FindEntityByName( world.context(), "EnergyPanel" );
+	if( panel )
+	{
+		auto panelKnown = world.context().entityTagRegister().tagSet( "Known" );
+		if( panelKnown && panelKnown->count( panel->guid() ) )
+		{
+			auto loc = panel->property( "Location" );
+			if( loc )
+			{
+				glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+				bool panelOpen = *panel->property( "Open" )->getBool();
+				if( panelOpen ) glColor3f( 0.0f, 0.8f, 1.0f );
+				else            glColor3f( 1.0f, 0.6f, 0.0f );
+				float s = 0.02f;
+				glBegin( GL_TRIANGLES );
+				glVertex3f( p.x, p.y - s, p.z ); glVertex3f( p.x - s, p.y, p.z ); glVertex3f( p.x + s, p.y, p.z );
+				glVertex3f( p.x, p.y + s, p.z ); glVertex3f( p.x - s, p.y, p.z ); glVertex3f( p.x + s, p.y, p.z );
+				glEnd();
+			}
+		}
+	}
 }
 
+// ---------------------------------------------------------------------------
+// ImGui panel — gameplay log and world state
+// ---------------------------------------------------------------------------
+static void ImGuiFunc6( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimGuid )
+{
+	ImGui::TextUnformatted( "Heist - Multi-Plan Discovery (Example 6)" );
+	ImGui::Separator();
+
+	if( ImGui::CollapsingHeader( "Settings", ImGuiTreeNodeFlags_DefaultOpen ) )
+	{
+		ImGui::SliderFloat( "Travel Cost Weight", &g_Toggles.travelCostWeight, 0.1f, 3.0f );
+		ImGui::Checkbox( "Show Full Map (debug)", &g_Toggles.showFullMap );
+	}
+
+	// Show agent state
+	const gie::Blackboard* ctx = &world.context();
+	auto agentEnt = ctx->entity( planner.agent() ? planner.agent()->guid() : gie::NullGuid );
+	if( agentEnt )
+	{
+		auto L = *agentEnt->property( "Location" )->getVec3();
+		ImGui::Text( "Agent: (%.1f, %.1f)", L.x, L.y );
+
+		int known = CountKnown( *ctx );
+		ImGui::Text( "Known entities: %d", known );
+
+		auto inv = agentEnt->property( "Inventory" )->getGuidArray();
+		size_t invCount = inv ? inv->size() : 0;
+		ImGui::Text( "Inventory items: %zu", invCount );
+		if( inv && !inv->empty() )
+		{
+			ImGui::Indent();
+			for( auto g : *inv )
+			{
+				if( auto e = ctx->entity( g ) )
+				{
+					auto n = gie::stringRegister().get( e->nameHash() );
+					ImGui::Text( "- %.*s", (int)n.size(), n.data() );
+				}
+			}
+			ImGui::Unindent();
+		}
+	}
+
+	// Show safe and alarm status
+	auto safe = FindEntityByName( *ctx, "Safe" );
+	if( safe )
+	{
+		bool open = *const_cast<gie::Entity*>( safe )->property( "Open" )->getBool();
+		ImGui::Text( "Safe: %s", open ? "OPEN" : "Locked" );
+	}
+	auto alarm = FindEntityByName( *ctx, "AlarmSystem" );
+	if( alarm )
+	{
+		bool armed = *const_cast<gie::Entity*>( alarm )->property( "Armed" )->getBool();
+		ImGui::Text( "Alarm: %s", armed ? "ARMED" : "Disabled" );
+	}
+
+	ImGui::Separator();
+
+	// Step execution mode
+	static bool stepExecution = false;
+	bool finished = g_GameplayLog.primaryGoalReached
+		|| ( !g_GameplayLog.cycles.empty() && g_GameplayLog.cycles.back().goalType == "Stuck" );
+
+	// Before gameplay starts: checkbox + Start button
+	if( !g_GameplayLog.started )
+	{
+		ImGui::Checkbox( "Step Execution", &stepExecution );
+		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.6f, 0.2f, 1.0f ) );
+		ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.3f, 0.8f, 0.3f, 1.0f ) );
+		if( ImGui::Button( "Start Gameplay", ImVec2( -1.f, 40.f ) ) )
+		{
+			auto* agentPtr = planner.agent();
+			if( agentPtr )
+			{
+				g_GameplayLog = {};
+				g_GameplayLog.started = true;
+				g_GameplayLog.agentTrail.push_back( *agentPtr->property( "Location" )->getVec3() );
+
+				if( stepExecution )
+				{
+					RunGameplayCycle( world, agentPtr );
+				}
+				else
+				{
+					const int maxCycles = 30;
+					for( int i = 0; i < maxCycles; i++ )
+					{
+						CycleResult result = RunGameplayCycle( world, agentPtr );
+						if( result != CycleResult::Continued )
+							break;
+					}
+				}
+			}
+		}
+		ImGui::PopStyleColor( 2 );
+		ImGui::TextWrapped( "Click to run the plan-execute-replan gameplay loop. "
+			"The agent explores the mansion perimeter, disables security, and opens the safe." );
+		return;
+	}
+
+	// Gameplay log
+	if( ImGui::CollapsingHeader( "Gameplay Log", ImGuiTreeNodeFlags_DefaultOpen ) )
+	{
+		if( g_GameplayLog.primaryGoalReached )
+			ImGui::TextColored( ImVec4( 0.4f, 1.0f, 0.4f, 1.0f ), "Goal reached: YES" );
+		else
+			ImGui::Text( "Goal reached: No" );
+		ImGui::Text( "Total cycles: %zu", g_GameplayLog.cycles.size() );
+		ImGui::Separator();
+
+		for( size_t i = 0; i < g_GameplayLog.cycles.size(); i++ )
+		{
+			auto& c = g_GameplayLog.cycles[i];
+
+			ImVec4 color = ( c.goalType == "Primary" ) ? ImVec4( 0.4f, 1.0f, 0.4f, 1.0f )
+				: ( c.goalType == "Explore" ) ? ImVec4( 0.4f, 0.6f, 1.0f, 1.0f )
+				: ImVec4( 1.0f, 0.4f, 0.4f, 1.0f );
+			ImGui::PushStyleColor( ImGuiCol_Text, color );
+
+			char label[128];
+			std::snprintf( label, sizeof( label ), "Cycle %d [%s] %zu sims, %zu actions###cycle%zu",
+				c.cycle, c.goalType.c_str(), c.simulationCount, c.actionNames.size(), i );
+
+			bool nodeOpen = ImGui::TreeNodeEx( label, ImGuiTreeNodeFlags_DefaultOpen );
+			ImGui::PopStyleColor();
+
+			if( nodeOpen )
+			{
+				ImGui::TextUnformatted( "Executed Actions:" );
+				ImGui::Indent();
+				for( size_t ai = 0; ai < c.actionNames.size(); ai++ )
+				{
+					bool isLast = ( i == g_GameplayLog.cycles.size() - 1 && ai == c.actionNames.size() - 1 );
+					if( isLast && g_GameplayLog.primaryGoalReached )
+						ImGui::PushStyleColor( ImGuiCol_Text, ImVec4( 1.0f, 0.85f, 0.0f, 1.0f ) );
+
+					std::string detail = ( ai < c.actionDetails.size() && !c.actionDetails[ai].empty() )
+						? c.actionNames[ai] + " — " + c.actionDetails[ai]
+						: c.actionNames[ai];
+					ImGui::Text( "%zu. %s", ai + 1, detail.c_str() );
+
+					if( isLast && g_GameplayLog.primaryGoalReached )
+						ImGui::PopStyleColor();
+				}
+				ImGui::Unindent();
+
+				ImGui::Text( "Pos: (%.0f,%.0f) -> (%.0f,%.0f)",
+					c.agentPosBefore.x, c.agentPosBefore.y,
+					c.agentPosAfter.x, c.agentPosAfter.y );
+				ImGui::Text( "Known: %d -> %d", c.knownCountBefore, c.knownCountAfter );
+				if( !c.inventoryAfter.empty() )
+				{
+					ImGui::Text( "Inventory:" );
+					ImGui::Indent();
+					for( auto& item : c.inventoryAfter )
+						ImGui::Text( "%s", item.c_str() );
+					ImGui::Unindent();
+				}
+
+				if( c.plannerPtr )
+				{
+					auto* rootSim = c.plannerPtr->rootSimulation();
+					if( rootSim )
+					{
+						char treeLabel[64];
+						std::snprintf( treeLabel, sizeof( treeLabel ), "Simulation Tree (%zu nodes)###simtree%zu",
+							c.simulationCount, i );
+						if( ImGui::TreeNode( treeLabel ) )
+						{
+							drawSimulationTreeView( *c.plannerPtr, rootSim );
+							ImGui::TreePop();
+						}
+					}
+				}
+
+				ImGui::TreePop();
+			}
+		}
+	}
+
+	// Run / Step buttons
+	if( stepExecution && !finished )
+	{
+		ImGui::Separator();
+		float buttonWidth = ( ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x ) * 0.5f;
+
+		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.6f, 0.2f, 1.0f ) );
+		ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.3f, 0.8f, 0.3f, 1.0f ) );
+		if( ImGui::Button( "Run", ImVec2( buttonWidth, 30.f ) ) )
+		{
+			auto* agentPtr = planner.agent();
+			if( agentPtr )
+			{
+				const int maxCycles = 30 - static_cast<int>( g_GameplayLog.cycles.size() );
+				for( int i = 0; i < maxCycles; i++ )
+				{
+					CycleResult result = RunGameplayCycle( world, agentPtr );
+					if( result != CycleResult::Continued )
+						break;
+				}
+			}
+		}
+		ImGui::PopStyleColor( 2 );
+
+		ImGui::SameLine();
+
+		ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.4f, 0.7f, 1.0f ) );
+		ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.3f, 0.5f, 0.9f, 1.0f ) );
+		if( ImGui::Button( "Step", ImVec2( buttonWidth, 30.f ) ) )
+		{
+			auto* agentPtr = planner.agent();
+			if( agentPtr )
+				RunGameplayCycle( world, agentPtr );
+		}
+		ImGui::PopStyleColor( 2 );
+	}
+
+	// Resolve selectedSimulationGuid across all cycle planners for blackboard view
+	{
+		const gie::Simulation* selectedSim = nullptr;
+		for( auto& c : g_GameplayLog.cycles )
+		{
+			if( !c.plannerPtr ) continue;
+			selectedSim = c.plannerPtr->simulation( selectedSimGuid );
+			if( selectedSim ) break;
+		}
+		if( !selectedSim )
+			selectedSim = planner.simulation( selectedSimGuid );
+		if( selectedSim )
+			drawBlackboardPropertiesWindow( selectedSim );
+	}
+
+	auto knownSet = ctx->entityTagRegister().tagSet( "Known" );
+	if( ImGui::CollapsingHeader( "Known Entities" ) )
+	{
+		if( knownSet )
+		{
+			for( auto g : *knownSet )
+			{
+				auto e = ctx->entity( g );
+				if( e )
+				{
+					auto nm = gie::stringRegister().get( e->nameHash() );
+					auto loc = e->property( "Location" );
+					if( loc )
+						ImGui::Text( "  %.*s (%.0f, %.0f)", (int)nm.size(), nm.data(), loc->getVec3()->x, loc->getVec3()->y );
+					else
+						ImGui::Text( "  %.*s", (int)nm.size(), nm.data() );
+				}
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FindRoom helper
+// ---------------------------------------------------------------------------
 static gie::Entity* FindRoom( gie::World& world, const char* roomName )
 {
-    for( const auto& kv : world.context().entities() )
-    {
-        if( gie::stringRegister().get( kv.second.nameHash() ) == roomName ) return world.entity( kv.first );
-    }
-    return nullptr;
-}
-
-static void ImGuiFunc6( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimulationGuid )
-{
-    ImGui::TextUnformatted( "Heist – Open the Safe (Example 6)" );
-    ImGui::Separator();
-
-    if( ImGui::CollapsingHeader( "Entry Points" ) )
-    {
-        ImGui::Checkbox( "FrontDoor Locked", &g_Toggles.frontDoorLocked ); ImGui::SameLine(); ImGui::Checkbox( "FrontDoor Alarmed", &g_Toggles.frontDoorAlarmed );
-        ImGui::Checkbox( "BackDoor Locked", &g_Toggles.backDoorLocked ); ImGui::SameLine(); ImGui::Checkbox( "BackDoor Blocked", &g_Toggles.backDoorBlocked );
-        ImGui::Checkbox( "KitchenWindow Locked", &g_Toggles.kitchenWindowLocked ); ImGui::SameLine(); ImGui::Checkbox( "KitchenWindow Barred", &g_Toggles.kitchenWindowBarred );
-    }
-
-    if( ImGui::CollapsingHeader( "Systems" ) )
-    {
-        ImGui::Checkbox( "Alarm Armed", &g_Toggles.alarmArmed );
-    }
-
-    if( ImGui::CollapsingHeader( "Safe" ) )
-    {
-        const char* rooms[] = { "BedroomA", "BedroomB" };
-        ImGui::TextUnformatted( "Safe Room" ); ImGui::SameLine(); ImGui::SetNextItemWidth( 120.f ); ImGui::Combo( "##SafeRoom", &g_Toggles.safeRoomIndex, rooms, 2 );
-        const char* lockModes[] = { "Key", "Code", "Heavy" };
-        ImGui::TextUnformatted( "Lock Type" ); ImGui::SameLine(); ImGui::SetNextItemWidth( 120.f ); ImGui::Combo( "##SafeLock", &g_Toggles.safeLockMode, lockModes, 3 );
-        ImGui::SliderInt( "Required Code Pieces", &g_Toggles.requiredCodePieces, 1, 4 );
-        ImGui::SliderFloat( "Travel W", &g_Toggles.travelCostWeight, 0.1f, 3.0f );
-        ImGui::SliderFloat( "Locked Pen", &g_Toggles.lockedPenalty, 0.f, 30.f );
-        ImGui::SliderFloat( "Barred Pen", &g_Toggles.barredPenalty, 0.f, 30.f );
-        ImGui::SliderFloat( "Alarmed Pen", &g_Toggles.alarmedPenalty, 0.f, 30.f );
-    }
-
-    if( ImGui::CollapsingHeader( "Items" ) )
-    {
-        ImGui::Checkbox( "Crowbar in Garage", &g_Toggles.placeCrowbar ); ImGui::SameLine(); ImGui::Checkbox( "BoltCutter in Garage", &g_Toggles.placeBoltCutter );
-        ImGui::Checkbox( "Lockpick in Garage", &g_Toggles.placeLockpick ); ImGui::SameLine(); ImGui::Checkbox( "Stethoscope in BedroomB", &g_Toggles.placeStethoscope );
-        ImGui::Checkbox( "Front Door Key", &g_Toggles.placeFrontKey ); ImGui::SameLine(); ImGui::Checkbox( "Back Door Key", &g_Toggles.placeBackKey ); ImGui::SameLine(); ImGui::Checkbox( "Safe Key", &g_Toggles.placeSafeKey );
-    }
-
-    if( ImGui::Button( "Apply Changes" ) )
-    {
-        ResetHeistWorldFromToggles( world );
-    }
-    ImGui::SameLine();
-    if( ImGui::Button( "Reset Agent" ) )
-    {
-        auto agent = planner.agent();
-        if( agent )
-        {
-            if( auto p = agent->property( "Location" ) ) *p->getVec3() = glm::vec3{ -30.f, 0.f, 0.f };
-            if( auto p = agent->property( "CurrentRoom" ) ) p->value = gie::NullGuid;
-            if( auto p = agent->property( "Inventory" ) ) p->getGuidArray()->clear();
-        }
-    }
-
-    // Reflect important state
-    const auto* sim = planner.simulation( selectedSimulationGuid );
-    const gie::Blackboard* ctx = sim ? &sim->context() : &world.context();
-    auto agentEnt = ctx->entity( planner.agent()->guid() );
-    if( agentEnt )
-    {
-        auto L = *agentEnt->property( "Location" )->getVec3();
-        ImGui::Text( "Agent: (%.1f, %.1f)", L.x, L.y );
-        auto inv = agentEnt->property( "Inventory" )->getGuidArray();
-        size_t invCount = inv ? inv->size() : 0;
-        ImGui::Text( "Inventory items: %zu", invCount );
-        if( inv && !inv->empty() )
-        {
-            ImGui::Indent();
-            for( auto g : *inv )
-            {
-                if( auto e = ctx->entity( g ) )
-                {
-                    ImGui::Text( "- %s", gie::stringRegister().get( e->nameHash() ) );
-                }
-            }
-            ImGui::Unindent();
-        }
-    }
+	for( const auto& kv : world.context().entities() )
+	{
+		if( gie::stringRegister().get( kv.second.nameHash() ) == roomName ) return world.entity( kv.first );
+	}
+	return nullptr;
 }

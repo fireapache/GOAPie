@@ -1,52 +1,70 @@
--- BruteForceSafe.lua
--- Brute-force the safe open using a crowbar. Very high cost -- last resort.
--- Precondition: in safe room, agent has Crowbar.
+-- Inspect.lua
+-- Examine a Known entity to discover its RequiredItems.
+-- This is a forceLeaf action — opaque during planning.
+-- Only sets ExploredNewArea=true during simulate; real effects happen at execution.
 
 local NullGuid = 0
 
 function evaluate(params)
     local agentGuid = params.agent.guid
 
+    -- Agent must be inside
     local currentRoom = get_property(agentGuid, "CurrentRoom")
-    if not currentRoom or currentRoom == NullGuid then return false end
-
-    local safeGuid = entity_by_name("Safe")
-    if not safeGuid then return false end
-    if get_property(safeGuid, "Open") == true then return false end
-
-    local safeRoom = get_property(safeGuid, "InRoom")
-    if currentRoom ~= safeRoom then
-        debug("BruteForceSafe.evaluate: not in safe room -> FALSE")
+    if not currentRoom or currentRoom == NullGuid then
+        debug("Inspect.evaluate: not inside -> FALSE")
         return false
     end
 
-    -- Requires crowbar
-    local inv = get_property(agentGuid, "Inventory") or {}
-    local crowbarInfo = entity_by_name("CrowbarInfo")
-    if not crowbarInfo then return false end
-    for _, itemGuid in ipairs(inv) do
-        local info = get_property(itemGuid, "Info")
-        if info and info == crowbarInfo then
-            debug("BruteForceSafe.evaluate: have crowbar -> TRUE")
-            return true
+    -- Find a Known entity with RequiredItems and Inspected=false
+    local knownSet = tag_set("Known") or {}
+    for _, guid in ipairs(knownSet) do
+        local reqItems = get_property(guid, "RequiredItems")
+        if reqItems and #reqItems > 0 then
+            local inspected = get_property(guid, "Inspected")
+            if inspected == false then
+                debug("Inspect.evaluate: found inspectable entity -> TRUE")
+                return true
+            end
         end
     end
 
-    debug("BruteForceSafe.evaluate: missing crowbar -> FALSE")
+    debug("Inspect.evaluate: no inspectable entities -> FALSE")
     return false
 end
 
 function simulate(params)
-    local safeGuid = entity_by_name("Safe")
-    if not safeGuid then return false end
-    set_property(safeGuid, "Open", true)
-    set_cost(200.0)
-    debug("BruteForceSafe.simulate: safe forced open")
+    local agentGuid = params.agent.guid
+    local agentLoc = get_property(agentGuid, "Location")
+    local knownSet = tag_set("Known") or {}
+
+    -- Find nearest inspectable entity
+    local bestGuid, bestDist = nil, math.huge
+    for _, guid in ipairs(knownSet) do
+        local reqItems = get_property(guid, "RequiredItems")
+        if reqItems and #reqItems > 0 then
+            local inspected = get_property(guid, "Inspected")
+            if inspected == false then
+                local loc = get_property(guid, "Location")
+                if loc and agentLoc then
+                    local dx = agentLoc[1] - loc[1]
+                    local dy = agentLoc[2] - loc[2]
+                    local d = math.sqrt(dx*dx + dy*dy)
+                    if d < bestDist then bestDist = d; bestGuid = guid end
+                end
+            end
+        end
+    end
+
+    if not bestGuid then return false end
+
+    local dist = move_agent_to_entity(bestGuid)
+    set_property(agentGuid, "ExploredNewArea", true)
+    set_cost((dist or 0) + 2.0)
+    debug("Inspect.simulate: inspected entity, dist=" .. tostring(dist))
     return true
 end
 
 function heuristic(params)
-    local NullGuid = 0
     local agentGuid = params.agent.guid
     local safeGuid = entity_by_name("Safe")
     if not safeGuid then return 0 end

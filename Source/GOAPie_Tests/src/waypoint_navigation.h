@@ -186,8 +186,13 @@ namespace gie
 		}
 
 		// backtracking path
+		if( goalNode == NullGuid )
+		{
+			// No path found — return max length so callers treat this as unreachable
+			return { {}, std::numeric_limits< float >::max() };
+		}
+
 		float length = 0.f;
-		if( goalNode != NullGuid )
 		{
 			Guid backtrackNode = goalNode;
 			while( backtrackNode != NullGuid )

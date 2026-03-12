@@ -1,52 +1,39 @@
--- BruteForceSafe.lua
--- Brute-force the safe open using a crowbar. Very high cost -- last resort.
--- Precondition: in safe room, agent has Crowbar.
+-- UseTool.lua
+-- Open the EnergyPanel cover (precondition for Interact).
+-- Requires: EnergyPanel must be Known and its Open property must be false.
 
 local NullGuid = 0
 
 function evaluate(params)
-    local agentGuid = params.agent.guid
+    local panelGuid = entity_by_name("EnergyPanel")
+    if not panelGuid then return false end
 
-    local currentRoom = get_property(agentGuid, "CurrentRoom")
-    if not currentRoom or currentRoom == NullGuid then return false end
+    -- Panel must be Known
+    local knownSet = tag_set("Known") or {}
+    local panelKnown = false
+    for _, g in ipairs(knownSet) do if g == panelGuid then panelKnown = true; break end end
+    if not panelKnown then return false end
 
-    local safeGuid = entity_by_name("Safe")
-    if not safeGuid then return false end
-    if get_property(safeGuid, "Open") == true then return false end
+    local panelOpen = get_property(panelGuid, "Open")
+    if panelOpen == true then return false end  -- Already open
 
-    local safeRoom = get_property(safeGuid, "InRoom")
-    if currentRoom ~= safeRoom then
-        debug("BruteForceSafe.evaluate: not in safe room -> FALSE")
-        return false
-    end
-
-    -- Requires crowbar
-    local inv = get_property(agentGuid, "Inventory") or {}
-    local crowbarInfo = entity_by_name("CrowbarInfo")
-    if not crowbarInfo then return false end
-    for _, itemGuid in ipairs(inv) do
-        local info = get_property(itemGuid, "Info")
-        if info and info == crowbarInfo then
-            debug("BruteForceSafe.evaluate: have crowbar -> TRUE")
-            return true
-        end
-    end
-
-    debug("BruteForceSafe.evaluate: missing crowbar -> FALSE")
-    return false
+    debug("UseTool.evaluate: EnergyPanel known and closed -> TRUE")
+    return true
 end
 
 function simulate(params)
-    local safeGuid = entity_by_name("Safe")
-    if not safeGuid then return false end
-    set_property(safeGuid, "Open", true)
-    set_cost(200.0)
-    debug("BruteForceSafe.simulate: safe forced open")
+    local agentGuid = params.agent.guid
+    local panelGuid = entity_by_name("EnergyPanel")
+    if not panelGuid then return false end
+
+    local dist = move_agent_to_entity(panelGuid)
+    set_property(panelGuid, "Open", true)
+    set_cost((dist or 0) + 2.0)
+    debug("UseTool.simulate: opened EnergyPanel cover, dist=" .. tostring(dist))
     return true
 end
 
 function heuristic(params)
-    local NullGuid = 0
     local agentGuid = params.agent.guid
     local safeGuid = entity_by_name("Safe")
     if not safeGuid then return 0 end

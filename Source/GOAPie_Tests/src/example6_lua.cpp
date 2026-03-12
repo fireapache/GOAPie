@@ -1,6 +1,6 @@
 // File: Source/GOAPie_Tests/src/example6_lua.cpp
-// Starter implementation: loads Lua action chunks and registers Lua-backed action entries.
-// Updated to use single-chunk LuaActionSetEntry API.
+// Loads Lua action chunks and registers Lua-backed action entries.
+// Updated for multi-plan discovery scenario (matching example6.cpp).
 
 #include <fstream>
 #include <sstream>
@@ -18,7 +18,7 @@
 
 const char* heistOpenSafe_LuaDescription()
 {
-	return "Heist example, but actions defined by external Lua scripts loaded from examples/<name>/scripts/";
+	return "Heist discovery example, but actions defined by external Lua scripts loaded from examples/<name>/scripts/";
 }
 
 // set in main.cpp
@@ -66,7 +66,7 @@ int heistOpenSafe_Lua( ExampleParameters& params )
     // Try new directory structure first, then fallback to legacy
     std::string scriptsBase;
 	const std::string exampleName = g_exampleName;
-    
+
     // New structure: <exeDir>/examples/example6/scripts/
     std::filesystem::path exeDir;
     if (!exePath.empty()) {
@@ -122,9 +122,12 @@ int heistOpenSafe_Lua( ExampleParameters& params )
 	{
 		std::cout << "[example6_lua] No .lua files found!\n";
 	}
-    
+
     // Sort discovered files by filename to have deterministic order
     std::sort( luaFiles.begin(), luaFiles.end() );
+
+    // Actions that must be marked as forceLeaf (opaque during planning)
+    std::set<std::string> forceLeafActions = { "Observe", "Inspect" };
 
     std::vector< std::shared_ptr< ActionSetEntry > > luaEntries;
     for (const auto& p : luaFiles) {
@@ -137,6 +140,10 @@ int heistOpenSafe_Lua( ExampleParameters& params )
 
         // New single-chunk constructor
         auto entry = std::make_shared< LuaActionSetEntry >( sandbox, name, luaChunk, NamedArguments{} );
+
+        // Mark Observe as forceLeaf so the planner treats it as opaque
+        if( forceLeafActions.count( name ) )
+            entry->setForceLeaf( true );
 
         if (src.empty()) {
             std::cout << "[example6_lua] script missing or empty: " << file << "\n";

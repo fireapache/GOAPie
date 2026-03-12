@@ -1,7 +1,6 @@
--- SearchForItem.lua
--- Search for and pick up the nearest Known reachable item not yet in inventory.
--- When outside, only outside items are reachable. When inside, all Known items are reachable.
--- Items are filtered by agent's NeededItems: only pick up items whose Info is in NeededItems.
+-- MoveTo.lua
+-- Travel to a Known exterior waypoint.
+-- Prefers waypoints that have unrevealed Reveals entries (score = dist - 50).
 
 local NullGuid = 0
 
@@ -9,74 +8,60 @@ local function isInsideHouse(pos)
     return pos[1] >= -30 and pos[1] <= 30 and pos[2] >= -20 and pos[2] <= 20
 end
 
--- Check if an item's Info is in the agent's NeededItems list
-local function isItemNeeded(itemGuid, neededItems)
-    if #neededItems == 0 then return false end
-    local info = get_property(itemGuid, "Info")
-    if not info then return false end
-    for _, ni in ipairs(neededItems) do
-        if ni == info then return true end
-    end
-    return false
-end
-
 function evaluate(params)
     local agentGuid = params.agent.guid
-    local inv = get_property(agentGuid, "Inventory") or {}
-    local neededItems = get_property(agentGuid, "NeededItems") or {}
+    -- Only move when outside
     local currentRoom = get_property(agentGuid, "CurrentRoom")
-    local agentInside = currentRoom and currentRoom ~= NullGuid
-    local items = tag_set("Item") or {}
-    local knownSet = tag_set("Known") or {}
+    if currentRoom and currentRoom ~= NullGuid then return false end
 
-    -- Build lookup sets
-    local inInv = {}
-    for _, g in ipairs(inv) do inInv[g] = true end
+    local agentLoc = get_property(agentGuid, "Location")
+    if not agentLoc then return false end
+
+    local waypoints = tag_set("Waypoint") or {}
+    local knownSet = tag_set("Known") or {}
     local isKnown = {}
     for _, g in ipairs(knownSet) do isKnown[g] = true end
 
-    for _, itemGuid in ipairs(items) do
-        if not inInv[itemGuid] and isKnown[itemGuid] and isItemNeeded(itemGuid, neededItems) then
-            local loc = get_property(itemGuid, "Location")
-            if loc then
-                if agentInside or not isInsideHouse(loc) then
-                    debug("SearchForItem.evaluate: Known needed reachable item found -> TRUE")
+    for _, wpGuid in ipairs(waypoints) do
+        if isKnown[wpGuid] then
+            local wpLoc = get_property(wpGuid, "Location")
+            if wpLoc and not isInsideHouse(wpLoc) then
+                local dx = agentLoc[1] - wpLoc[1]
+                local dy = agentLoc[2] - wpLoc[2]
+                if math.sqrt(dx*dx + dy*dy) >= 1.0 then
                     return true
                 end
             end
         end
     end
-
-    debug("SearchForItem.evaluate: no Known needed reachable items -> FALSE")
     return false
 end
 
 function simulate(params)
     local agentGuid = params.agent.guid
-    local inv = get_property(agentGuid, "Inventory") or {}
-    local neededItems = get_property(agentGuid, "NeededItems") or {}
-    local currentRoom = get_property(agentGuid, "CurrentRoom")
-    local agentInside = currentRoom and currentRoom ~= NullGuid
-    local items = tag_set("Item") or {}
-    local knownSet = tag_set("Known") or {}
     local agentLoc = get_property(agentGuid, "Location")
+    if not agentLoc then return false end
 
-    local inInv = {}
-    for _, g in ipairs(inv) do inInv[g] = true end
+    local waypoints = tag_set("Waypoint") or {}
+    local knownSet = tag_set("Known") or {}
     local isKnown = {}
     for _, g in ipairs(knownSet) do isKnown[g] = true end
 
-    -- Find nearest Known reachable needed item
-    local bestGuid, bestDist = nil, math.huge
-    for _, itemGuid in ipairs(items) do
-        if not inInv[itemGuid] and isKnown[itemGuid] and isItemNeeded(itemGuid, neededItems) then
-            local loc = get_property(itemGuid, "Location")
-            if loc and (agentInside or not isInsideHouse(loc)) then
-                if agentLoc then
-                    local dx = agentLoc[1] - loc[1]
-                    local dy = agentLoc[2] - loc[2]
-                    local d = math.sqrt(dx*dx + dy*dy)
-                    if d < bestDist then bestDist = d; bestGuid = itemGuid end
+    local bestGuid, bestScore = nil, math.huge
+    for _, wpGuid in ipairs(waypoints) do
+        if isKnown[wpGuid] then
+            local wpLoc = get_property(wpGuid, "Location")
+            if wpLoc and not isInsideHouse(wpLoc) then
+                local dx = agentLoc[1] - wpLoc[1]
+                local dy = agentLoc[2] - wpLoc[2]
+                local dist = math.sqrt(dx*dx + dy*dy)
+                if dist >= 1.0 then
+                    local score = dist
+                    local reveals = get_property(wpGuid, "Reveals") or {}
+                    for _, rg in ipairs(reveals) do
+                        if not isKnown[rg] then score = score - 50.0; break end
+                    end
+                    if score < bestScore then bestScore = score; bestGuid = wpGuid end
                 end
             end
         end
@@ -84,13 +69,8 @@ function simulate(params)
 
     if not bestGuid then return false end
     local dist = move_agent_to_entity(bestGuid)
-
-    -- Add item to inventory
-    table.insert(inv, bestGuid)
-    set_property(agentGuid, "Inventory", inv)
-
     set_cost((dist or 0) + 1.0)
-    debug("SearchForItem.simulate: picked up item, dist=" .. tostring(dist))
+    debug("MoveTo.simulate: moved, dist=" .. tostring(dist))
     return true
 end
 

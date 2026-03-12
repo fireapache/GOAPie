@@ -1,52 +1,45 @@
--- BruteForceSafe.lua
--- Brute-force the safe open using a crowbar. Very high cost -- last resort.
--- Precondition: in safe room, agent has Crowbar.
+-- Interact.lua
+-- Flip the switch on the opened EnergyPanel to disable the alarm system.
+-- Requires: EnergyPanel.Open == true, AlarmSystem.Armed == true.
 
 local NullGuid = 0
 
 function evaluate(params)
-    local agentGuid = params.agent.guid
+    local panelGuid = entity_by_name("EnergyPanel")
+    if not panelGuid then return false end
 
-    local currentRoom = get_property(agentGuid, "CurrentRoom")
-    if not currentRoom or currentRoom == NullGuid then return false end
-
-    local safeGuid = entity_by_name("Safe")
-    if not safeGuid then return false end
-    if get_property(safeGuid, "Open") == true then return false end
-
-    local safeRoom = get_property(safeGuid, "InRoom")
-    if currentRoom ~= safeRoom then
-        debug("BruteForceSafe.evaluate: not in safe room -> FALSE")
+    local panelOpen = get_property(panelGuid, "Open")
+    if panelOpen ~= true then
+        debug("Interact.evaluate: panel not open -> FALSE")
         return false
     end
 
-    -- Requires crowbar
-    local inv = get_property(agentGuid, "Inventory") or {}
-    local crowbarInfo = entity_by_name("CrowbarInfo")
-    if not crowbarInfo then return false end
-    for _, itemGuid in ipairs(inv) do
-        local info = get_property(itemGuid, "Info")
-        if info and info == crowbarInfo then
-            debug("BruteForceSafe.evaluate: have crowbar -> TRUE")
-            return true
-        end
+    local alarmGuid = entity_by_name("AlarmSystem")
+    if not alarmGuid then return false end
+    local armed = get_property(alarmGuid, "Armed")
+    if armed ~= true then
+        debug("Interact.evaluate: alarm not armed -> FALSE")
+        return false
     end
 
-    debug("BruteForceSafe.evaluate: missing crowbar -> FALSE")
-    return false
+    debug("Interact.evaluate: panel open + alarm armed -> TRUE")
+    return true
 end
 
 function simulate(params)
-    local safeGuid = entity_by_name("Safe")
-    if not safeGuid then return false end
-    set_property(safeGuid, "Open", true)
-    set_cost(200.0)
-    debug("BruteForceSafe.simulate: safe forced open")
+    local agentGuid = params.agent.guid
+    local panelGuid = entity_by_name("EnergyPanel")
+    local alarmGuid = entity_by_name("AlarmSystem")
+    if not panelGuid or not alarmGuid then return false end
+
+    local dist = move_agent_to_entity(panelGuid)
+    set_property(alarmGuid, "Armed", false)
+    set_cost((dist or 0) + 3.0)
+    debug("Interact.simulate: disabled alarm via EnergyPanel, dist=" .. tostring(dist))
     return true
 end
 
 function heuristic(params)
-    local NullGuid = 0
     local agentGuid = params.agent.guid
     local safeGuid = entity_by_name("Safe")
     if not safeGuid then return 0 end

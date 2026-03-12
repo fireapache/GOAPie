@@ -1,96 +1,75 @@
--- SearchForItem.lua
--- Search for and pick up the nearest Known reachable item not yet in inventory.
--- When outside, only outside items are reachable. When inside, all Known items are reachable.
--- Items are filtered by agent's NeededItems: only pick up items whose Info is in NeededItems.
+-- UseItem.lua
+-- Use items from inventory to unlock an inspected, locked entity.
+-- Precondition: Known entity with Inspected=true, Locked=true,
+--               agent has ALL of entity's RequiredItems in inventory (match by Info guid).
 
 local NullGuid = 0
 
-local function isInsideHouse(pos)
-    return pos[1] >= -30 and pos[1] <= 30 and pos[2] >= -20 and pos[2] <= 20
-end
-
--- Check if an item's Info is in the agent's NeededItems list
-local function isItemNeeded(itemGuid, neededItems)
-    if #neededItems == 0 then return false end
-    local info = get_property(itemGuid, "Info")
-    if not info then return false end
-    for _, ni in ipairs(neededItems) do
-        if ni == info then return true end
+-- Check if agent has all required items for an entity
+local function hasAllRequired(inv, reqItems)
+    for _, reqInfo in ipairs(reqItems) do
+        local found = false
+        for _, itemGuid in ipairs(inv) do
+            local info = get_property(itemGuid, "Info")
+            if info and info == reqInfo then found = true; break end
+        end
+        if not found then return false end
     end
-    return false
+    return true
 end
 
 function evaluate(params)
     local agentGuid = params.agent.guid
     local inv = get_property(agentGuid, "Inventory") or {}
-    local neededItems = get_property(agentGuid, "NeededItems") or {}
-    local currentRoom = get_property(agentGuid, "CurrentRoom")
-    local agentInside = currentRoom and currentRoom ~= NullGuid
-    local items = tag_set("Item") or {}
     local knownSet = tag_set("Known") or {}
 
-    -- Build lookup sets
-    local inInv = {}
-    for _, g in ipairs(inv) do inInv[g] = true end
-    local isKnown = {}
-    for _, g in ipairs(knownSet) do isKnown[g] = true end
-
-    for _, itemGuid in ipairs(items) do
-        if not inInv[itemGuid] and isKnown[itemGuid] and isItemNeeded(itemGuid, neededItems) then
-            local loc = get_property(itemGuid, "Location")
-            if loc then
-                if agentInside or not isInsideHouse(loc) then
-                    debug("SearchForItem.evaluate: Known needed reachable item found -> TRUE")
-                    return true
-                end
+    for _, guid in ipairs(knownSet) do
+        local inspected = get_property(guid, "Inspected")
+        local locked = get_property(guid, "Locked")
+        if inspected == true and locked == true then
+            local reqItems = get_property(guid, "RequiredItems") or {}
+            if #reqItems > 0 and hasAllRequired(inv, reqItems) then
+                debug("UseItem.evaluate: found unlockable entity -> TRUE")
+                return true
             end
         end
     end
 
-    debug("SearchForItem.evaluate: no Known needed reachable items -> FALSE")
+    debug("UseItem.evaluate: no unlockable entities -> FALSE")
     return false
 end
 
 function simulate(params)
     local agentGuid = params.agent.guid
     local inv = get_property(agentGuid, "Inventory") or {}
-    local neededItems = get_property(agentGuid, "NeededItems") or {}
-    local currentRoom = get_property(agentGuid, "CurrentRoom")
-    local agentInside = currentRoom and currentRoom ~= NullGuid
-    local items = tag_set("Item") or {}
     local knownSet = tag_set("Known") or {}
     local agentLoc = get_property(agentGuid, "Location")
 
-    local inInv = {}
-    for _, g in ipairs(inv) do inInv[g] = true end
-    local isKnown = {}
-    for _, g in ipairs(knownSet) do isKnown[g] = true end
-
-    -- Find nearest Known reachable needed item
+    -- Find nearest unlockable entity
     local bestGuid, bestDist = nil, math.huge
-    for _, itemGuid in ipairs(items) do
-        if not inInv[itemGuid] and isKnown[itemGuid] and isItemNeeded(itemGuid, neededItems) then
-            local loc = get_property(itemGuid, "Location")
-            if loc and (agentInside or not isInsideHouse(loc)) then
-                if agentLoc then
+    for _, guid in ipairs(knownSet) do
+        local inspected = get_property(guid, "Inspected")
+        local locked = get_property(guid, "Locked")
+        if inspected == true and locked == true then
+            local reqItems = get_property(guid, "RequiredItems") or {}
+            if #reqItems > 0 and hasAllRequired(inv, reqItems) then
+                local loc = get_property(guid, "Location")
+                if loc and agentLoc then
                     local dx = agentLoc[1] - loc[1]
                     local dy = agentLoc[2] - loc[2]
                     local d = math.sqrt(dx*dx + dy*dy)
-                    if d < bestDist then bestDist = d; bestGuid = itemGuid end
+                    if d < bestDist then bestDist = d; bestGuid = guid end
                 end
             end
         end
     end
 
     if not bestGuid then return false end
+
     local dist = move_agent_to_entity(bestGuid)
-
-    -- Add item to inventory
-    table.insert(inv, bestGuid)
-    set_property(agentGuid, "Inventory", inv)
-
-    set_cost((dist or 0) + 1.0)
-    debug("SearchForItem.simulate: picked up item, dist=" .. tostring(dist))
+    set_property(bestGuid, "Locked", false)
+    set_cost((dist or 0) + 2.0)
+    debug("UseItem.simulate: unlocked entity, dist=" .. tostring(dist))
     return true
 end
 
