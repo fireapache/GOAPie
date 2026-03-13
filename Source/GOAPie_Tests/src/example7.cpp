@@ -1497,8 +1497,9 @@ static void ImGuiFunc7( gie::World& world, gie::Planner& planner, gie::Goal& goa
 		ImGui::Text( "Total cycles: %zu", g_GameplayLog.cycles.size() );
 		ImGui::Separator();
 
-		for( size_t i = 0; i < g_GameplayLog.cycles.size(); i++ )
+		for( size_t ri = 0; ri < g_GameplayLog.cycles.size(); ri++ )
 		{
+			size_t i = g_GameplayLog.cycles.size() - 1 - ri;
 			auto& c = g_GameplayLog.cycles[i];
 
 			// Color-code by goal type
