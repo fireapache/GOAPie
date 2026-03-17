@@ -11,6 +11,9 @@
 #include "waypoint_navigation.h"
 
 #include "visualization.h"
+#include "gameplay_common.h"
+
+#include <glad/glad.h>
 
 // Discovery Example (Example 7)
 // Detective treasure hunt on an island with partial observability.
@@ -86,32 +89,13 @@ static void GLDrawFunc7( gie::World& world, gie::Planner& planner );
 // ---------------------------------------------------------------------------
 // Gameplay Log — records each planning cycle for visualization
 // ---------------------------------------------------------------------------
-struct GameplayCycleEntry
-{
-	int cycle{ 0 };
-	std::string goalType;          // "Primary" or "Explore"
-	bool planFound{ false };
-	std::vector<std::string> actionNames;   // execution order (first to last)
-	std::vector<std::string> actionDetails; // detailed description per action
-	glm::vec3 agentPosBefore{ 0.f };
-	glm::vec3 agentPosAfter{ 0.f };
-	int knownCountBefore{ 0 };
-	int knownCountAfter{ 0 };
-	std::vector<std::string> inventoryAfter;
-	size_t simulationCount{ 0 };
-	std::unique_ptr<gie::Planner> plannerPtr; // preserved planner with full simulation tree
-};
-
-struct GameplayLog
-{
-	std::vector<GameplayCycleEntry> cycles;
-	std::vector<glm::vec3> agentTrail; // breadcrumb trail of positions
-	bool primaryGoalReached{ false };
-	int selectedCycle{ -1 }; // for UI highlight
-	bool started{ false };   // has the gameplay loop been executed?
-};
+// GameplayCycleEntry, GameplayLog, CycleResult defined in gameplay_common.h
 
 static GameplayLog g_GameplayLog;
+
+// Movement paths per cycle per action (parallel to g_GameplayLog.cycles[i].actionNames[j])
+static std::vector<std::vector<std::vector<glm::vec3>>> g_CycleActionPaths;
+static std::vector<glm::vec3> g_LastActionPath;
 
 // ---------------------------------------------------------------------------
 // World layout — an island with 8 areas:
@@ -832,6 +816,8 @@ static void RegisterActions( gie::Planner& planner )
 static std::string ExecuteObserve( gie::World& world, gie::Agent* agent )
 {
 	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	g_LastActionPath.clear();
+	g_LastActionPath.push_back( agentLoc );
 	auto wpSet = world.context().entityTagRegister().tagSet( "Waypoint" );
 	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
 	std::string wpName = "?";
@@ -883,6 +869,7 @@ static std::string ExecuteObserve( gie::World& world, gie::Agent* agent )
 			detail += revealed[i];
 		}
 	}
+	g_LastActionPath.push_back( *agent->property( "Location" )->getVec3() );
 	return detail;
 }
 
@@ -918,6 +905,12 @@ static std::string ExecuteMoveTo( gie::World& world, gie::Agent* agent )
 	}
 	if( bestTarget )
 	{
+		// Record movement path for visualization
+		g_LastActionPath.clear();
+		g_LastActionPath.push_back( agentLoc );
+		// Example 7 uses direct teleport, record straight-line path to target
+		g_LastActionPath.push_back( *bestTarget->property( "Location" )->getVec3() );
+
 		*agent->property( "Location" )->getVec3() = *bestTarget->property( "Location" )->getVec3();
 		return "-> " + std::string( gie::stringRegister().get( bestTarget->nameHash() ) );
 	}
@@ -927,6 +920,8 @@ static std::string ExecuteMoveTo( gie::World& world, gie::Agent* agent )
 static std::string ExecuteInspect( gie::World& world, gie::Agent* agent )
 {
 	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	g_LastActionPath.clear();
+	g_LastActionPath.push_back( agentLoc );
 	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
 	auto clueSet = world.context().entityTagRegister().tagSet( "Clue" );
 	if( !knownSet || !clueSet ) return "";
@@ -963,12 +958,15 @@ static std::string ExecuteInspect( gie::World& world, gie::Agent* agent )
 		}
 	}
 	agent->property( "ExploredNewArea" )->value = true;
+	g_LastActionPath.push_back( *agent->property( "Location" )->getVec3() );
 	return detail;
 }
 
 static std::string ExecutePickUp( gie::World& world, gie::Agent* agent )
 {
 	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	g_LastActionPath.clear();
+	g_LastActionPath.push_back( agentLoc );
 	auto inv = agent->property( "Inventory" )->getGuidArray();
 	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
 	auto itemSet = world.context().entityTagRegister().tagSet( "Item" );
@@ -989,11 +987,15 @@ static std::string ExecutePickUp( gie::World& world, gie::Agent* agent )
 	if( !best ) return "";
 	*agent->property( "Location" )->getVec3() = *best->property( "Location" )->getVec3();
 	inv->push_back( best->guid() );
+	g_LastActionPath.push_back( *agent->property( "Location" )->getVec3() );
 	return std::string( gie::stringRegister().get( best->nameHash() ) );
 }
 
 static std::string ExecuteForgeKey( gie::World& world, gie::Agent* agent )
 {
+	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	g_LastActionPath.clear();
+	g_LastActionPath.push_back( agentLoc );
 	auto forge = FindEntityByName( world.context(), "Blacksmith" );
 	if( !forge ) return "";
 	*agent->property( "Location" )->getVec3() = *forge->property( "Location" )->getVec3();
@@ -1004,15 +1006,20 @@ static std::string ExecuteForgeKey( gie::World& world, gie::Agent* agent )
 	keyItem->createProperty( "Location", *forge->property( "Location" )->getVec3() );
 	keyItem->createProperty( "Info", keyInfo->guid() );
 	agent->property( "Inventory" )->getGuidArray()->push_back( keyItem->guid() );
+	g_LastActionPath.push_back( *agent->property( "Location" )->getVec3() );
 	return "IronOre -> TreasureKey at Blacksmith";
 }
 
 static std::string ExecuteOpenChest( gie::World& world, gie::Agent* agent )
 {
+	glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+	g_LastActionPath.clear();
+	g_LastActionPath.push_back( agentLoc );
 	auto chest = FindEntityByName( world.context(), "LockedChest" );
 	if( !chest ) return "";
 	*agent->property( "Location" )->getVec3() = *chest->property( "Location" )->getVec3();
 	chest->property( "Open" )->value = true;
+	g_LastActionPath.push_back( *agent->property( "Location" )->getVec3() );
 	return "LockedChest with TreasureKey";
 }
 
@@ -1031,8 +1038,7 @@ static std::string ExecuteAction( gie::World& world, gie::Agent* agent, const st
 // Gameplay loop — single cycle and full loop
 // ---------------------------------------------------------------------------
 
-// Result of a single gameplay cycle
-enum class CycleResult { Continued, GoalReached, Stuck };
+// CycleResult defined in gameplay_common.h
 
 // Execute one planning cycle: try primary goal, then explore, then stuck.
 // Appends the cycle entry to g_GameplayLog.
@@ -1087,8 +1093,13 @@ static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent, bool 
 			for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
 				entry.actionNames.push_back( std::string( planned[i]->name() ) );
 
+			std::vector<std::vector<glm::vec3>> cyclePaths;
 			for( auto& name : entry.actionNames )
+			{
+				g_LastActionPath.clear();
 				entry.actionDetails.push_back( ExecuteAction( world, agent, name ) );
+				cyclePaths.push_back( std::move( g_LastActionPath ) );
+			}
 
 			entry.agentPosAfter = *agent->property( "Location" )->getVec3();
 			entry.knownCountAfter = CountKnown( world.context() );
@@ -1096,6 +1107,7 @@ static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent, bool 
 			entry.plannerPtr = std::make_unique<gie::Planner>( std::move( primaryPlanner ) );
 			g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
 			g_GameplayLog.cycles.push_back( std::move( entry ) );
+			g_CycleActionPaths.push_back( std::move( cyclePaths ) );
 
 			chest = FindEntityByName( world.context(), "LockedChest" );
 			if( chest && *chest->property( "Open" )->getBool() )
@@ -1130,8 +1142,13 @@ static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent, bool 
 			for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
 				entry.actionNames.push_back( std::string( planned[i]->name() ) );
 
+			std::vector<std::vector<glm::vec3>> cyclePaths;
 			for( auto& name : entry.actionNames )
+			{
+				g_LastActionPath.clear();
 				entry.actionDetails.push_back( ExecuteAction( world, agent, name ) );
+				cyclePaths.push_back( std::move( g_LastActionPath ) );
+			}
 
 			entry.agentPosAfter = *agent->property( "Location" )->getVec3();
 			entry.knownCountAfter = CountKnown( world.context() );
@@ -1139,6 +1156,7 @@ static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent, bool 
 			entry.plannerPtr = std::make_unique<gie::Planner>( std::move( explorePlanner ) );
 			g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
 			g_GameplayLog.cycles.push_back( std::move( entry ) );
+			g_CycleActionPaths.push_back( std::move( cyclePaths ) );
 			return CycleResult::Continued;
 		}
 	}
@@ -1157,6 +1175,8 @@ static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent, bool 
 static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner, bool useHeuristics = true )
 {
 	g_GameplayLog = {};
+	g_CycleActionPaths.clear();
+	g_LastActionPath.clear();
 	g_GameplayLog.started = true;
 	g_GameplayLog.agentTrail.push_back( *agent->property( "Location" )->getVec3() );
 
@@ -1305,6 +1325,45 @@ static void GLDrawFunc7( gie::World& world, gie::Planner& planner )
 			glVertex3f( p.x, p.y, p.z );
 		}
 		glEnd();
+		glLineWidth( 1.0f );
+	}
+
+	// Draw movement paths from cycle action paths (cycle-age color differentiation)
+	{
+		int highlightCycle = g_GameplayLog.selectedCycle;
+		size_t totalCycles = g_CycleActionPaths.size();
+		for( size_t ci = 0; ci < totalCycles; ci++ )
+		{
+			if( highlightCycle >= 0 && static_cast<int>( ci ) != highlightCycle ) continue;
+
+			bool isSelected = ( highlightCycle >= 0 );
+			SetCyclePathStyle( ci, totalCycles, isSelected );
+
+			auto& cyclePaths = g_CycleActionPaths[ci];
+			for( size_t ai = 0; ai < cyclePaths.size(); ai++ )
+			{
+				auto& path = cyclePaths[ai];
+				if( path.size() < 2 ) continue;
+
+				glBegin( GL_LINE_STRIP );
+				for( auto& pos : path )
+				{
+					glm::vec3 p = ( pos + offset ) * scale;
+					glVertex3f( p.x, p.y, p.z );
+				}
+				glEnd();
+
+				glPointSize( CyclePathPointSize( ci, totalCycles ) );
+				SetCyclePathDotColor( ci, totalCycles, isSelected );
+				glBegin( GL_POINTS );
+				for( size_t pi = 1; pi < path.size() - 1; pi++ )
+				{
+					glm::vec3 p = ( path[pi] + offset ) * scale;
+					glVertex3f( p.x, p.y, p.z );
+				}
+				glEnd();
+			}
+		}
 		glLineWidth( 1.0f );
 	}
 

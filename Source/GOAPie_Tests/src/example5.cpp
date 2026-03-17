@@ -6,6 +6,10 @@
 
 #include "example.h"
 #include "waypoint_navigation.h"
+#include "gameplay_common.h"
+#include "visualization.h"
+
+#include <limits>
 
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <imgui.h>
@@ -59,6 +63,31 @@ static inline void ApplyTravelAndBaseDeltas(
 void printSimulatedActions( const gie::Planner& planner );
 float remapRange( float source, float sourceFrom, float sourceTo, float targetFrom, float targetTo );
 static void ImGuiFunc5( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimulationGuid );
+static void GLDrawFunc5( gie::World& world, gie::Planner& planner );
+static void RegisterActions( gie::Planner& planner );
+static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent );
+static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner );
+
+// Gameplay state
+static GameplayLog g_GameplayLog;
+static std::vector<std::vector<std::vector<glm::vec3>>> g_CycleActionPaths;
+static std::vector<glm::vec3> g_LastActionPath;
+
+// Survival constants (file scope so RegisterActions, Execute functions, and gameplay loop can use them)
+static constexpr float kMaxEnergy = 100.f;
+static constexpr float kMaxHunger = 100.f; // higher == more hungry
+static constexpr float kMaxThirst = 100.f; // higher == more thirsty
+static constexpr float kMinEnergyToAct = 20.f;
+static constexpr float kHungerHigh = 70.f;
+static constexpr float kThirstHigh = 70.f;
+static constexpr float kEnergyPerPath = 0.25f;  // energy consumed per path length unit
+static constexpr float kHungerPerPath = 0.15f;  // hunger increases per path unit
+static constexpr float kThirstPerPath = 0.2f;   // thirst increases per path unit
+static constexpr float kAxePrice = 15.f;
+static constexpr float kWorkSalary = 20.f;
+static constexpr float kNewAxeIntegrity = 3.f;
+static constexpr float kMinAxeIntegrity = 1.f;
+static constexpr int32_t kMinLogsForHouse = 5;
 
 int survivalOnHill( ExampleParameters& params )
 {
@@ -68,6 +97,8 @@ int survivalOnHill( ExampleParameters& params )
 
     // specific example visualization
     params.imGuiDrawFunc = &ImGuiFunc5;
+    params.glDrawFunc = &GLDrawFunc5;
+    params.isGameplayExample = true;
 
     // creating agent (aka npc)
     auto agentEntity = world.createAgent( "Pawn" );
@@ -110,24 +141,10 @@ int survivalOnHill( ExampleParameters& params )
     // initial position of agent
     agentEntity->createProperty( "Location", glm::vec3{ 0.f, 0.f, 0.f } );
 
-    // survival stats
-    static constexpr float kMaxEnergy = 100.f;
-    static constexpr float kMaxHunger = 100.f; // higher == more hungry
-    static constexpr float kMaxThirst = 100.f; // higher == more thirsty
-
+    // survival stats (constants defined at file scope above)
     agentEntity->createProperty( "Energy", kMaxEnergy );
     agentEntity->createProperty( "Hunger", 20.f );
     agentEntity->createProperty( "Thirst", 20.f );
-
-    // thresholds
-    static constexpr float kMinEnergyToAct = 20.f;
-    static constexpr float kHungerHigh = 70.f;
-    static constexpr float kThirstHigh = 70.f;
-
-    // per-unit path multipliers for survival deltas
-    static constexpr float kEnergyPerPath = 0.25f;  // energy consumed per path length unit
-    static constexpr float kHungerPerPath = 0.15f;  // hunger increases per path unit
-    static constexpr float kThirstPerPath = 0.2f;   // thirst increases per path unit
 
     // trees configuration
     constexpr glm::vec2 treeAreaExtent{ 2.f, 2.f };
@@ -255,21 +272,13 @@ int survivalOnHill( ExampleParameters& params )
     auto pathResult = gie::getPath( world, waypointGuids, glm::vec3{ 0.f, 0.f, 0.f }, glm::vec3{ 0.f, 20.f, 20.f } );
     gie::printPath( waypointGuids, pathResult );
 
-    // price to get an axe
-    constexpr float axePrice = 15.f;
-
     // creating entity defining axe (a thing) npc can buy
     auto axeInfoEntity = world.createEntity( "AxeInfo" );
     axeInfoEntity->createProperty( "Name", "Axe" );
-    axeInfoEntity->createProperty( "Price", axePrice );
+    axeInfoEntity->createProperty( "Price", kAxePrice );
 
     // registering entity with tag to be found later in simulation
     world.context().entityTagRegister().tag( axeInfoEntity, { gie::stringHasher( "AxeInfo" ) } );
-
-    // money earn from work
-    constexpr float workSalary = 20.0;
-    // brand new axe integrity
-    static constexpr float newAxeIntegrityValue = 3.f;
 
     // setting goal targets (agent's wood house must exist)
     goal.targets.emplace_back( agentWoodHousePpt->guid(), true );
@@ -299,12 +308,6 @@ int survivalOnHill( ExampleParameters& params )
     construct->createProperty( "Location", waypointLocations[ 4 ] );
     world.context().entityTagRegister().tag( construct, { gie::stringHasher( "ConstructionSite" ) } );
 
-    // minimal amount of integrity an axe need to have to cut down a tree, so there is no need to buy another one
-    constexpr float minAxeIntegrity = 1.f;
-
-    // minimum logs (cut down trees) required to build a house
-    constexpr int32_t minLogsForHouse = 5;
-
     // setting tree positions
     constexpr size_t treeCount = 6;
     std::array< glm::vec3, treeCount > treeLocations
@@ -331,6 +334,22 @@ int survivalOnHill( ExampleParameters& params )
     // setting up planner passing goal and agent to reach the goal
     planner.simulate( goal, *agentEntity );
 
+    RegisterActions( planner );
+
+    // Run gameplay loop (deferred in visualization mode — triggered by GUI button)
+    if( !params.visualize )
+    {
+        RunGameplayLoop( params.world, agentEntity, params.planner );
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// RegisterActions — all 7 planner action registrations
+// ---------------------------------------------------------------------------
+static void RegisterActions( gie::Planner& planner )
+{
     // defining available actions via lambda-based API
 
     // -----------------------------------------------------------------------
@@ -369,7 +388,7 @@ int survivalOnHill( ExampleParameters& params )
             }
 
             // checking minimal axe integrity to cut down a tree
-            if( *axeIntegrityPpt->getFloat() < minAxeIntegrity )
+            if( *axeIntegrityPpt->getFloat() < kMinAxeIntegrity )
             {
                 params.addDebugMessage( "No integrity, returning FALSE" );
 
@@ -588,10 +607,10 @@ int survivalOnHill( ExampleParameters& params )
             const int32_t availableLogs = static_cast<int32_t>( treeDownTagSet ? treeDownTagSet->size() : 0 );
 
             params.addDebugMessage( "Available logs: " + std::to_string( availableLogs ) );
-            params.addDebugMessage( "Required logs: " + std::to_string( minLogsForHouse ) );
+            params.addDebugMessage( "Required logs: " + std::to_string( kMinLogsForHouse ) );
 
             // check if we have enough logs to build a house
-            if( availableLogs >= minLogsForHouse )
+            if( availableLogs >= kMinLogsForHouse )
             {
                 params.addDebugMessage( "Enough logs available to build house, returning TRUE" );
                 return true;
@@ -658,7 +677,7 @@ int survivalOnHill( ExampleParameters& params )
             // count available logs
             const int32_t availableLogs = static_cast<int32_t>( treeDownTagSet ? treeDownTagSet->size() : 0 );
 
-            if( availableLogs >= minLogsForHouse )
+            if( availableLogs >= kMinLogsForHouse )
             {
                 // apply travel/base deltas
                 ApplyTravelAndBaseDeltas( agentEntity, /*baseEnergy*/ 12.f, /*baseHunger*/ 8.f, /*baseThirst*/ 8.f, pathLen, kEnergyPerPath, kHungerPerPath, kThirstPerPath, kMaxEnergy, kMaxHunger, kMaxThirst, params, "BuildHouse" );
@@ -673,7 +692,7 @@ int survivalOnHill( ExampleParameters& params )
 
                 for( auto treeGuid : *treeDownTagSet )
                 {
-                    if( logsConsumed >= minLogsForHouse )
+                    if( logsConsumed >= kMinLogsForHouse )
                     {
                         break;
                     }
@@ -739,9 +758,9 @@ int survivalOnHill( ExampleParameters& params )
                 auto moneyPpt = agentEntity->property( "Money" );
                 params.addDebugMessage( "Axe is in things to buy, checking money" );
                 const float money = *moneyPpt->getFloat();
-                const bool hasEnoughMoney = money >= axePrice;
+                const bool hasEnoughMoney = money >= kAxePrice;
                 params.addDebugMessage(
-                    "Money: " + std::to_string( money ) + ", axe price: " + std::to_string( axePrice )
+                    "Money: " + std::to_string( money ) + ", axe price: " + std::to_string( kAxePrice )
                     + ", has enough money: " + ( hasEnoughMoney ? "TRUE" : "FALSE" ) );
                 return hasEnoughMoney;
             }
@@ -762,13 +781,13 @@ int survivalOnHill( ExampleParameters& params )
             params.addDebugMessage( "BuyThingSimulator::simulate" );
 
             // buy axe if there is enough money
-            if( *moneyPpt->getFloat() >= axePrice )
+            if( *moneyPpt->getFloat() >= kAxePrice )
             {
                 auto axeIntegrityPpt = agentEntity->property( "AxeIntegrity" );
-                axeIntegrityPpt->value = newAxeIntegrityValue;
+                axeIntegrityPpt->value = kNewAxeIntegrity;
 
                 // consuming money
-                moneyPpt->value = *moneyPpt->getFloat() - axePrice;
+                moneyPpt->value = *moneyPpt->getFloat() - kAxePrice;
 
                 // removing axe from things to buy property
                 auto thingsToBuyArray = thingsToBuyPpt->getGuidArray();
@@ -938,13 +957,13 @@ int survivalOnHill( ExampleParameters& params )
 
             // adding up money
             auto moneyPpt = agentEntity->property( "Money" );
-            moneyPpt->value = *moneyPpt->getFloat() + workSalary;
+            moneyPpt->value = *moneyPpt->getFloat() + kWorkSalary;
 
             // apply travel and base deltas
             ApplyTravelAndBaseDeltas( agentEntity, /*baseEnergy*/ 6.f, /*baseHunger*/ 5.f, /*baseThirst*/ 6.f, pathLen, kEnergyPerPath, kHungerPerPath, kThirstPerPath, kMaxEnergy, kMaxHunger, kMaxThirst, params, "Work" );
 
             params.addDebugMessage( "WorkSimulator::simulate" );
-            params.addDebugMessage( "Working, adding " + std::to_string( workSalary ) + " to money" );
+            params.addDebugMessage( "Working, adding " + std::to_string( kWorkSalary ) + " to money" );
 
             // planner auto-pushes the action for simple cases
             params.addDebugMessage( "WorkAction added, returning TRUE" );
@@ -1165,8 +1184,361 @@ int survivalOnHill( ExampleParameters& params )
             return true;
         }
     );
+}
 
-    return 0;
+// ---------------------------------------------------------------------------
+// Execute functions — mutate the real world during gameplay
+// ---------------------------------------------------------------------------
+static std::string ExecuteCutDownTree( gie::World& world, gie::Agent* agent )
+{
+    auto integrityPpt = agent->property( "AxeIntegrity" );
+    integrityPpt->value = *integrityPpt->getFloat() - 1.f;
+
+    auto treeUpSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "TreeUp" ) );
+    if( !treeUpSet || treeUpSet->empty() ) return "no trees available";
+
+    // Find nearest tree by path
+    glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+    auto wpSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "Waypoint" ) );
+    std::vector<gie::Guid> waypointGuids;
+    if( wpSet ) waypointGuids.assign( wpSet->begin(), wpSet->end() );
+
+    gie::Guid bestTree = gie::NullGuid;
+    float bestLen = std::numeric_limits<float>::max();
+    gie::PathfindingResult bestPath;
+    for( auto treeGuid : *treeUpSet )
+    {
+        auto tree = world.entity( treeGuid );
+        if( !tree ) continue;
+        auto loc = tree->property( "Location" );
+        if( !loc ) continue;
+        auto candidate = gie::getPath( world, waypointGuids, agentLoc, *loc->getVec3() );
+        if( candidate.length < bestLen )
+        {
+            bestLen = candidate.length;
+            bestTree = treeGuid;
+            bestPath = std::move( candidate );
+        }
+    }
+    if( bestTree == gie::NullGuid ) bestTree = *treeUpSet->cbegin();
+
+    // Record path
+    g_LastActionPath.clear();
+    g_LastActionPath.push_back( agentLoc );
+    for( auto& wpGuid : bestPath.path )
+    {
+        auto wp = world.entity( wpGuid );
+        if( wp )
+        {
+            auto loc = wp->property( "Location" );
+            if( loc ) g_LastActionPath.push_back( *loc->getVec3() );
+        }
+    }
+
+    // Move agent to tree
+    auto treeEntity = world.entity( bestTree );
+    if( treeEntity )
+    {
+        auto loc = treeEntity->property( "Location" );
+        if( loc )
+        {
+            g_LastActionPath.push_back( *loc->getVec3() );
+            *agent->property( "Location" )->getVec3() = *loc->getVec3();
+        }
+    }
+
+    // Cut tree
+    world.context().entityTagRegister().untag( treeEntity, { gie::stringHasher( "TreeUp" ) } );
+    world.context().entityTagRegister().tag( treeEntity, { gie::stringHasher( "TreeDown" ) } );
+
+    std::string name = treeEntity ? std::string( gie::stringRegister().get( treeEntity->nameHash() ) ) : "unknown";
+    return name + " (integrity: " + std::to_string( static_cast<int>( *integrityPpt->getFloat() ) ) + ")";
+}
+
+static std::string ExecuteBuildHouse( gie::World& world, gie::Agent* agent )
+{
+    auto siteSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "ConstructionSite" ) );
+    if( siteSet && !siteSet->empty() )
+    {
+        glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+        auto wpSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "Waypoint" ) );
+        std::vector<gie::Guid> waypointGuids;
+        if( wpSet ) waypointGuids.assign( wpSet->begin(), wpSet->end() );
+
+        for( auto g : *siteSet )
+        {
+            auto e = world.entity( g );
+            if( !e ) continue;
+            auto loc = e->property( "Location" );
+            if( !loc ) continue;
+            auto path = gie::getPath( world, waypointGuids, agentLoc, *loc->getVec3() );
+            g_LastActionPath.clear();
+            g_LastActionPath.push_back( agentLoc );
+            for( auto& wpG : path.path )
+                if( auto wp = world.entity( wpG ) )
+                    if( auto wl = wp->property( "Location" ) )
+                        g_LastActionPath.push_back( *wl->getVec3() );
+            g_LastActionPath.push_back( *loc->getVec3() );
+            *agent->property( "Location" )->getVec3() = *loc->getVec3();
+            break;
+        }
+    }
+
+    auto treeDownSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "TreeDown" ) );
+    if( !treeDownSet ) return "no logs available";
+
+    std::vector<gie::Guid> toConsume;
+    for( auto guid : *treeDownSet )
+    {
+        toConsume.push_back( guid );
+        if( static_cast<int32_t>( toConsume.size() ) >= kMinLogsForHouse ) break;
+    }
+    for( auto guid : toConsume )
+    {
+        auto tree = world.entity( guid );
+        if( tree )
+        {
+            world.context().entityTagRegister().untag( tree, { gie::stringHasher( "TreeDown" ) } );
+            world.context().entityTagRegister().tag( tree, { gie::stringHasher( "TreeUsed" ) } );
+        }
+    }
+    agent->property( "WoodHouse" )->value = true;
+    return "built house (" + std::to_string( toConsume.size() ) + " logs consumed)";
+}
+
+static std::string ExecuteBuyThing( gie::World& world, gie::Agent* agent )
+{
+    auto moneyPpt = agent->property( "Money" );
+    auto integrityPpt = agent->property( "AxeIntegrity" );
+    moneyPpt->value = *moneyPpt->getFloat() - kAxePrice;
+    integrityPpt->value = kNewAxeIntegrity;
+    agent->property( "ThingsToBuy" )->getGuidArray()->clear();
+    return "bought axe ($" + std::to_string( static_cast<int>( kAxePrice ) ) + ")";
+}
+
+static std::string ExecuteWork( gie::World& world, gie::Agent* agent )
+{
+    // Move to workplace
+    auto workSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "Workplace" ) );
+    if( workSet && !workSet->empty() )
+    {
+        glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+        auto wpSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "Waypoint" ) );
+        std::vector<gie::Guid> waypointGuids;
+        if( wpSet ) waypointGuids.assign( wpSet->begin(), wpSet->end() );
+
+        for( auto g : *workSet )
+        {
+            auto e = world.entity( g );
+            if( !e ) continue;
+            auto loc = e->property( "Location" );
+            if( !loc ) continue;
+            auto path = gie::getPath( world, waypointGuids, agentLoc, *loc->getVec3() );
+            g_LastActionPath.clear();
+            g_LastActionPath.push_back( agentLoc );
+            for( auto& wpG : path.path )
+                if( auto wp = world.entity( wpG ) )
+                    if( auto wl = wp->property( "Location" ) )
+                        g_LastActionPath.push_back( *wl->getVec3() );
+            g_LastActionPath.push_back( *loc->getVec3() );
+            *agent->property( "Location" )->getVec3() = *loc->getVec3();
+            break;
+        }
+    }
+
+    auto moneyPpt = agent->property( "Money" );
+    moneyPpt->value = *moneyPpt->getFloat() + kWorkSalary;
+    return "earned $" + std::to_string( static_cast<int>( kWorkSalary ) );
+}
+
+static std::string ExecuteEatFood( gie::World& world, gie::Agent* agent )
+{
+    auto foodSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "FoodSource" ) );
+    if( !foodSet || foodSet->empty() ) return "no food source";
+
+    glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+    auto wpSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "Waypoint" ) );
+    std::vector<gie::Guid> waypointGuids;
+    if( wpSet ) waypointGuids.assign( wpSet->begin(), wpSet->end() );
+
+    gie::Entity* bestFood = nullptr;
+    float bestLen = std::numeric_limits<float>::max();
+    gie::PathfindingResult bestPath;
+    for( auto g : *foodSet )
+    {
+        auto e = world.entity( g );
+        if( !e ) continue;
+        auto loc = e->property( "Location" );
+        if( !loc ) continue;
+        auto candidate = gie::getPath( world, waypointGuids, agentLoc, *loc->getVec3() );
+        if( candidate.length < bestLen ) { bestLen = candidate.length; bestFood = e; bestPath = std::move( candidate ); }
+    }
+    if( !bestFood ) return "";
+
+    g_LastActionPath.clear();
+    g_LastActionPath.push_back( agentLoc );
+    for( auto& wpG : bestPath.path )
+        if( auto wp = world.entity( wpG ) )
+            if( auto wl = wp->property( "Location" ) )
+                g_LastActionPath.push_back( *wl->getVec3() );
+    auto foodLoc = bestFood->property( "Location" );
+    if( foodLoc ) { g_LastActionPath.push_back( *foodLoc->getVec3() ); *agent->property( "Location" )->getVec3() = *foodLoc->getVec3(); }
+
+    auto hunger = agent->property( "Hunger" );
+    float before = *hunger->getFloat();
+    hunger->value = clampf( before - 60.f, 0.f, kMaxHunger );
+    return "hunger " + std::to_string( static_cast<int>( before ) ) + " -> " + std::to_string( static_cast<int>( *hunger->getFloat() ) );
+}
+
+static std::string ExecuteDrinkWater( gie::World& world, gie::Agent* agent )
+{
+    auto waterSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "WaterSource" ) );
+    if( !waterSet || waterSet->empty() ) return "no water source";
+
+    glm::vec3 agentLoc = *agent->property( "Location" )->getVec3();
+    auto wpSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "Waypoint" ) );
+    std::vector<gie::Guid> waypointGuids;
+    if( wpSet ) waypointGuids.assign( wpSet->begin(), wpSet->end() );
+
+    gie::Entity* bestWater = nullptr;
+    float bestLen = std::numeric_limits<float>::max();
+    gie::PathfindingResult bestPath;
+    for( auto g : *waterSet )
+    {
+        auto e = world.entity( g );
+        if( !e ) continue;
+        auto loc = e->property( "Location" );
+        if( !loc ) continue;
+        auto candidate = gie::getPath( world, waypointGuids, agentLoc, *loc->getVec3() );
+        if( candidate.length < bestLen ) { bestLen = candidate.length; bestWater = e; bestPath = std::move( candidate ); }
+    }
+    if( !bestWater ) return "";
+
+    g_LastActionPath.clear();
+    g_LastActionPath.push_back( agentLoc );
+    for( auto& wpG : bestPath.path )
+        if( auto wp = world.entity( wpG ) )
+            if( auto wl = wp->property( "Location" ) )
+                g_LastActionPath.push_back( *wl->getVec3() );
+    auto waterLoc = bestWater->property( "Location" );
+    if( waterLoc ) { g_LastActionPath.push_back( *waterLoc->getVec3() ); *agent->property( "Location" )->getVec3() = *waterLoc->getVec3(); }
+
+    auto thirst = agent->property( "Thirst" );
+    float before = *thirst->getFloat();
+    thirst->value = clampf( before - 70.f, 0.f, kMaxThirst );
+    return "thirst " + std::to_string( static_cast<int>( before ) ) + " -> " + std::to_string( static_cast<int>( *thirst->getFloat() ) );
+}
+
+static std::string ExecuteSleep( gie::World& world, gie::Agent* agent )
+{
+    auto energy = agent->property( "Energy" );
+    float before = *energy->getFloat();
+    energy->value = clampf( before + 60.f, 0.f, kMaxEnergy );
+
+    auto hunger = agent->property( "Hunger" );
+    hunger->value = clampf( *hunger->getFloat() + 5.f, 0.f, kMaxHunger );
+    auto thirst = agent->property( "Thirst" );
+    thirst->value = clampf( *thirst->getFloat() + 5.f, 0.f, kMaxThirst );
+
+    return "energy " + std::to_string( static_cast<int>( before ) ) + " -> " + std::to_string( static_cast<int>( *energy->getFloat() ) );
+}
+
+static std::string ExecuteAction( gie::World& world, gie::Agent* agent, const std::string& actionName )
+{
+    if( actionName == "CutDownTree" )     return ExecuteCutDownTree( world, agent );
+    else if( actionName == "BuildHouse" ) return ExecuteBuildHouse( world, agent );
+    else if( actionName == "BuyThing" )   return ExecuteBuyThing( world, agent );
+    else if( actionName == "Work" )       return ExecuteWork( world, agent );
+    else if( actionName == "EatFood" )    return ExecuteEatFood( world, agent );
+    else if( actionName == "DrinkWater" ) return ExecuteDrinkWater( world, agent );
+    else if( actionName == "Sleep" )      return ExecuteSleep( world, agent );
+    else if( actionName == "NewThingToBuy" ) return ""; // planning-internal signal
+    return "";
+}
+
+// ---------------------------------------------------------------------------
+// Gameplay loop
+// ---------------------------------------------------------------------------
+static CycleResult RunGameplayCycle( gie::World& world, gie::Agent* agent )
+{
+    auto woodHousePpt = agent->property( "WoodHouse" );
+    if( woodHousePpt && *woodHousePpt->getBool() )
+    {
+        g_GameplayLog.primaryGoalReached = true;
+        return CycleResult::GoalReached;
+    }
+
+    int cycleNum = static_cast<int>( g_GameplayLog.cycles.size() ) + 1;
+    GameplayCycleEntry entry;
+    entry.cycle = cycleNum;
+    entry.agentPosBefore = *agent->property( "Location" )->getVec3();
+
+    // Plan for primary goal: WoodHouse=true
+    gie::Goal primaryGoal{ world };
+    primaryGoal.targets.emplace_back( woodHousePpt->guid(), true );
+
+    gie::Planner cyclePlanner{};
+    RegisterActions( cyclePlanner );
+    cyclePlanner.depthLimitMutator() = 16;
+    cyclePlanner.simulate( primaryGoal, *agent );
+    cyclePlanner.plan( true ); // use heuristics
+
+    auto& planned = cyclePlanner.planActions();
+    if( !planned.empty() )
+    {
+        entry.goalType = "Primary";
+        entry.planFound = true;
+        entry.simulationCount = cyclePlanner.simulations().size();
+        for( int i = static_cast<int>( planned.size() ) - 1; i >= 0; i-- )
+            entry.actionNames.push_back( std::string( planned[i]->name() ) );
+
+        printf( "  Cycle %d: %zu actions —", cycleNum, entry.actionNames.size() );
+        std::vector<std::vector<glm::vec3>> cyclePaths;
+        for( auto& name : entry.actionNames )
+        {
+            g_LastActionPath.clear();
+            entry.actionDetails.push_back( ExecuteAction( world, agent, name ) );
+            cyclePaths.push_back( std::move( g_LastActionPath ) );
+            printf( " %s", name.c_str() );
+        }
+        printf( "\n" );
+
+        entry.agentPosAfter = *agent->property( "Location" )->getVec3();
+        g_GameplayLog.agentTrail.push_back( entry.agentPosAfter );
+        g_GameplayLog.cycles.push_back( std::move( entry ) );
+        g_CycleActionPaths.push_back( std::move( cyclePaths ) );
+
+        if( *agent->property( "WoodHouse" )->getBool() )
+        {
+            g_GameplayLog.primaryGoalReached = true;
+            return CycleResult::GoalReached;
+        }
+        return CycleResult::Continued;
+    }
+
+    // Stuck — no plan found
+    entry.goalType = "Stuck";
+    entry.planFound = false;
+    entry.agentPosAfter = entry.agentPosBefore;
+    g_GameplayLog.cycles.push_back( std::move( entry ) );
+    return CycleResult::Stuck;
+}
+
+static void RunGameplayLoop( gie::World& world, gie::Agent* agent, gie::Planner& planner )
+{
+    g_GameplayLog = {};
+    g_CycleActionPaths.clear();
+    g_LastActionPath.clear();
+    g_GameplayLog.started = true;
+    g_GameplayLog.agentTrail.push_back( *agent->property( "Location" )->getVec3() );
+
+    const int maxCycles = 30;
+    for( int i = 0; i < maxCycles; i++ )
+    {
+        CycleResult result = RunGameplayCycle( world, agent );
+        if( result != CycleResult::Continued )
+            break;
+    }
 }
 
 int survivalOnHillValidateResult( std::string& failMsg )
@@ -1182,6 +1554,34 @@ int survivalOnHillValidateResult( std::string& failMsg )
 	VALIDATE( !goal.targets.empty(), "goal should have at least one target" );
 	VALIDATE( planner.agent() != nullptr, "planner should have an assigned agent" );
 
+	// Gameplay loop should have reached the goal
+	VALIDATE( g_GameplayLog.primaryGoalReached, "primary goal should be reached" );
+	VALIDATE( !g_GameplayLog.cycles.empty(), "should have at least one planning cycle" );
+
+	// Check WoodHouse is true
+	auto agentEnt = world.entity( planner.agent()->guid() );
+	VALIDATE( agentEnt != nullptr, "agent should exist" );
+	VALIDATE( *agentEnt->property( "WoodHouse" )->getBool(), "WoodHouse should be true" );
+
+	// Check BuildHouse appears in the log
+	bool hasBuildHouse = false;
+	for( auto& c : g_GameplayLog.cycles )
+		for( auto& a : c.actionNames )
+			if( a == "BuildHouse" ) { hasBuildHouse = true; break; }
+	VALIDATE( hasBuildHouse, "plan should include BuildHouse" );
+
+	// Debug output
+	printf( "  Gameplay cycles: %zu, goalReached: %s\n", g_GameplayLog.cycles.size(), g_GameplayLog.primaryGoalReached ? "yes" : "no" );
+	for( size_t ci = 0; ci < g_GameplayLog.cycles.size(); ci++ )
+	{
+		auto& c = g_GameplayLog.cycles[ci];
+		printf( "  Cycle %d [%s] sims=%zu actions=%zu\n",
+			c.cycle, c.goalType.c_str(), c.simulationCount, c.actionNames.size() );
+		for( size_t ai = 0; ai < c.actionNames.size(); ai++ )
+			printf( "    %zu. %s — %s\n", ai + 1, c.actionNames[ai].c_str(),
+				ai < c.actionDetails.size() ? c.actionDetails[ai].c_str() : "" );
+	}
+
 	return 0;
 }
 
@@ -1190,93 +1590,315 @@ inline float remapRange( float source, float sourceFrom, float sourceTo, float t
     return targetFrom + ( source - sourceFrom ) * ( targetTo - targetFrom ) / ( sourceTo - sourceFrom );
 }
 
+// ---------------------------------------------------------------------------
+// GL Draw — agent trail and per-action movement paths
+// ---------------------------------------------------------------------------
+static void GLDrawFunc5( gie::World& world, gie::Planner& planner )
+{
+    glm::vec3 offset = -g_DrawingLimits.center;
+    glm::vec3 scale = g_DrawingLimits.scale;
+
+    // Draw agent trail (breadcrumb path)
+    if( g_GameplayLog.agentTrail.size() > 1 )
+    {
+        glLineWidth( 2.0f );
+        glColor3f( 0.2f, 0.8f, 0.2f );
+        glBegin( GL_LINE_STRIP );
+        for( auto& pos : g_GameplayLog.agentTrail )
+        {
+            glm::vec3 p = ( pos + offset ) * scale;
+            glVertex3f( p.x, p.y, p.z );
+        }
+        glEnd();
+
+        glPointSize( 8.0f );
+        glColor3f( 0.3f, 1.0f, 0.3f );
+        glBegin( GL_POINTS );
+        for( auto& pos : g_GameplayLog.agentTrail )
+        {
+            glm::vec3 p = ( pos + offset ) * scale;
+            glVertex3f( p.x, p.y, p.z );
+        }
+        glEnd();
+        glLineWidth( 1.0f );
+    }
+
+    // Draw movement paths from cycle action paths (cycle-age color differentiation)
+    {
+        int highlightCycle = g_GameplayLog.selectedCycle;
+        size_t totalCycles = g_CycleActionPaths.size();
+        for( size_t ci = 0; ci < totalCycles; ci++ )
+        {
+            if( highlightCycle >= 0 && static_cast<int>( ci ) != highlightCycle ) continue;
+
+            bool isSelected = ( highlightCycle >= 0 );
+            SetCyclePathStyle( ci, totalCycles, isSelected );
+
+            auto& cyclePaths = g_CycleActionPaths[ci];
+            for( size_t ai = 0; ai < cyclePaths.size(); ai++ )
+            {
+                auto& path = cyclePaths[ai];
+                if( path.size() < 2 ) continue;
+
+                glBegin( GL_LINE_STRIP );
+                for( auto& pos : path )
+                {
+                    glm::vec3 p = ( pos + offset ) * scale;
+                    glVertex3f( p.x, p.y, p.z );
+                }
+                glEnd();
+
+                glPointSize( CyclePathPointSize( ci, totalCycles ) );
+                SetCyclePathDotColor( ci, totalCycles, isSelected );
+                glBegin( GL_POINTS );
+                for( size_t pi = 1; pi < path.size() - 1; pi++ )
+                {
+                    glm::vec3 p = ( path[pi] + offset ) * scale;
+                    glVertex3f( p.x, p.y, p.z );
+                }
+                glEnd();
+            }
+        }
+        glLineWidth( 1.0f );
+    }
+
+    // Draw resource markers
+    // Food sources: green circle
+    auto foodSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "FoodSource" ) );
+    if( foodSet )
+    {
+        glPointSize( 10.0f );
+        glColor3f( 0.3f, 0.9f, 0.3f );
+        glBegin( GL_POINTS );
+        for( auto g : *foodSet )
+        {
+            auto e = world.entity( g );
+            if( !e ) continue;
+            auto loc = e->property( "Location" );
+            if( !loc ) continue;
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            glVertex3f( p.x, p.y, p.z );
+        }
+        glEnd();
+    }
+
+    // Water sources: blue circle
+    auto waterSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "WaterSource" ) );
+    if( waterSet )
+    {
+        glPointSize( 10.0f );
+        glColor3f( 0.2f, 0.5f, 1.0f );
+        glBegin( GL_POINTS );
+        for( auto g : *waterSet )
+        {
+            auto e = world.entity( g );
+            if( !e ) continue;
+            auto loc = e->property( "Location" );
+            if( !loc ) continue;
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            glVertex3f( p.x, p.y, p.z );
+        }
+        glEnd();
+    }
+
+    // Workplace: orange triangle
+    auto workSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "Workplace" ) );
+    if( workSet )
+    {
+        for( auto g : *workSet )
+        {
+            auto e = world.entity( g );
+            if( !e ) continue;
+            auto loc = e->property( "Location" );
+            if( !loc ) continue;
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            glColor3f( 1.0f, 0.6f, 0.0f );
+            float s = 0.02f;
+            glBegin( GL_TRIANGLES );
+            glVertex3f( p.x, p.y + s, p.z );
+            glVertex3f( p.x - s, p.y - s, p.z );
+            glVertex3f( p.x + s, p.y - s, p.z );
+            glEnd();
+        }
+    }
+
+    // Construction site: yellow square
+    auto siteSet = world.context().entityTagRegister().tagSet( gie::stringHasher( "ConstructionSite" ) );
+    if( siteSet )
+    {
+        for( auto g : *siteSet )
+        {
+            auto e = world.entity( g );
+            if( !e ) continue;
+            auto loc = e->property( "Location" );
+            if( !loc ) continue;
+            glm::vec3 p = ( *loc->getVec3() + offset ) * scale;
+            bool built = false;
+            if( planner.agent() )
+            {
+                auto wh = world.entity( planner.agent()->guid() );
+                if( wh ) built = *wh->property( "WoodHouse" )->getBool();
+            }
+            if( built ) glColor3f( 0.0f, 1.0f, 0.0f );
+            else        glColor3f( 1.0f, 0.9f, 0.0f );
+            float s = 0.02f;
+            glBegin( GL_QUADS );
+            glVertex3f( p.x - s, p.y - s, p.z );
+            glVertex3f( p.x + s, p.y - s, p.z );
+            glVertex3f( p.x + s, p.y + s, p.z );
+            glVertex3f( p.x - s, p.y + s, p.z );
+            glEnd();
+        }
+    }
+
+    // Agent marker (magenta dot)
+    if( planner.agent() )
+    {
+        auto agentEnt = world.entity( planner.agent()->guid() );
+        if( agentEnt )
+        {
+            auto agentLoc = agentEnt->property( "Location" );
+            if( agentLoc )
+            {
+                glm::vec3 p = ( *agentLoc->getVec3() + offset ) * scale;
+                glPointSize( 12.0f );
+                glColor3f( 1.0f, 0.0f, 1.0f );
+                glBegin( GL_POINTS );
+                glVertex3f( p.x, p.y, p.z );
+                glEnd();
+            }
+        }
+    }
+}
+
 static void ImGuiFunc5( gie::World& world, gie::Planner& planner, gie::Goal& goal, gie::Guid selectedSimulationGuid )
 {
+    ImGui::TextUnformatted( "Survival on Hill - Gameplay Loop (Example 5)" );
+    ImGui::Separator();
+
     // context comes from either a simulation or the world
     gie::Blackboard* context = nullptr;
-
     const auto selectedSimulation = planner.simulation( selectedSimulationGuid );
     if( selectedSimulation )
-    {
         context = &selectedSimulation->context();
-    }
-
     if( !context )
-    {
         context = &world.context();
-    }
 
-    // getting agent entity
     const auto agentEntity = context->entity( planner.agent()->guid() );
-    if( !agentEntity )
-    {
-        return;
-    }
-    // getting agent location property
-    auto agentLocationPpt = agentEntity->property( "Location" );
-    if( !agentLocationPpt )
-    {
-        return;
-    }
+    if( !agentEntity ) return;
 
-    glm::vec3 agentLocation = *agentLocationPpt->getVec3();
-    ImGui::Text( "Agent Location: (%.2f, %.2f, %.2f)", agentLocation.x, agentLocation.y, agentLocation.z );
+    auto agentLocationPpt = agentEntity->property( "Location" );
+    if( agentLocationPpt )
+    {
+        glm::vec3 agentLocation = *agentLocationPpt->getVec3();
+        ImGui::Text( "Agent Location: (%.1f, %.1f, %.1f)", agentLocation.x, agentLocation.y, agentLocation.z );
+    }
     if( auto p = agentEntity->property( "Energy" ) ) ImGui::Text( "Energy: %.1f", *p->getFloat() );
     if( auto p = agentEntity->property( "Hunger" ) ) ImGui::Text( "Hunger: %.1f", *p->getFloat() );
     if( auto p = agentEntity->property( "Thirst" ) ) ImGui::Text( "Thirst: %.1f", *p->getFloat() );
-    ImGui::Text( "Agent Money: %.2f", *agentEntity->property( "Money" )->getFloat() );
-    ImGui::Text( "Axe Integrity: %.2f", *agentEntity->property( "AxeIntegrity" )->getFloat() );
-    ImGui::Text( "Has Wood House: %s", *agentEntity->property( "WoodHouse" )->getBool() ? "YES" : "NO" );
+    ImGui::Text( "Money: $%.0f", *agentEntity->property( "Money" )->getFloat() );
+    ImGui::Text( "Axe Integrity: %.0f", *agentEntity->property( "AxeIntegrity" )->getFloat() );
+    ImGui::Text( "Wood House: %s", *agentEntity->property( "WoodHouse" )->getBool() ? "YES" : "NO" );
 
-    // counting trees by their states
-    int treeUpCount = 0;
-    int treeDownCount = 0;
-    int treeUsedCount = 0;
+    // Tree counts
+    int treeUpCount = 0, treeDownCount = 0, treeUsedCount = 0;
+    if( auto s = context->entityTagRegister().tagSet( "TreeUp" ) ) treeUpCount = static_cast<int>( s->size() );
+    if( auto s = context->entityTagRegister().tagSet( "TreeDown" ) ) treeDownCount = static_cast<int>( s->size() );
+    if( auto s = context->entityTagRegister().tagSet( "TreeUsed" ) ) treeUsedCount = static_cast<int>( s->size() );
 
-    auto treeUpTagSet = context->entityTagRegister().tagSet( "TreeUp" );
-    if( treeUpTagSet )
-    {
-        treeUpCount = static_cast<int>( treeUpTagSet->size() );
-    }
+    int foodCount = 0, waterCount = 0;
+    if( auto s = context->entityTagRegister().tagSet( "FoodSource" ) ) foodCount = static_cast<int>( s->size() );
+    if( auto s = context->entityTagRegister().tagSet( "WaterSource" ) ) waterCount = static_cast<int>( s->size() );
 
-    auto treeDownTagSet = context->entityTagRegister().tagSet( "TreeDown" );
-    if( treeDownTagSet )
-    {
-        treeDownCount = static_cast<int>( treeDownTagSet->size() );
-    }
-
-    auto treeUsedTagSet = context->entityTagRegister().tagSet( "TreeUsed" );
-    if( treeUsedTagSet )
-    {
-        treeUsedCount = static_cast<int>( treeUsedTagSet->size() );
-    }
-
-    int foodCount = 0;
-    int waterCount = 0;
-    auto foodSet = context->entityTagRegister().tagSet( "FoodSource" );
-    if( foodSet ) foodCount = static_cast<int>( foodSet->size() );
-    auto waterSet = context->entityTagRegister().tagSet( "WaterSource" );
-    if( waterSet ) waterCount = static_cast<int>( waterSet->size() );
-
-    ImGui::Text( "Trees Up: %d, Trees Down (logs): %d, Trees Used: %d", treeUpCount, treeDownCount, treeUsedCount );
+    ImGui::Text( "Trees: %d up, %d down (logs), %d used", treeUpCount, treeDownCount, treeUsedCount );
     ImGui::Text( "Food Sources: %d, Water Sources: %d", foodCount, waterCount );
-    ImGui::Text( "Things to buy: " );
 
-    auto thingsToBuyPpt = agentEntity->property( "ThingsToBuy" );
-    if( thingsToBuyPpt )
+    ImGui::Separator();
+
+    // Gameplay controls
+    bool finished = g_GameplayLog.primaryGoalReached
+        || ( !g_GameplayLog.cycles.empty() && g_GameplayLog.cycles.back().goalType == "Stuck" );
+
+    static bool stepExecution = false;
+
+    if( !g_GameplayLog.started )
     {
-        auto thingsToBuyArray = thingsToBuyPpt->getGuidArray();
-        for( const auto& thingGuid : *thingsToBuyArray )
+        ImGui::Checkbox( "Step Execution", &stepExecution );
+        ImGui::PushStyleColor( ImGuiCol_Button, ImVec4( 0.2f, 0.6f, 0.2f, 1.0f ) );
+        ImGui::PushStyleColor( ImGuiCol_ButtonHovered, ImVec4( 0.3f, 0.8f, 0.3f, 1.0f ) );
+        if( ImGui::Button( "Start Gameplay", ImVec2( -1.f, 40.f ) ) )
         {
-            if( auto thingEntity = context->entity( thingGuid ) )
+            auto* agentPtr = planner.agent();
+            if( agentPtr )
             {
-                auto thingNameHash = thingEntity->property( "Name" )->getStringHash();
-                if( thingNameHash == gie::InvalidStringHash )
+                g_GameplayLog = {};
+                g_CycleActionPaths.clear();
+                g_LastActionPath.clear();
+                g_GameplayLog.started = true;
+                g_GameplayLog.agentTrail.push_back( *agentPtr->property( "Location" )->getVec3() );
+
+                if( stepExecution )
                 {
-                    continue;
+                    RunGameplayCycle( world, agentPtr );
                 }
-                auto thingName = gie::stringRegister().get( *thingNameHash );
-                ImGui::Text( "- %s", thingName );
+                else
+                {
+                    RunGameplayLoop( world, agentPtr, planner );
+                }
+            }
+        }
+        ImGui::PopStyleColor( 2 );
+    }
+    else if( stepExecution && !finished )
+    {
+        if( ImGui::Button( "Step (Next Cycle)", ImVec2( -1.f, 30.f ) ) )
+        {
+            RunGameplayCycle( world, planner.agent() );
+        }
+    }
+
+    // Goal status
+    if( g_GameplayLog.primaryGoalReached )
+        ImGui::TextColored( ImVec4( 0.2f, 1.0f, 0.2f, 1.0f ), "Goal Reached: Wood House Built!" );
+    else if( finished )
+        ImGui::TextColored( ImVec4( 1.0f, 0.3f, 0.3f, 1.0f ), "Stuck: No plan found" );
+
+    // Gameplay log
+    if( !g_GameplayLog.cycles.empty() )
+    {
+        ImGui::Separator();
+        if( ImGui::CollapsingHeader( "Gameplay Log", ImGuiTreeNodeFlags_DefaultOpen ) )
+        {
+            for( size_t ci = 0; ci < g_GameplayLog.cycles.size(); ci++ )
+            {
+                auto& cycle = g_GameplayLog.cycles[ci];
+                bool selected = ( g_GameplayLog.selectedCycle == static_cast<int>( ci ) );
+                if( selected ) ImGui::PushStyleColor( ImGuiCol_Text, ImVec4( 0.4f, 0.9f, 1.0f, 1.0f ) );
+
+                bool open = ImGui::TreeNode( reinterpret_cast<void*>( static_cast<intptr_t>( cycle.cycle ) ),
+                    "Cycle %d [%s] (%zu actions, %zu sims)",
+                    cycle.cycle, cycle.goalType.c_str(),
+                    cycle.actionNames.size(), cycle.simulationCount );
+
+                // Click to select/deselect cycle for highlight
+                if( ImGui::IsItemClicked() )
+                    g_GameplayLog.selectedCycle = selected ? -1 : static_cast<int>( ci );
+
+                if( selected ) ImGui::PopStyleColor();
+
+                if( open )
+                {
+                    for( size_t i = 0; i < cycle.actionNames.size(); i++ )
+                    {
+                        ImGui::Text( "%zu. %s", i + 1, cycle.actionNames[i].c_str() );
+                        if( i < cycle.actionDetails.size() && !cycle.actionDetails[i].empty() )
+                        {
+                            ImGui::SameLine();
+                            ImGui::TextColored( ImVec4( 0.7f, 0.7f, 0.7f, 1.0f ), "- %s", cycle.actionDetails[i].c_str() );
+                        }
+                    }
+                    ImGui::TreePop();
+                }
             }
         }
     }
