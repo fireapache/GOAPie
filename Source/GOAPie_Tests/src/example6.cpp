@@ -2386,7 +2386,7 @@ static void GLDrawFunc6( gie::World& world, gie::Planner& planner )
 	auto knownSet = world.context().entityTagRegister().tagSet( "Known" );
 	if( knownSet )
 	{
-		const float knownSquareSize = 0.015f;
+		const float knownSquareSize = 0.006f;
 		glPointSize( 6.0f );
 		for( auto g : *knownSet )
 		{
