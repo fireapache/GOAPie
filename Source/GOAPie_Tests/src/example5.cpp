@@ -35,7 +35,7 @@ static inline void ApplyTravelAndBaseDeltas(
     float maxEnergy,
     float maxHunger,
     float maxThirst,
-    gie::SimulateSimulationParams& params,
+    gie::SimulateParams& params,
     const char* scope )
 {
     auto e = agent->property( "Energy" );
@@ -357,7 +357,7 @@ static void RegisterActions( gie::Planner& planner )
     // -----------------------------------------------------------------------
     planner.addLambdaAction( "CutDownTree",
         // evaluate
-        [=]( gie::EvaluateSimulationParams params ) -> bool
+        [=]( gie::EvaluateParams params ) -> bool
         {
             auto& context            = params.simulation.context();
             auto agentEntity        = context.entity( params.agent.guid() );
@@ -429,7 +429,7 @@ static void RegisterActions( gie::Planner& planner )
             return true;
         },
         // simulate
-        [=]( gie::SimulateSimulationParams params ) -> bool
+        [=]( gie::SimulateParams params ) -> bool
         {
             auto& context                = params.simulation.context();
             auto agentEntity            = context.entity( params.agent.guid() );
@@ -571,7 +571,7 @@ static void RegisterActions( gie::Planner& planner )
     // -----------------------------------------------------------------------
     planner.addLambdaAction( "BuildHouse",
         // evaluate
-        [=]( gie::EvaluateSimulationParams params ) -> bool
+        [=]( gie::EvaluateParams params ) -> bool
         {
             auto& context = params.simulation.context();
             auto agentEntity = context.entity( params.agent.guid() );
@@ -620,7 +620,7 @@ static void RegisterActions( gie::Planner& planner )
             return false;
         },
         // simulate
-        [=]( gie::SimulateSimulationParams params ) -> bool
+        [=]( gie::SimulateParams params ) -> bool
         {
             auto& context = params.simulation.context();
             auto agentEntity = context.entity( params.agent.guid() );
@@ -722,7 +722,7 @@ static void RegisterActions( gie::Planner& planner )
     // -----------------------------------------------------------------------
     planner.addLambdaAction( "BuyThing",
         // evaluate
-        [=]( gie::EvaluateSimulationParams params ) -> bool
+        [=]( gie::EvaluateParams params ) -> bool
         {
             auto& context            = params.simulation.context();
             auto agentEntity        = context.entity( params.agent.guid() );
@@ -769,7 +769,7 @@ static void RegisterActions( gie::Planner& planner )
             return false;
         },
         // simulate
-        [=]( gie::SimulateSimulationParams params ) -> bool
+        [=]( gie::SimulateParams params ) -> bool
         {
             auto& context = params.simulation.context();
             auto agentEntity = context.entity( params.agent.guid() );
@@ -839,7 +839,7 @@ static void RegisterActions( gie::Planner& planner )
     // -----------------------------------------------------------------------
     planner.addLambdaAction( "Work",
         // evaluate
-        [=]( gie::EvaluateSimulationParams params ) -> bool
+        [=]( gie::EvaluateParams params ) -> bool
         {
             auto& context                = params.simulation.context();
             auto agentEntity            = context.entity( params.agent.guid() );
@@ -907,7 +907,7 @@ static void RegisterActions( gie::Planner& planner )
             return true;
         },
         // simulate (calculate cost and necessary steps to achieve the action)
-        [=]( gie::SimulateSimulationParams params ) -> bool
+        [=]( gie::SimulateParams params ) -> bool
         {
             auto& context        = params.simulation.context();
             auto agentEntity    = context.entity( params.agent.guid() );
@@ -976,7 +976,7 @@ static void RegisterActions( gie::Planner& planner )
     // -----------------------------------------------------------------------
     planner.addLambdaAction( "EatFood",
         // evaluate
-        [=]( gie::EvaluateSimulationParams params ) -> bool
+        [=]( gie::EvaluateParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -991,7 +991,7 @@ static void RegisterActions( gie::Planner& planner )
             return ok;
         },
         // simulate
-        [=]( gie::SimulateSimulationParams params ) -> bool
+        [=]( gie::SimulateParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1066,7 +1066,7 @@ static void RegisterActions( gie::Planner& planner )
     // -----------------------------------------------------------------------
     planner.addLambdaAction( "DrinkWater",
         // evaluate
-        [=]( gie::EvaluateSimulationParams params ) -> bool
+        [=]( gie::EvaluateParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1081,7 +1081,7 @@ static void RegisterActions( gie::Planner& planner )
             return ok;
         },
         // simulate
-        [=]( gie::SimulateSimulationParams params ) -> bool
+        [=]( gie::SimulateParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1156,7 +1156,7 @@ static void RegisterActions( gie::Planner& planner )
     // -----------------------------------------------------------------------
     planner.addLambdaAction( "Sleep",
         // evaluate
-        []( gie::EvaluateSimulationParams params ) -> bool
+        []( gie::EvaluateParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );
@@ -1169,7 +1169,7 @@ static void RegisterActions( gie::Planner& planner )
             return ok;
         },
         // simulate
-        []( gie::SimulateSimulationParams params ) -> bool
+        []( gie::SimulateParams params ) -> bool
         {
             auto& ctx = params.simulation.context();
             auto agent = ctx.entity( params.agent.guid() );

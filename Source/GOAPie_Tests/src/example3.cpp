@@ -40,7 +40,7 @@ static void RegisterActions( gie::Planner& planner )
 {
 	// CutDownTree: cut down a tree if agent has sufficient axe integrity
 	planner.addLambdaAction( "CutDownTree",
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto axeIntegrityPpt = params.agent.worldContextAgent()->property( "AxeIntegrity" );
 			auto simAxeIntegrityPpt = params.simulation.context().property( axeIntegrityPpt->guid() );
@@ -51,7 +51,7 @@ static void RegisterActions( gie::Planner& planner )
 			if( !treeUpTagSet || treeUpTagSet->empty() ) return false;
 			return true;
 		},
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto axeIntegrityPpt = params.agent.worldContextAgent()->property( "AxeIntegrity" );
 			auto simAxeIntegrityPpt = params.simulation.context().property( axeIntegrityPpt->guid() );
@@ -73,7 +73,7 @@ static void RegisterActions( gie::Planner& planner )
 
 	// Work: earn money when agent has things to buy
 	planner.addLambdaAction( "Work",
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto moneyPpt = params.agent.worldContextAgent()->property( "Money" );
 			auto thingsToBuyPpt = params.agent.worldContextAgent()->property( "ThingsToBuy" );
@@ -95,7 +95,7 @@ static void RegisterActions( gie::Planner& planner )
 			if( *simMoneyPpt->getFloat() >= cost ) return false;
 			return true;
 		},
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto moneyPpt = params.agent.worldContextAgent()->property( "Money" );
 			auto simMoneyPpt = params.simulation.context().property( moneyPpt->guid() );
@@ -106,7 +106,7 @@ static void RegisterActions( gie::Planner& planner )
 
 	// BuyAxe: buy an axe if integrity is low
 	planner.addLambdaAction( "BuyAxe",
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto axeIntegrityPpt = params.agent.worldContextAgent()->property( "AxeIntegrity" );
 			auto simAxeIntegrityPpt = params.simulation.context().property( axeIntegrityPpt->guid() );
@@ -114,7 +114,7 @@ static void RegisterActions( gie::Planner& planner )
 			if( *simAxeIntegrityPpt->getFloat() >= kMinAxeIntegrity ) return false;
 			return true;
 		},
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto thingsToBuyPptGuid = params.agent.worldContextAgent()->property( "ThingsToBuy" )->guid();
 			auto thingsToBuyPpt = params.simulation.context().property( thingsToBuyPptGuid );
@@ -160,7 +160,7 @@ static void RegisterActions( gie::Planner& planner )
 
 	// BuildHouse: build a house when enough logs are available
 	planner.addLambdaAction( "BuildHouse",
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto woodHousePpt = params.agent.worldContextAgent()->property( "WoodHouse" );
 			auto simWoodHousePpt = params.simulation.context().property( woodHousePpt->guid() );
@@ -171,7 +171,7 @@ static void RegisterActions( gie::Planner& planner )
 			int32_t availableLogs = static_cast<int32_t>( treeDownTagSet ? treeDownTagSet->size() : 0 );
 			return availableLogs >= kMinLogsForHouse;
 		},
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto woodHousePpt = params.agent.worldContextAgent()->property( "WoodHouse" );
 			auto simWoodHousePpt = params.simulation.context().property( woodHousePpt->guid() );

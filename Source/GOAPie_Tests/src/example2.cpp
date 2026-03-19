@@ -41,7 +41,7 @@ int openDoor( ExampleParameters& params )
 	// defining available action simulator for OpenDoor
 	planner.addLambdaAction( "OpenDoor",
 		// define conditions for action
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			// checking if world context agent has property telling which door entity is the target
 			auto targetDoorEntityPpt = params.agent.worldContextAgent()->property( "TargetDoorEntity" );
@@ -73,7 +73,7 @@ int openDoor( ExampleParameters& params )
 			return true;
 		},
 		// calculate cost and necessary steps (other actions) to achieve the action being simulated
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			// setting base cost as starting point
 			constexpr float baseCost = 10.f;

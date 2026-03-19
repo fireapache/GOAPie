@@ -17,11 +17,11 @@ namespace gie
 	class DebugMessages;
 
 	// Lambda function type aliases for inline action definitions.
-	struct EvaluateSimulationParams;
-	struct SimulateSimulationParams;
+	struct EvaluateParams;
+	struct SimulateParams;
 	struct CalculateHeuristicParams;
-	using EvaluateFunc = std::function< bool( EvaluateSimulationParams ) >;
-	using SimulateFunc = std::function< bool( SimulateSimulationParams ) >;
+	using EvaluateFunc = std::function< bool( EvaluateParams ) >;
+	using SimulateFunc = std::function< bool( SimulateParams ) >;
 	using HeuristicFunc = std::function< void( CalculateHeuristicParams ) >;
 
 	// Class representing an action produced by the planner.
@@ -45,7 +45,7 @@ namespace gie
 		NamedArguments& arguments() { return _arguments; }
 	};
 
-	struct EvaluateSimulationParams
+	struct EvaluateParams
 	{
 	private:
 		// Debug messages for simulation.
@@ -61,7 +61,7 @@ namespace gie
 		// Goal which is being achieved.
 		const Goal& goal;
 
-		EvaluateSimulationParams(
+		EvaluateParams(
 			Simulation& simulation,
 			const SimAgent& agent,
 			const Goal& goal )
@@ -87,7 +87,7 @@ namespace gie
 		}
 	};
 
-	struct SimulateSimulationParams
+	struct SimulateParams
 	{
 
 	public:
@@ -97,7 +97,7 @@ namespace gie
 		Simulation& simulation;
 		// Goal which is being achieved.
 		const Goal& goal;
-		SimulateSimulationParams(
+		SimulateParams(
 			Simulation& simulation,
 			SimAgent& agent,
 			const Goal& goal )
@@ -118,9 +118,9 @@ namespace gie
 		}
 	};
 
-	struct CalculateHeuristicParams : public SimulateSimulationParams
+	struct CalculateHeuristicParams : public SimulateParams
 	{
-		using SimulateSimulationParams::SimulateSimulationParams;
+		using SimulateParams::SimulateParams;
 	};
 
 	// Action simulator used by the planner during search.
@@ -177,13 +177,13 @@ namespace gie
 		void setForceLeaf( bool value ) { _forceLeaf = value; }
 
 		// @Return True in case context meets prerequisites, False otherwise.
-		virtual bool evaluate( EvaluateSimulationParams params ) const
+		virtual bool evaluate( EvaluateParams params ) const
 		{
 			return _evaluateFn ? _evaluateFn( std::move( params ) ) : false;
 		}
 
 		// @Return True if simulation setup was done successfuly, False otherwise.
-		virtual bool simulate( SimulateSimulationParams params ) const
+		virtual bool simulate( SimulateParams params ) const
 		{
 			return _simulateFn ? _simulateFn( std::move( params ) ) : false;
 		}

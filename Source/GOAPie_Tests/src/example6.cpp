@@ -151,7 +151,7 @@ static bool IsAgentInSafeRoom( const gie::Blackboard& ctx, Guid agentGuid )
 }
 
 // Simple utility: store a movement path to target entity and move agent location.
-static float MoveAgentAlongPath( gie::SimulateSimulationParams& params, const glm::vec3& from, gie::Entity* toEntity, const std::vector< Guid >& waypointGuids )
+static float MoveAgentAlongPath( gie::SimulateParams& params, const glm::vec3& from, gie::Entity* toEntity, const std::vector< Guid >& waypointGuids )
 {
 	if( !toEntity ) return 0.f;
 	auto locPpt = toEntity->property( "Location" );
@@ -207,7 +207,7 @@ static Guid FindNearestLinkedWP( gie::Blackboard& ctx, gie::Entity* target, cons
 
 // Move agent to the nearest linked waypoint of a target entity (not to the entity itself).
 // Returns the path length traveled, or -1.f if unreachable.
-static float MoveAgentNearEntity( gie::SimulateSimulationParams& params, const glm::vec3& from, gie::Entity* toEntity, const std::vector<Guid>& navGraph )
+static float MoveAgentNearEntity( gie::SimulateParams& params, const glm::vec3& from, gie::Entity* toEntity, const std::vector<Guid>& navGraph )
 {
 	if( !toEntity ) return -1.f;
 	auto& ctx = params.simulation.context();
@@ -888,7 +888,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "Observe",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agentEnt = ctx.entity( params.agent.guid() );
@@ -922,7 +922,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate — OPAQUE: does NOT reveal entities during planning
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agentEnt = ctx.entity( params.agent.guid() );
@@ -941,7 +941,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "MoveTo",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agentEnt = ctx.entity( params.agent.guid() );
@@ -976,7 +976,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agentEnt = ctx.entity( params.agent.guid() );
@@ -1089,7 +1089,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "UseTool",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto knownSet = ctx.entityTagRegister().tagSet( "Known" );
@@ -1100,7 +1100,7 @@ static void RegisterActions( gie::Planner& planner )
 			return !*openProp->getBool();  // Panel cover must be closed
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agentEnt = ctx.entity( params.agent.guid() );
@@ -1126,7 +1126,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "Interact",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 
@@ -1181,7 +1181,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agentEnt = ctx.entity( params.agent.guid() );
@@ -1270,7 +1270,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "SearchForItem",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agent = ctx.entity( params.agent.guid() );
@@ -1298,7 +1298,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agent = ctx.entity( params.agent.guid() );
@@ -1346,7 +1346,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "Inspect",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agent = ctx.entity( params.agent.guid() );
@@ -1370,7 +1370,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate — OPAQUE: only sets ExploredNewArea
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agent = ctx.entity( params.agent.guid() );
@@ -1413,7 +1413,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "UseItem",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agent = ctx.entity( params.agent.guid() );
@@ -1452,7 +1452,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			auto agent = ctx.entity( params.agent.guid() );
@@ -1511,7 +1511,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "BruteForceSafe",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			if( !IsAgentInSafeRoom( ctx, params.agent.guid() ) ) return false;
@@ -1532,7 +1532,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			auto& ctx = params.simulation.context();
 			gie::Entity* safe = FindEntityByName( ctx, "Safe" );

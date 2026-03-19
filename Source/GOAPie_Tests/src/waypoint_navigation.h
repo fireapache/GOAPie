@@ -220,7 +220,7 @@ namespace gie
 	}
 
 	inline void storeSimulatedPath(
-		gie::SimulateSimulationParams& simulationParams,
+		gie::SimulateParams& simulationParams,
 		gie::PathfindingResult& pathFindingResult,
 		gie::Guid& targetEntityGuid,
 		glm::vec3* agentStartLocation )
@@ -230,7 +230,7 @@ namespace gie
 		simulationParams.simulation.arguments().add( "AgentStartLocation", *agentStartLocation );
 	}
 
-	inline void storeSimulatedPathFindingSteps( gie::PathfindingSteps& pathSolverSteps, gie::SimulateSimulationParams& params )
+	inline void storeSimulatedPathFindingSteps( gie::PathfindingSteps& pathSolverSteps, gie::SimulateParams& params )
 	{
 		gie::Property::GuidVector openedAll;
 		gie::Property::GuidVector visitedAll;

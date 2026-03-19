@@ -598,7 +598,7 @@ public:
 
     const std::string& lastError() const { return m_lastError; }
 
-    bool executeEvaluate( const std::string& chunkName, const EvaluateSimulationParams& params ) const
+    bool executeEvaluate( const std::string& chunkName, const EvaluateParams& params ) const
     {
         if( !L ) return true;
 
@@ -638,7 +638,7 @@ public:
         return result;
     }
 
-    bool executeSimulate( const std::string& chunkName, SimulateSimulationParams& params ) const
+    bool executeSimulate( const std::string& chunkName, SimulateParams& params ) const
     {
         if( !L ) return true;
 
@@ -720,7 +720,7 @@ public:
         lua_pop( L, 2 );
     }
 
-    void pushEvaluateParams( lua_State* L, const EvaluateSimulationParams& params ) const
+    void pushEvaluateParams( lua_State* L, const EvaluateParams& params ) const
     {
         // Store simulation pointer so bridge functions (get_property, etc.) can access it
         lua_pushlightuserdata( L, const_cast< Simulation* >( &params.simulation ) );
@@ -747,7 +747,7 @@ public:
         lua_settable( L, -3 ); // params.goal = {}
     }
 
-    void pushSimulateParams( lua_State* L, const SimulateSimulationParams& params ) const
+    void pushSimulateParams( lua_State* L, const SimulateParams& params ) const
     {
         // Store simulation pointer so bridge functions (get_property, etc.) can access it
         lua_pushlightuserdata( L, const_cast< Simulation* >( &params.simulation ) );
@@ -776,7 +776,7 @@ public:
 
     void pushCalculateHeuristicParams( lua_State* L, const CalculateHeuristicParams& params ) const
     {
-        pushSimulateParams( L, static_cast< const SimulateSimulationParams& >( params ) );
+        pushSimulateParams( L, static_cast< const SimulateParams& >( params ) );
     }
 
 private:
@@ -798,13 +798,13 @@ public:
         return true;
     }
 
-    bool executeEvaluate( const std::string& /*chunkName*/, const EvaluateSimulationParams& params ) const
+    bool executeEvaluate( const std::string& /*chunkName*/, const EvaluateParams& params ) const
     {
         (void)params;
         return true;
     }
 
-    bool executeSimulate( const std::string& /*chunkName*/, SimulateSimulationParams& params ) const
+    bool executeSimulate( const std::string& /*chunkName*/, SimulateParams& params ) const
     {
         (void)params;
         return true;
@@ -850,7 +850,7 @@ public:
     std::string_view name() const { return m_name; }
     StringHash hash() const override { return stringHasher( m_name ); }
 
-    bool evaluate( EvaluateSimulationParams params ) const override
+    bool evaluate( EvaluateParams params ) const override
     {
 #if GIE_WITH_LUA
         // Use the unified chunk name for all Lua-backed callbacks.
@@ -861,7 +861,7 @@ public:
 #endif
     }
 
-    bool simulate( SimulateSimulationParams params ) const override
+    bool simulate( SimulateParams params ) const override
     {
 #if GIE_WITH_LUA
         bool ok = m_sandbox->executeSimulate( m_chunkName, params );

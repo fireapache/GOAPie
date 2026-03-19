@@ -814,13 +814,13 @@ public:
 
 	StringHash hash() const override { return stringHasher( "SetBool" ); }
 
-	bool evaluate( EvaluateSimulationParams params ) const override
+	bool evaluate( EvaluateParams params ) const override
 	{
 		auto* p = params.simulation.context().property( _targetPropGuid );
 		return p && p->getBool() && *p->getBool() == false;
 	}
 
-	bool simulate( SimulateSimulationParams params ) const override
+	bool simulate( SimulateParams params ) const override
 	{
 		params.simulation.context().property( _targetPropGuid )->value = true;
 		params.simulation.cost = 1.f;
@@ -847,13 +847,13 @@ public:
 
 	StringHash hash() const override { return stringHasher( "StepA" ); }
 
-	bool evaluate( EvaluateSimulationParams params ) const override
+	bool evaluate( EvaluateParams params ) const override
 	{
 		auto* p = params.simulation.context().property( _propA );
 		return p && p->getBool() && *p->getBool() == false;
 	}
 
-	bool simulate( SimulateSimulationParams params ) const override
+	bool simulate( SimulateParams params ) const override
 	{
 		params.simulation.context().property( _propA )->value = true;
 		params.simulation.cost = 5.f;
@@ -880,7 +880,7 @@ public:
 
 	StringHash hash() const override { return stringHasher( "StepB" ); }
 
-	bool evaluate( EvaluateSimulationParams params ) const override
+	bool evaluate( EvaluateParams params ) const override
 	{
 		auto* pa = params.simulation.context().property( _propA );
 		auto* pb = params.simulation.context().property( _propB );
@@ -888,7 +888,7 @@ public:
 			&& pb && pb->getBool() && *pb->getBool() == false;
 	}
 
-	bool simulate( SimulateSimulationParams params ) const override
+	bool simulate( SimulateParams params ) const override
 	{
 		params.simulation.context().property( _propB )->value = true;
 		params.simulation.cost = 3.f;
@@ -1416,7 +1416,7 @@ static void testLuaEvaluateSimulateHeuristic()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		bool result = sandbox.executeEvaluate( "eval_true", evalParams );
 		CHECK( result );
 	} endTest();
@@ -1435,7 +1435,7 @@ static void testLuaEvaluateSimulateHeuristic()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		bool result = sandbox.executeEvaluate( "eval_false", evalParams );
 		CHECK( !result );
 	} endTest();
@@ -1454,7 +1454,7 @@ static void testLuaEvaluateSimulateHeuristic()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		SimulateSimulationParams simParams( sim, simAgent, goal );
+		SimulateParams simParams( sim, simAgent, goal );
 		bool result = sandbox.executeSimulate( "sim_true", simParams );
 		CHECK( result );
 	} endTest();
@@ -1502,7 +1502,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		CHECK( sandbox.executeEvaluate( "bridge_bool", evalParams ) );
 	} endTest();
 
@@ -1524,7 +1524,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		CHECK( sandbox.executeEvaluate( "bridge_float", evalParams ) );
 	} endTest();
 
@@ -1546,7 +1546,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		CHECK( sandbox.executeEvaluate( "bridge_int", evalParams ) );
 	} endTest();
 
@@ -1569,7 +1569,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		CHECK( sandbox.executeEvaluate( "bridge_vec3", evalParams ) );
 	} endTest();
 
@@ -1591,7 +1591,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		SimulateSimulationParams simParams( sim, simAgent, goal );
+		SimulateParams simParams( sim, simAgent, goal );
 		CHECK( sandbox.executeSimulate( "bridge_set_bool", simParams ) );
 
 		// set_property writes through sim context or world; check via entity lookup
@@ -1621,7 +1621,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		SimulateSimulationParams simParams( sim, simAgent, goal );
+		SimulateParams simParams( sim, simAgent, goal );
 		CHECK( sandbox.executeSimulate( "bridge_set_float", simParams ) );
 		// set_property writes through sim context or world; check via entity lookup
 		const Entity* ent = sim.context().entity( a->guid() );
@@ -1649,7 +1649,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		SimulateSimulationParams simParams( sim, simAgent, goal );
+		SimulateParams simParams( sim, simAgent, goal );
 		CHECK( sandbox.executeSimulate( "bridge_set_cost", simParams ) );
 		CHECK_FLOAT_EQ( sim.cost, 25.f );
 	} endTest();
@@ -1672,7 +1672,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		CHECK( sandbox.executeEvaluate( "bridge_entity_name", evalParams ) );
 	} endTest();
 
@@ -1693,7 +1693,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		CHECK( sandbox.executeEvaluate( "bridge_no_entity", evalParams ) );
 	} endTest();
 
@@ -1720,7 +1720,7 @@ static void testLuaBridgeFunctions()
 		Simulation sim( randGuid(), &world, &world.context(), simAgent );
 		Goal goal( world );
 
-		EvaluateSimulationParams evalParams( sim, simAgent, goal );
+		EvaluateParams evalParams( sim, simAgent, goal );
 		CHECK( sandbox.executeEvaluate( "bridge_tag_set", evalParams ) );
 	} endTest();
 }

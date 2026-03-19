@@ -54,13 +54,13 @@ void RunLuaIntegrationTest()
     Goal goal( world );
 
     // Evaluate
-    EvaluateSimulationParams evalParams( simulation, simAgent, goal );
+    EvaluateParams evalParams( simulation, simAgent, goal );
     bool evalRes = sandbox.executeEvaluate( chunkName, evalParams );
     std::cout << "[LuaIntegrationTest] evaluate -> " << (evalRes ? "true" : "false") << "\n";
     assert( evalRes == true );
 
     // Simulate
-    SimulateSimulationParams simParams( simulation, simAgent, goal );
+    SimulateParams simParams( simulation, simAgent, goal );
     bool simRes = sandbox.executeSimulate( chunkName, simParams );
     std::cout << "[LuaIntegrationTest] simulate -> " << (simRes ? "true" : "false") << "\n";
     assert( simRes == true );

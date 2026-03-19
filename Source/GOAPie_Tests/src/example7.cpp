@@ -118,7 +118,7 @@ static void SetSimulationCost( gie::Simulation& sim, float travelLength, float b
 }
 
 // Move agent along waypoint path
-static float MoveAgentAlongPath( gie::SimulateSimulationParams& params, const glm::vec3& from, gie::Entity* toEntity, const std::vector< Guid >& waypointGuids )
+static float MoveAgentAlongPath( gie::SimulateParams& params, const glm::vec3& from, gie::Entity* toEntity, const std::vector< Guid >& waypointGuids )
 {
 	if( !toEntity ) return 0.f;
 	auto locPpt = toEntity->property( "Location" );
@@ -427,7 +427,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "Observe",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			params.addDebugMessage( "Observe::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -470,7 +470,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			params.addDebugMessage( "Observe::simulate (opaque — no reveals during planning)" );
 			auto& ctx = params.simulation.context();
@@ -490,7 +490,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "MoveTo",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			params.addDebugMessage( "MoveTo::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -519,7 +519,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			params.addDebugMessage( "MoveTo::simulate" );
 			auto& ctx = params.simulation.context();
@@ -571,7 +571,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "Inspect",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			params.addDebugMessage( "Inspect::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -595,7 +595,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			params.addDebugMessage( "Inspect::simulate (opaque — no reveals during planning)" );
 			auto& ctx = params.simulation.context();
@@ -643,7 +643,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "PickUp",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			params.addDebugMessage( "PickUp::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -664,7 +664,7 @@ static void RegisterActions( gie::Planner& planner )
 			return false;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			params.addDebugMessage( "PickUp::simulate" );
 			auto& ctx = params.simulation.context();
@@ -708,7 +708,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "ForgeKey",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			params.addDebugMessage( "ForgeKey::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -732,7 +732,7 @@ static void RegisterActions( gie::Planner& planner )
 			return true;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			params.addDebugMessage( "ForgeKey::simulate" );
 			auto& ctx = params.simulation.context();
@@ -765,7 +765,7 @@ static void RegisterActions( gie::Planner& planner )
 	// -----------------------------------------------------------------------
 	planner.addLambdaAction( "OpenChest",
 		// evaluate
-		[]( gie::EvaluateSimulationParams params ) -> bool
+		[]( gie::EvaluateParams params ) -> bool
 		{
 			params.addDebugMessage( "OpenChest::evaluate" );
 			auto& ctx = params.simulation.context();
@@ -787,7 +787,7 @@ static void RegisterActions( gie::Planner& planner )
 			return true;
 		},
 		// simulate
-		[]( gie::SimulateSimulationParams params ) -> bool
+		[]( gie::SimulateParams params ) -> bool
 		{
 			params.addDebugMessage( "OpenChest::simulate" );
 			auto& ctx = params.simulation.context();

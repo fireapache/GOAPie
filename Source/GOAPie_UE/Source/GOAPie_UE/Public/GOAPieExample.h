@@ -50,13 +50,13 @@ class AMyAIController : public AAIController
 
 		// Register actions (these run on the background thread during planning)
 		PlanPlanner->addLambdaAction("FindWeapon",
-			[](gie::EvaluateSimulationParams params) -> bool
+			[](gie::EvaluateParams params) -> bool
 			{
 				auto agent = params.simulation.context().entity(params.agent.guid());
 				auto hasWeapon = agent->property("HasWeapon");
 				return hasWeapon && !*hasWeapon->getBool();
 			},
-			[](gie::SimulateSimulationParams params) -> bool
+			[](gie::SimulateParams params) -> bool
 			{
 				auto agent = params.simulation.context().entity(params.agent.guid());
 				agent->property("HasWeapon")->value = true;
@@ -66,13 +66,13 @@ class AMyAIController : public AAIController
 		);
 
 		PlanPlanner->addLambdaAction("EliminateTarget",
-			[](gie::EvaluateSimulationParams params) -> bool
+			[](gie::EvaluateParams params) -> bool
 			{
 				auto agent = params.simulation.context().entity(params.agent.guid());
 				auto hasWeapon = agent->property("HasWeapon");
 				return hasWeapon && *hasWeapon->getBool();
 			},
-			[](gie::SimulateSimulationParams params) -> bool
+			[](gie::SimulateParams params) -> bool
 			{
 				auto agent = params.simulation.context().entity(params.agent.guid());
 				agent->property("TargetEliminated")->value = true;
@@ -183,8 +183,8 @@ void PlanSynchronousExample()
 	Agent->createProperty("Done", false);
 
 	Planner.addLambdaAction("DoThing",
-		[](gie::EvaluateSimulationParams) { return true; },
-		[](gie::SimulateSimulationParams params) {
+		[](gie::EvaluateParams) { return true; },
+		[](gie::SimulateParams params) {
 			auto agent = params.simulation.context().entity(params.agent.guid());
 			agent->property("Done")->value = true;
 			return true;

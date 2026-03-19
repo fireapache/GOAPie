@@ -28,8 +28,8 @@ namespace GOAPie
 	using EvaluateFunc = gie::EvaluateFunc;
 	using SimulateFunc = gie::SimulateFunc;
 	using HeuristicFunc = gie::HeuristicFunc;
-	using EvaluateSimulationParams = gie::EvaluateSimulationParams;
-	using SimulateSimulationParams = gie::SimulateSimulationParams;
+	using EvaluateParams = gie::EvaluateParams;
+	using SimulateParams = gie::SimulateParams;
 	using CalculateHeuristicParams = gie::CalculateHeuristicParams;
 
 	static constexpr Guid NullGuid = gie::NullGuid;
